@@ -12,7 +12,10 @@ function heutePlus(tage) {
 async function holeSeite(page, from, to) {
   const url = `https://login.smoobu.com/api/reservations?pageSize=100&page=${page}&from=${from}&to=${to}&showCancellation=true`;
   const res = await fetch(url, { headers: { "Api-Key": SMOOBU_API_KEY, "Content-Type": "application/json" } });
-  if (!res.ok) throw new Error(`Smoobu API Fehler: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Smoobu API Fehler: ${res.status} ${res.statusText} — ${text.slice(0, 500)}`);
+  }
   return res.json();
 }
 
