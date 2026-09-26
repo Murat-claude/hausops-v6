@@ -1,10 +1,13 @@
 {
-  "name": "HausOps PRO",
-  "short_name": "HausOps",
+  "name": "Livora Clean",
+  "short_name": "Livora Clean",
   "description": "Professionelle Reinigungsverwaltung",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#F1F3F1",
   "theme_color": "#F1F3F1",
-  "icons": []
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
 }

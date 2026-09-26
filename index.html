@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#F1F3F1" />
   <link rel="manifest" href="/manifest.json" />
-  <title>HausOps PRO — Professionelle Reinigungsverwaltung</title>
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <title>Livora Clean — Professionelle Reinigungsverwaltung</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; }
@@ -31,7 +32,7 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("/sw.js").catch((err) => {
-          console.error("HausOps: Service Worker Registrierung fehlgeschlagen", err);
+          console.error("Livora Clean: Service Worker Registrierung fehlgeschlagen", err);
         });
       });
     }
