@@ -1,4 +1,4 @@
-const CACHE = "hausops-shell-v1";
+const CACHE = "livora-clean-shell-v1";
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
@@ -16,7 +16,7 @@ self.addEventListener("fetch", (e) => {
 // Ready for real push notifications once a backend sends them.
 self.addEventListener("push", (e) => {
   const data = e.data ? e.data.json() : {};
-  const title = data.title || "HausOps";
+  const title = data.title || "Livora Clean";
   const options = {
     body: data.body || "Neue Aktivität",
     icon: "/icon-192.png",
