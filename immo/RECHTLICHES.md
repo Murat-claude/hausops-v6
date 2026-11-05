@@ -47,6 +47,7 @@ Stand: November 2026. Die App setzt die folgenden Regeln technisch um und weist 
 | Preisangaben (PAngV) | Preishinweis („inkl. USt“) an allen Tarifen, im Admin pflegbar |
 | Cookies/Speicher (§ 25 TDDDG) | nur technisch notwendige Speicherung (Anmeldung, Daten, Einstellungen), kein Tracking, deshalb kein Cookie-Banner nötig |
 | Testphase/Abo-Ende | Nur-Lesen-Modus, Daten bleiben exportierbar (kein „Einsperren“ von Daten) |
+| **Team-Zugriff** | Teammitglieder handeln für den Kunden (Verantwortlicher) als **weisungsgebundene Personen (Art. 29, 32 Abs. 4 DSGVO)**. Der Kunde lädt sie selbst ein, legt die Rolle fest und kann den Zugriff jederzeit entziehen. Hinweis im Team-Bereich: nur befugte Personen einladen, z. B. Mitarbeiter, Ehepartner oder Berater mit Verschwiegenheitspflicht. Ein Steuerberater ist eigener Verantwortlicher (Berufsgeheimnisträger), deshalb die Rolle „Nur lesen“. Die Einladung gilt nur für die eingeladene E-Mail-Adresse und läuft nach 14 Tagen ab. Die Rechte prüft der Server |
 | Konto löschen | Löscht Konto, Daten und Belege (Art. 17); Export vorher möglich (Art. 20) |
 
 ## 5. Mustertexte (Entwürfe – vor Verwendung anwaltlich prüfen)
@@ -68,7 +69,7 @@ Stand: November 2026. Die App setzt die folgenden Regeln technisch um und weist 
 2. Art und Zweck der Verarbeitung; Art der Daten (Stammdaten, Kontaktdaten, Vertrags- und Zahlungsdaten, Bankverbindungen, Verbrauchsdaten, Dokumente); Kategorien Betroffener (Mieter, Mitbewohner, Feriengäste, Dienstleister)
 3. Weisungsgebundenheit; Pflichten des Auftragsverarbeiters (Vertraulichkeit, TOMs nach Art. 32, Unterstützung bei Betroffenenrechten und Meldepflichten, Löschung/Rückgabe nach Vertragsende)
 4. **Unterauftragsverarbeiter:** Supabase (Datenbank/Speicher, Region EU), Netlify (Hosting), Stripe (Zahlung – eigener Verantwortlicher für Zahlungsdaten), optional Anthropic (KI, nur bei Nutzung; Drittlandtransfer USA über EU-US Data Privacy Framework bzw. Standardvertragsklauseln), optional Resend (E-Mail)
-5. Technische und organisatorische Maßnahmen (Verschlüsselung in Transit und at rest, Mandantentrennung per RLS, Zugriff nur über Authentifizierung, Admins ohne Einsicht in Kundendaten, Backups, Protokollierung)
+5. Technische und organisatorische Maßnahmen (Verschlüsselung in Transit und at rest, Mandantentrennung per RLS, Zugriff nur über Authentifizierung, Rollen im Team (Inhaber / Bearbeiten / Nur lesen), Admins ohne Einsicht in Kundendaten, Backups, Protokollierung)
 6. Kontrollrechte, Haftung, Schlussbestimmungen
 
 ## 6. Offen – bitte prüfen lassen bzw. später ergänzen

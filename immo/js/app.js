@@ -24,7 +24,9 @@ function persist() { if (blockedWrite()) return; S.save(state); scheduleSync(); 
 function blockedWrite() {
   if (!isCloud() || canWrite()) return false;
   if (auth.snapshot) state = S.normalizeState(JSON.parse(auth.snapshot));
-  render(); paywall();
+  render();
+  if (isViewer()) toast("👁 Nur-Lesen-Zugriff – Änderungen sind in diesem Bestand nicht möglich.");
+  else paywall();
   return true;
 }
 
@@ -284,7 +286,7 @@ function editObject(id) {
 function editUnit(id, objectId) {
   if (!state.objects.length) return toast("Bitte zuerst ein Objekt anlegen.");
   const lim = planOf()?.max_units;
-  if (!id && isCloud() && lim && state.units.length >= lim) return alert(`Dein Tarif „${planOf().name}“ umfasst bis zu ${lim} Einheiten. Unter „Mein Konto“ kannst du auf einen größeren Tarif wechseln.`);
+  if (!id && isCloud() && isOwnWs() && lim && state.units.length >= lim) return alert(`Dein Tarif „${planOf().name}“ umfasst bis zu ${lim} Einheiten. Unter „Mein Konto“ kannst du auf einen größeren Tarif wechseln.`);
   const u = byId("units", id) || { id: C.uid("u_"), objectId: objectId || state.objects[0].id, type: "wohnung", vat: "0" };
   formDialog({
     title: id ? "Einheit bearbeiten" : "Neue Einheit", spec: SPEC.unit, data: { ...u, vat: String(u.vat ?? 0), nkUmlage: u.nkUmlage === true ? "ja" : u.nkUmlage === false ? "nein" : "" },
@@ -601,17 +603,25 @@ function invoiceMissing(inv) {
   ].filter(Boolean);
 }
 
-function finalizeInvoice(id) {
-  const inv = byId("invoices", id);
+async function finalizeInvoice(id) {
+  let inv = byId("invoices", id);
   const miss = invoiceMissing(inv);
   if (miss.length) return alert(`Für eine ordnungsgemäße Rechnung fehlt noch:\n• ${miss.join("\n• ")}`);
   if (!confirm("Rechnung festschreiben? Sie erhält eine fortlaufende Rechnungsnummer und kann danach nicht mehr geändert, sondern nur noch storniert werden (GoBD).")) return;
+  if (blockedWrite()) return;
+  if (isCloud()) {
+    // Im Team: vorher den neuesten Stand holen, damit keine Rechnungsnummer doppelt vergeben wird
+    clearTimeout(auth.syncTimer); await syncNow(); await pullRemote({ force: true });
+    inv = byId("invoices", id);
+    if (!inv || inv.status !== "entwurf") { render(); return toast("Diese Rechnung wurde inzwischen von jemand anderem bearbeitet."); }
+  }
   inv.date = today();
   inv.number = takeInvoiceNumber(inv.date);
   inv.status = "offen";
   inv.finalizedAt = new Date().toISOString();
   refreshInvoiceStatus(inv.id);
   commit(`Rechnung ${inv.number} festgeschrieben`);
+  if (isCloud()) { clearTimeout(auth.syncTimer); syncNow(); }
 }
 
 function deleteDraft(id) {
@@ -1334,6 +1344,7 @@ function viewSettings() {
     <div class="card"><h2>✨ KI-Assistent (Claude)</h2>
       <p class="small muted" style="margin-bottom:8px">Für Belegerkennung, Fragen an deine Daten und Briefentwürfe. Schlüssel unter console.anthropic.com → API Keys erstellen; Kosten nach Nutzung (meist wenige Cent pro Anfrage). Der Schlüssel wird nur auf diesem Gerät gespeichert und ist nicht Teil der Datensicherung. Beim Nutzen der KI werden die betroffenen Daten an Anthropic übertragen.</p>
       <div class="inline"><input type="password" placeholder="sk-ant-…" value="${K.hasKey() ? "••••••••••••" : ""}" data-change="kiKey" style="max-width:340px" autocomplete="off"> ${K.hasKey() ? '<span class="badge ok">aktiv</span>' : '<span class="badge grey">nicht eingerichtet</span>'}</div></div>
+    ${!isCloud() ? `<div class="card"><h2>👥 Gemeinsam verwalten (Team)</h2><p class="small">Mit Ehepartner, Mitarbeitern oder Steuerberater an denselben Daten arbeiten – jede Person mit eigenem Zugang und eigener Rolle (Bearbeiten / Nur lesen). Das ist im <b>Konto-Modus</b> (Anmeldung, Daten sicher online gespeichert) möglich; im lokalen Modus liegen die Daten nur in diesem Browser. Vorhandene lokale Daten werden bei der ersten Anmeldung übernommen.</p></div>` : ""}
     <div class="card"><h2>Datensicherung</h2>
       <p class="muted" style="margin-bottom:10px">Alle Daten liegen nur in diesem Browser. Sichere sie regelmäßig als Datei (z. B. in iCloud/Google Drive) – damit kannst du sie auch auf ein anderes Gerät übertragen.</p>
       <div class="toolbar">${btn("backup", "⬇ Sicherung herunterladen", "primary")}${btn("backupFull", "⬇ Sicherung inkl. Belege")}<label class="btn">⬆ Sicherung einspielen<input type="file" accept=".json" data-change="restore" hidden></label>${btn("loadDemo", "Demo-Daten laden")}${btn("reset", "Alle Daten löschen", "danger")}</div></div>`;
@@ -2434,7 +2445,7 @@ function bankLiveCard() {
 function channelsCard() {
   const st = syncStatus();
   const units = fewoUnits();
-  const feedUrl = (u, x) => isCloud() && u.icalToken ? `${location.origin}/.netlify/functions/immo-ical-feed?u=${auth.user.id}&unit=${u.id}&t=${u.icalToken}${x ? `&x=${encodeURIComponent(x)}` : ""}` : "";
+  const feedUrl = (u, x) => isCloud() && u.icalToken ? `${location.origin}/.netlify/functions/immo-ical-feed?u=${wsId()}&unit=${u.id}&t=${u.icalToken}${x ? `&x=${encodeURIComponent(x)}` : ""}` : "";
   return `<div class="card noprint"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">🔄 Kanäle: Airbnb, Booking.com & Co.</h2><div class="toolbar">${btn("syncNow", ui.syncing ? "⏳ synchronisiert …" : "Jetzt synchronisieren", "")}</div></div>
     <label class="f inline small"><input type="checkbox" data-change="smoobuAuto" ${state.settings.smoobuAuto ? "checked" : ""}> <b>Smoobu automatisch abrufen</b> (empfohlen: alle Portale mit Gastnamen, Preisen und Kontaktdaten) ${st.smoobu ? `<span class="muted">· zuletzt ${new Date(st.smoobu.at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}${st.smoobu.ok ? "" : ` · <span class="neg">${esc(st.smoobu.error)}</span>`}</span>` : ""}</label>
     ${units.map((u) => `<div class="channel"><b>${esc(u.name)}</b>
@@ -2745,11 +2756,17 @@ function setupFinish() {
 
 // ---------------------------------------------------------------- Konten, Cloud-Sync & Admin
 
-const auth = { mode: "local", user: null, profile: null, settings: null, plans: [], version: 0, sync: "ok", syncTimer: null, pending: false };
+const auth = { mode: "local", user: null, profile: null, settings: null, plans: [], version: 0, sync: "ok", syncTimer: null, pending: false, ws: null, role: "owner", workspaces: [], lastChange: null };
 const isCloud = () => auth.mode === "cloud" && !!auth.user;
+// Team: aktueller Bestand (Inhaber-ID) und eigene Rolle darin
+const wsId = () => auth.ws || auth.user?.id;
+const isOwnWs = () => !auth.ws || auth.ws === auth.user?.id;
+const isViewer = () => isCloud() && auth.role === "viewer";
+const ROLE_LABEL = { owner: "Inhaber", editor: "Bearbeiten", viewer: "Nur lesen" };
+const curWs = () => auth.workspaces.find((w) => w.owner_id === wsId());
 const isAdmin = () => isCloud() && auth.profile?.role === "admin";
 const planOf = () => auth.plans.find((p) => p.id === auth.profile?.plan);
-const canWrite = () => { const p = auth.profile; return !p || p.role === "admin" || p.plan !== "trial" || !p.trial_ends_at || new Date(p.trial_ends_at) > new Date(); };
+const canWrite = () => { if (isViewer()) return false; if (!isOwnWs()) return true; const p = auth.profile; return !p || p.role === "admin" || p.plan !== "trial" || !p.trial_ends_at || new Date(p.trial_ends_at) > new Date(); };
 const buyablePlans = () => auth.plans.filter((x) => x.active && !["trial", "intern"].includes(x.id));
 
 async function startBilling(action, planId) {
@@ -2768,7 +2785,7 @@ async function startBilling(action, planId) {
 }
 
 function planCards(current) {
-  return `<div class="plans">${buyablePlans().map((x) => `<div class="plan ${x.id === current ? "current" : ""}"><b>${esc(x.name)}</b><div class="v">${eur(x.price_month_cents)}<span class="small"> / Monat</span></div><div class="small">${esc(x.description)}${x.max_units ? ` · bis ${x.max_units} Einheiten` : " · unbegrenzt"}</div><div class="small muted">${esc(auth.settings?.price_note || "")} Monatlich kündbar.</div>
+  return `<div class="plans">${buyablePlans().map((x) => `<div class="plan ${x.id === current ? "current" : ""}"><b>${esc(x.name)}</b><div class="v">${eur(x.price_month_cents)}<span class="small"> / Monat</span></div><div class="small">${esc(x.description)}${x.max_units ? ` · bis ${x.max_units} Einheiten` : " · unbegrenzt"} · ${x.max_members == null ? "Team unbegrenzt" : x.max_members ? `+ ${x.max_members} Person${x.max_members === 1 ? "" : "en"} im Team` : "1 Person"}</div><div class="small muted">${esc(auth.settings?.price_note || "")} Monatlich kündbar.</div>
     ${x.id === current ? '<span class="badge ok">aktuell</span>' : btn("buyPlan", hasSubscription() ? "Wechseln" : "Jetzt buchen", "sm primary", x.id)}</div>`).join("")}</div>`;
 }
 const hasSubscription = () => ["active", "trialing", "past_due"].includes(auth.profile?.subscription_status);
@@ -2830,18 +2847,18 @@ function paywall() {
 // Belege: lokal zwischenspeichern, im Cloud-Modus zusätzlich hochladen / nachladen
 async function putDocBlob(id, blob) {
   await F.putFile(id, blob);
-  if (isCloud()) await Cloud.uploadFile(auth.user.id, id, blob);
+  if (isCloud()) await Cloud.uploadFile(wsId(), id, blob);
 }
 async function getDocBlob(id) {
   const local = await F.getFile(id).catch(() => null);
   if (local || !isCloud()) return local;
-  const remote = await Cloud.downloadFile(auth.user.id, id).catch(() => null);
+  const remote = await Cloud.downloadFile(wsId(), id).catch(() => null);
   if (remote) await F.putFile(id, remote).catch(() => {});
   return remote;
 }
 async function deleteDocBlob(id) {
   await F.deleteFile(id).catch(() => {});
-  if (isCloud()) await Cloud.removeFile(auth.user.id, id).catch(() => {});
+  if (isCloud()) await Cloud.removeFile(wsId(), id).catch(() => {});
 }
 
 function scheduleSync() {
@@ -2857,31 +2874,63 @@ async function syncNow() {
   auth.pending = false;
   try {
     const sent = JSON.stringify(state);
-    auth.version = await Cloud.saveState(state, auth.version);
-    auth.snapshot = sent;
+    auth.version = await Cloud.saveState(state, auth.version, isOwnWs() ? null : wsId());
+    auth.snapshot = sent; auth.mergeTries = 0;
+    auth.lastChange = { updated_by: auth.user.id, updated_at: new Date().toISOString() };
     setSync("ok");
   } catch (e) {
-    if (e.code === "conflict") {
-      const remote = await Cloud.loadState(auth.user.id);
-      state = S.normalizeState(remote.data); auth.version = remote.version; S.save(state);
-      alert("Deine Daten wurden zwischenzeitlich auf einem anderen Gerät geändert. Die neueste Version wurde geladen – bitte die letzte Änderung ggf. wiederholen.");
+    if (e.code === "conflict" && (auth.mergeTries || 0) < 3) {
+      // Jemand aus dem Team (oder ein anderes Gerät) hat gleichzeitig gespeichert: Änderungen zusammenführen statt verwerfen
+      auth.mergeTries = (auth.mergeTries || 0) + 1;
+      const remote = await Cloud.loadState(wsId());
+      const base = auth.snapshot ? JSON.parse(auth.snapshot) : remote.data;
+      const { merged, conflicts, duplicateNumbers } = S.mergeStates(base, state, remote.data);
+      state = S.normalizeState(merged); auth.version = remote.version;
+      auth.snapshot = JSON.stringify(S.normalizeState(remote.data)); S.save(state);
+      render();
+      toast(conflicts ? `🔄 Änderungen aus dem Team übernommen – bei ${conflicts} gleichzeitig geänderten Angabe(n) gilt deine Eingabe.` : "🔄 Änderungen aus dem Team übernommen.");
+      if (duplicateNumbers.length) alert(`Achtung: Die Rechnungsnummer(n) ${duplicateNumbers.join(", ")} wurden gleichzeitig von zwei Personen vergeben. Bitte eine der Rechnungen stornieren und neu festschreiben (fortlaufende Nummern, § 14 UStG).`);
+      auth.pending = true;
+      return syncNow();
+    } else if (e.code === "conflict") {
+      auth.mergeTries = 0;
+      const remote = await Cloud.loadState(wsId());
+      state = S.normalizeState(remote.data); auth.version = remote.version; auth.snapshot = JSON.stringify(state); S.save(state);
+      alert("Die Daten wurden zwischenzeitlich von jemand anderem geändert. Die neueste Version wurde geladen – bitte die letzte Änderung ggf. wiederholen.");
       setSync("ok"); render();
+    } else if (e.code === "read_only" || e.code === "no_access") {
+      if (auth.snapshot) state = S.normalizeState(JSON.parse(auth.snapshot));
+      setSync("ok"); render();
+      alert(e.code === "read_only" ? "Du hast in diesem Bestand nur Lesezugriff. Die Änderung wurde nicht gespeichert." : "Du hast keinen Zugriff (mehr) auf diesen Bestand. Bitte neu anmelden.");
     } else if (e.code === "plan_limit") {
-      const remote = await Cloud.loadState(auth.user.id);
+      const remote = await Cloud.loadState(wsId());
       state = S.normalizeState(remote.data); auth.version = remote.version; S.save(state);
       alert(`Dein Tarif „${planOf()?.name || ""}“ erlaubt höchstens ${e.limit} Einheiten. Bitte Tarif wechseln (Mein Konto).`);
       setSync("ok"); render();
     } else if (e.code === "trial_expired") {
-      auth.profile = await Cloud.profile(auth.user.id).catch(() => auth.profile);
       if (auth.snapshot) state = S.normalizeState(JSON.parse(auth.snapshot));
+      if (!isOwnWs()) { setSync("ok"); render(); alert(`Die Testphase bzw. das Abo von ${curWs()?.owner_name || "dem Inhaber"} ist abgelaufen. Der Bestand ist bis zur Verlängerung nur lesbar.`); return; }
+      auth.profile = await Cloud.profile(auth.user.id).catch(() => auth.profile);
       setSync("ok"); render(); paywall();
     } else if (e.code === "blocked") {
-      setSync("error"); alert("Dein Konto ist gesperrt. Bitte wende dich an den Support.");
+      setSync("error"); alert(isOwnWs() ? "Dein Konto ist gesperrt. Bitte wende dich an den Support." : "Dieser Bestand ist derzeit gesperrt.");
     } else {
       auth.pending = true; setSync("offline");
       clearTimeout(auth.syncTimer); auth.syncTimer = setTimeout(syncNow, 15000);
     }
   }
+}
+
+function wsFoot() {
+  const w = curWs();
+  const sel = auth.workspaces.length > 1 ? `<select id="wssel" data-change="switchWs" title="Bestand wechseln" style="margin:4px 0;width:100%">${auth.workspaces.map((x) => `<option value="${esc(x.owner_id)}" ${x.owner_id === wsId() ? "selected" : ""}>${x.role === "owner" ? "🏠 Mein Bestand" : `👥 ${esc(x.owner_name)}`}</option>`).join("")}</select><br>` : "";
+  const role = !isOwnWs() ? `<span class="badge ${auth.role === "viewer" ? "grey" : "ok"}">${auth.role === "viewer" ? "👁 nur lesen" : "✎ bearbeiten"}</span><br>` : "";
+  return sel + role + (isOwnWs() ? `${esc(planOf()?.name || "")}<br>` : `<span class="small muted">Bestand von ${esc(w?.owner_name || "")}</span><br>`);
+}
+function lastChangeLabel() {
+  const c = auth.lastChange;
+  if (!c?.updated_by || c.updated_by === auth.user?.id) return "";
+  return `<span class="small muted">zuletzt geändert: ${esc(c.updated_by_name || "Team")}, ${new Date(c.updated_at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span><br>`;
 }
 
 function setSync(s) {
@@ -2894,7 +2943,100 @@ const syncLabel = () => ({ ok: "☁︎ gespeichert", saving: "☁︎ speichert �
 window.addEventListener("online", () => syncNow());
 window.addEventListener("beforeunload", (e) => { if (auth.pending) { syncNow(); e.preventDefault(); } });
 
+// Änderungen der anderen holen (Team / weitere Geräte) – leichtgewichtig über die Versionsnummer
+async function pullRemote({ force = false } = {}) {
+  if (!isCloud() || auth.pending || ui.pulling) return false;
+  ui.pulling = true;
+  try {
+    const info = await Cloud.stateInfo(wsId());
+    if (!info) return false;
+    auth.lastChange = info;
+    if (info.version <= auth.version) { const el = $("#lastchange"); if (el) el.innerHTML = lastChangeLabel(); return false; }
+    const a = document.activeElement;
+    if (!force && ($("#modal").open || (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.id !== "gsearch"))) return false; // nicht beim Tippen stören
+    const remote = await Cloud.loadState(wsId());
+    if (auth.pending) return false;
+    state = S.normalizeState(remote.data); auth.version = remote.version; auth.snapshot = JSON.stringify(state); S.save(state);
+    render();
+    if (info.updated_by && info.updated_by !== auth.user.id) toast(`🔄 Aktualisiert – Änderung von ${info.updated_by_name || "Teammitglied"}`);
+    return true;
+  } catch { return false; } finally { ui.pulling = false; }
+}
+
+function startTeamPull() {
+  if (ui.teamPullStarted) return;
+  ui.teamPullStarted = true;
+  setInterval(() => { if (document.visibilityState === "visible") pullRemote(); }, 30 * 1000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pullRemote(); });
+}
+
+const INVITE_KEY = "hausops-immo-invite";
+const wsKey = () => `hausops-immo-ws:${auth.user.id}`;
+
+async function loadWorkspaces() {
+  try { auth.workspaces = (await Cloud.myWorkspaces()) || []; }
+  catch { auth.workspaces = []; } // Team-Funktion (Migration) noch nicht eingespielt
+  if (!auth.workspaces.some((w) => w.role === "owner")) auth.workspaces.unshift({ owner_id: auth.user.id, owner_name: auth.profile?.company || auth.profile?.full_name || auth.user.email, owner_email: auth.user.email, role: "owner" });
+}
+
+function useWorkspace(w) {
+  auth.ws = w.owner_id; auth.role = w.role;
+  S.useUser(w.owner_id === auth.user.id ? auth.user.id : `${auth.user.id}@${w.owner_id}`);
+  try { localStorage.setItem(wsKey(), w.owner_id); } catch {}
+}
+
+async function loadWsState() {
+  const remote = await Cloud.loadState(wsId());
+  auth.version = remote.version;
+  state = S.normalizeState(remote.data);
+  auth.snapshot = JSON.stringify(state);
+  S.save(state);
+}
+
+async function switchWorkspace(ownerId) {
+  const w = auth.workspaces.find((x) => x.owner_id === ownerId);
+  if (!w || ownerId === wsId()) return;
+  clearTimeout(auth.syncTimer); await syncNow();
+  if (auth.pending) return alert("Deine letzten Änderungen konnten noch nicht gespeichert werden. Bitte Internetverbindung prüfen und erneut versuchen.");
+  useWorkspace(w);
+  try { await loadWsState(); } catch (e) { alert("Bestand konnte nicht geladen werden: " + e.message); }
+  Object.assign(ui, { nk: null, letter: null, chat: [], folderTenant: null });
+  location.hash = "#/"; render();
+  toast(`Bestand gewechselt: ${w.owner_name}${w.role === "viewer" ? " (nur lesen)" : ""}`);
+}
+
+// Einladungen: per Link (#/einladung/<token>) oder automatisch beim Anmelden mit der eingeladenen E-Mail
+async function handleInvites() {
+  let token = null;
+  try { token = sessionStorage.getItem(INVITE_KEY); sessionStorage.removeItem(INVITE_KEY); } catch {}
+  if (token) {
+    try {
+      const owner = await Cloud.acceptInvite(token);
+      await loadWorkspaces();
+      const w = auth.workspaces.find((x) => x.owner_id === owner);
+      if (w) { useWorkspace(w); toast(`Willkommen im Bestand von ${w.owner_name}!`); }
+    } catch (e) { alert(e.message); }
+  }
+  const open = await Cloud.myInvites().catch(() => []);
+  if (!open?.length) return;
+  const i = open[0];
+  if (confirm(`${i.owner_name} hat dich eingeladen, gemeinsam die Immobilien zu verwalten (${ROLE_LABEL[i.role]}).\n\nEinladung annehmen?`)) {
+    try {
+      const owner = await Cloud.acceptInvite(i.token);
+      await loadWorkspaces();
+      const w = auth.workspaces.find((x) => x.owner_id === owner);
+      if (w) { useWorkspace(w); await loadWsState(); toast(`Du hast jetzt Zugriff auf den Bestand von ${w.owner_name}.`); render(); }
+    } catch (e) { alert(e.message); }
+  }
+}
+
 async function boot() {
+  const inv = location.hash.match(/^#\/einladung\/([0-9a-fA-F-]{36})/);
+  if (inv) {
+    try { sessionStorage.setItem(INVITE_KEY, inv[1]); } catch {}
+    history.replaceState(null, "", location.pathname + location.search + "#/");
+    ui.authMsg = "Du wurdest eingeladen! Melde dich an – oder registriere dich mit der E-Mail-Adresse, an die die Einladung ging.";
+  }
   const cloud = await Cloud.init().catch(() => false);
   if (!cloud) { auth.mode = "local"; render(); afterStart(); return; }
   auth.mode = "cloud";
@@ -2902,7 +3044,7 @@ async function boot() {
   auth.plans = await Cloud.plans().catch(() => []);
   Cloud.onAuth(async (event, s) => {
     if (event === "PASSWORD_RECOVERY") { ui.authTab = "newpw"; render(); }
-    if (event === "SIGNED_OUT") { ui.authTab = "login"; ui.authMsg = ""; Object.assign(ui, { adminUsers: null, chat: [], letter: null, nk: null }); auth.user = null; auth.profile = null; S.useUser(null); state = S.emptyState(); render(); }
+    if (event === "SIGNED_OUT") { ui.authTab = "login"; ui.authMsg = ""; Object.assign(ui, { adminUsers: null, chat: [], letter: null, nk: null, team: null }); auth.user = null; auth.profile = null; Object.assign(auth, { ws: null, role: "owner", workspaces: [], lastChange: null }); S.useUser(null); state = S.emptyState(); render(); }
   });
   const s = await Cloud.session().catch(() => null);
   if (s) await enterAccount(s.user); else render();
@@ -2931,16 +3073,15 @@ async function enterAccount(user) {
   try {
     auth.profile = await Cloud.profile(user.id);
     if (auth.profile.status !== "active") { render(); return; }
-    S.useUser(user.id);
-    const remote = await Cloud.loadState(user.id);
-    auth.version = remote.version;
-    state = S.normalizeState(remote.data);
-    auth.snapshot = JSON.stringify(state);
-    S.save(state);
+    await loadWorkspaces();
+    let saved = null; try { saved = localStorage.getItem(wsKey()); } catch {}
+    useWorkspace(auth.workspaces.find((w) => w.owner_id === saved) || auth.workspaces.find((w) => w.role === "owner"));
+    await handleInvites().catch(() => {});
+    await loadWsState();
     Cloud.touch();
     // Erster Login: vorhandene lokale Daten (aus dem lokalen Modus) übernehmen?
     const legacy = S.legacyLocal();
-    if (!state.objects.length && legacy?.objects?.length && confirm(`Auf diesem Gerät gibt es lokale Daten (${legacy.objects.length} Objekte). In dein Konto übernehmen?`)) {
+    if (isOwnWs() && !state.objects.length && legacy?.objects?.length && confirm(`Auf diesem Gerät gibt es lokale Daten (${legacy.objects.length} Objekte). In dein Konto übernehmen?`)) {
       state = legacy; S.save(state); auth.pending = true; await syncNow();
       for (const doc of state.documents || []) { const b = await F.getFile(doc.id).catch(() => null); if (b) await Cloud.uploadFile(user.id, doc.id, b).catch(() => {}); }
     }
@@ -2950,7 +3091,7 @@ async function enterAccount(user) {
   }
   if (!location.hash || location.hash === "#/") location.hash = "#/";
   render();
-  if (auth.profile?.status === "active") afterStart();
+  if (auth.profile?.status === "active") { afterStart(); startTeamPull(); }
 }
 
 function legalLink(k, label) { return `<button class="btn link small" data-act="legal" data-id="${k}">${label}</button>`; }
@@ -3011,7 +3152,8 @@ function banners() {
   if (!isCloud()) return "";
   const out = [];
   if (auth.settings?.announcement) out.push(`<div class="note warn noprint">📣 ${esc(auth.settings.announcement)}</div>`);
-  const t = trialInfo();
+  if (!isOwnWs()) out.push(`<div class="note noprint">👥 Du arbeitest im Bestand von <b>${esc(curWs()?.owner_name || "")}</b> – ${isViewer() ? "👁 nur lesen (Einsicht & Export)" : "✎ mit Bearbeitungsrecht"}. ${btn("switchWs", "Zu meinem Bestand", "sm", auth.user.id)}</div>`);
+  const t = isOwnWs() ? trialInfo() : null;
   if (t && (t.expired || t.days <= 7)) out.push(`<div class="note warn noprint">${t.expired ? "🔒 Deine Testphase ist abgelaufen – Nur-Lesen-Modus. Daten bleiben erhalten und exportierbar." : `Deine Testphase endet in ${t.days} Tag(en).`} ${btn("paywall", "Tarif wählen", "sm primary")}</div>`);
   const p = auth.profile;
   if (p && auth.settings?.legal_version && (!p.avv_accepted_at || (p.legal_version || "") !== auth.settings.legal_version) && p.role !== "admin") out.push(`<div class="note warn noprint">📄 Unsere ${legalLink("agb", "AGB")} bzw. der ${legalLink("avv", "Auftragsverarbeitungsvertrag")} wurden aktualisiert. ${btn("acceptLegal", "Zustimmen", "sm primary")}</div>`);
@@ -3028,6 +3170,7 @@ function viewKonto() {
       <label class="f"><span>Name</span><input name="full_name" value="${esc(p.full_name)}"></label>
       <label class="f"><span>Firma</span><input name="company" value="${esc(p.company)}"></label></div>
       <button class="btn primary">Speichern</button></form>
+    ${teamCard()}
     <div class="card"><h2>Tarif</h2>
       <p><b>${esc(plan?.name || p.plan)}</b> ${plan?.price_month_cents ? `· ${eur(plan.price_month_cents)} / Monat` : ""} ${t ? (t.expired ? '<span class="badge bad">Testphase abgelaufen</span>' : `<span class="badge warn">Test bis ${d(t.end)}</span>`) : ""}</p>
       <p class="small muted">Nutzung: ${state.units.length} Einheiten${plan?.max_units ? ` von max. ${plan.max_units}` : ""} · ${state.objects.length} Objekte · ${state.documents.length} Dokumente</p>
@@ -3039,9 +3182,74 @@ function viewKonto() {
       <label class="f"><span>Neues Passwort (mind. 8 Zeichen)</span><input name="password" type="password" minlength="8" required autocomplete="new-password" style="max-width:340px"></label>
       <button class="btn">Passwort ändern</button></form>
     <div class="card"><h2>Daten & Datenschutz</h2>
-      <p class="small muted" style="margin-bottom:8px">Deine Daten sind von allen anderen Konten getrennt gespeichert; auch Administratoren sehen keine Objekt- oder Mieterdaten.</p>
+      <p class="small muted" style="margin-bottom:8px">Deine Daten sind von allen anderen Konten getrennt gespeichert. Zugriff haben nur du und die Personen, die du unter „Team & Zugriff“ einlädst – auch Administratoren sehen keine Objekt- oder Mieterdaten.</p>
       <div class="toolbar">${btn("backupFull", "⬇ Alle Daten exportieren")}${btn("deleteSelf", "Konto & alle Daten löschen", "danger")}</div>
       <div class="small" style="margin-top:10px">${legalLink("impressum", "Impressum")} · ${legalLink("datenschutz", "Datenschutz")} · ${legalLink("agb", "AGB")} · ${legalLink("avv", "Auftragsverarbeitung")} · ${legalLink("widerruf", "Widerruf")} · <a href="#/kuendigen" data-act="setKuendigung">Verträge hier kündigen</a> · <a href="#/kuendigen" data-act="setWiderruf">Vertrag widerrufen</a></div></div>`;
+}
+
+// ---------------------------------------------------------------- Team & Zugriff
+
+async function loadTeam() {
+  ui.teamBusy = true;
+  try { ui.team = (await Cloud.team()) || []; } catch { ui.team = []; ui.teamUnavailable = true; }
+  ui.teamBusy = false; render();
+}
+
+const inviteLink = (token) => `${location.origin}${location.pathname}#/einladung/${token}`;
+
+function teamCard() {
+  if (!ui.team && !ui.teamBusy) { loadTeam(); }
+  const team = ui.team || [];
+  const members = team.filter((t) => t.kind === "member"), invites = team.filter((t) => t.kind === "invite");
+  const lim = planOf()?.max_members;
+  const shared = auth.workspaces.filter((w) => w.role !== "owner");
+  const roleSel = (m) => `<select data-change="teamRole" data-id="${esc(m.member_id)}" style="width:auto">${opt([["editor", "✎ Bearbeiten"], ["viewer", "👁 Nur lesen"]], m.role)}</select>`;
+  return `<div class="card"><h2>👥 Team & Zugriff</h2>
+    <p class="small muted" style="margin-bottom:10px">Gib weiteren Personen Zugriff auf deinen Bestand – z. B. Ehepartner, Mitarbeiter oder Steuerberater. Jede Person meldet sich mit <b>eigener E-Mail und eigenem Passwort</b> an; ihr arbeitet gleichzeitig an denselben Daten.</p>
+    ${ui.teamUnavailable ? '<div class="note">Die Team-Funktion ist auf dem Server noch nicht eingerichtet (Datenbank-Update „team“ fehlt – siehe README).</div>' : `
+    <div class="table-wrap"><table><thead><tr><th>Person</th><th>Zugriff</th><th></th></tr></thead><tbody>
+      <tr><td><b>${esc(auth.profile?.full_name || auth.user.email)}</b> (du)<div class="small muted">${esc(auth.user.email)}</div></td><td><span class="badge ok">Inhaber</span></td><td></td></tr>
+      ${members.map((m) => `<tr><td><b>${esc(m.name || m.email)}</b><div class="small muted">${esc(m.email)} · seit ${d(String(m.since).slice(0, 10))}</div></td><td>${roleSel(m)}</td><td>${btn("teamRemove", "Entfernen", "sm danger", m.member_id)}</td></tr>`).join("")}
+      ${invites.map((i) => `<tr><td>${esc(i.email)}<div class="small muted">eingeladen am ${d(String(i.since).slice(0, 10))} · wartet auf Annahme</div></td><td><span class="badge warn">${ROLE_LABEL[i.role]}</span></td><td class="nowrap">${btn("teamShareInvite", "Link teilen", "sm", i.token + "|" + i.email)}${btn("teamRevoke", "Zurückziehen", "sm", i.token)}</td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="toolbar" style="margin-top:10px">${btn("teamInvite", "+ Person einladen", "primary")}</div>
+    <p class="small muted" style="margin-top:8px">${lim == null ? "Dein Tarif erlaubt beliebig viele Teammitglieder." : `Dein Tarif erlaubt ${lim} weitere Person${lim === 1 ? "" : "en"} (${members.length + invites.length} vergeben).`} <b>Bearbeiten</b>: alles außer Tarif, Team und Kontolöschung. <b>Nur lesen</b>: Einsicht und Export, keine Änderungen – ideal für Steuerberater.</p>
+    <p class="small muted">Datenschutz: Teammitglieder sehen die Mieter- und Gästedaten deines Bestands. Lade nur Personen ein, die zur Verwaltung befugt sind (Mitarbeiter, Ehepartner, Berater mit Verschwiegenheitspflicht), und entferne den Zugriff, wenn er nicht mehr benötigt wird.</p>`}
+    ${shared.length ? `<h3 style="margin-top:14px">Bestände, auf die du Zugriff hast</h3>
+      <div class="table-wrap"><table><tbody>${shared.map((w) => `<tr><td><b>${esc(w.owner_name)}</b><div class="small muted">${esc(w.owner_email)}</div></td><td><span class="badge ${w.role === "viewer" ? "grey" : "ok"}">${ROLE_LABEL[w.role]}</span></td><td class="nowrap">${w.owner_id === wsId() ? '<span class="small muted">geöffnet</span>' : btn("switchWs", "Öffnen", "sm", w.owner_id)}${btn("teamLeave", "Verlassen", "sm", w.owner_id)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+    ${auth.workspaces.length > 1 && !isOwnWs() ? `<div class="toolbar" style="margin-top:8px">${btn("switchWs", "🏠 Zurück zu meinem Bestand", "sm", auth.user.id)}</div>` : ""}
+  </div>`;
+}
+
+function shareInvite(token, email) {
+  const link = inviteLink(token), who = esc(auth.profile?.full_name || auth.user.email);
+  const text = `Hallo! Ich habe dich zu unserer Immobilienverwaltung eingeladen. Öffne den Link und melde dich mit ${email} an (oder registriere dich mit dieser Adresse):\n${link}\n\nDer Link ist 14 Tage gültig.`;
+  dialog({
+    title: "Einladung verschicken",
+    body: `<p class="small" style="margin-bottom:8px">Schicke diesen Link an <b>${esc(email)}</b>. Er funktioniert nur mit dieser E-Mail-Adresse und ist 14 Tage gültig. Meldet sich die Person mit dieser Adresse an, erscheint die Einladung auch ohne Link.</p>
+      <label class="f"><span>Einladungslink</span><input readonly value="${esc(link)}" onclick="this.select()"></label>
+      <div class="toolbar" style="margin-top:10px">
+        <button type="button" class="btn primary" data-act="copyText" data-id="${esc(link)}">📋 Link kopieren</button>
+        <a class="btn" href="mailto:${esc(email)}?subject=${encodeURIComponent(`Einladung von ${auth.profile?.full_name || ""} – Immobilienverwaltung`)}&body=${encodeURIComponent(text)}">✉️ Per E-Mail</a>
+        <a class="btn" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(text)}">💬 Per WhatsApp</a>
+      </div><p class="small muted" style="margin-top:8px">Eingeladen von ${who}.</p>`,
+  });
+}
+
+function inviteDialog() {
+  dialog({
+    title: "Person einladen", submit: "Einladung erstellen",
+    body: `<label class="f"><span>E-Mail-Adresse der Person *</span><input name="email" type="email" required autocomplete="off" placeholder="name@beispiel.de"></label>
+      <label class="f"><span>Zugriff</span><select name="role">${opt([["editor", "✎ Bearbeiten – z. B. Ehepartner, Mitarbeiter"], ["viewer", "👁 Nur lesen – z. B. Steuerberater"]], "editor")}</select></label>`,
+    onSubmit: (form) => {
+      const email = form.email.value.trim().toLowerCase(), role = form.role.value;
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast("Bitte eine gültige E-Mail-Adresse eingeben."); return false; }
+      Cloud.createInvite(email, role).then(async (token) => { await loadTeam(); shareInvite(token, email); }, (e) => {
+        if (e.code === "member_limit") alert(`Dein Tarif erlaubt höchstens ${e.limit} weitere Person${e.limit === 1 ? "" : "en"}. Für ein größeres Team bitte den Tarif wechseln.`);
+        else alert(e.message);
+      });
+    },
+  });
 }
 
 // ---------------------------------------------------------------- Admin-Bereich
@@ -3049,7 +3257,8 @@ function viewKonto() {
 async function loadAdmin() {
   ui.adminBusy = true; render();
   try {
-    const [users, log, plans, settings, canc] = await Promise.all([Cloud.adminUsers(), Cloud.adminLog(), Cloud.plans(), Cloud.appSettings(), Cloud.adminCancellations().catch(() => [])]);
+    const [users, log, plans, settings, canc, teams] = await Promise.all([Cloud.adminUsers(), Cloud.adminLog(), Cloud.plans(), Cloud.appSettings(), Cloud.adminCancellations().catch(() => []), Cloud.adminTeamSizes().catch(() => [])]);
+    for (const u of users) u.teamSize = Number(teams.find((t) => t.owner_id === u.id)?.members || 0);
     Object.assign(ui, { adminUsers: users, adminLog: log, adminCancellations: canc });
     auth.plans = plans; auth.settings = settings;
   } catch (e) { alert("Admin-Daten konnten nicht geladen werden: " + e.message); }
@@ -3082,13 +3291,13 @@ function viewAdmin() {
       <div class="card"><h2>Testphasen, die bald enden</h2>${users.filter((u) => u.plan === "trial" && u.trial_ends_at && days(u.trial_ends_at) > -30 && days(u.trial_ends_at) < 7).map((u) => `<div>${esc(u.email)} – ${d(u.trial_ends_at.slice(0, 10))}</div>`).join("") || '<p class="muted">Keine.</p>'}</div>`,
     nutzer: `<div class="inline" style="margin-bottom:10px"><input placeholder="Suchen (E-Mail, Name, Firma) …" value="${esc(ui.adminSearch || "")}" data-change="adminSearch" style="max-width:320px">${btn("adminReload", "⟳ Aktualisieren", "sm")}</div>
       <div class="table-wrap"><table><thead><tr><th>Nutzer</th><th>Tarif</th><th>Status</th><th class="num">Objekte / Einh.</th><th class="num">Dokumente</th><th>Registriert</th><th>Zuletzt aktiv</th></tr></thead><tbody>
-      ${list.map((u) => `<tr class="click" data-act="adminUser" data-id="${u.id}"><td><b>${esc(u.full_name || u.email)}</b>${u.role === "admin" ? ' <span class="badge">Admin</span>' : ""}<div class="small muted">${esc(u.email)}${u.company ? " · " + esc(u.company) : ""}</div></td>
+      ${list.map((u) => `<tr class="click" data-act="adminUser" data-id="${u.id}"><td><b>${esc(u.full_name || u.email)}</b>${u.role === "admin" ? ' <span class="badge">Admin</span>' : ""}${u.teamSize ? ` <span class="badge grey" title="Teammitglieder">👥 +${u.teamSize}</span>` : ""}<div class="small muted">${esc(u.email)}${u.company ? " · " + esc(u.company) : ""}</div></td>
         <td>${esc(planById[u.plan]?.name || u.plan)}${u.subscription_status ? ` <span class="badge ${u.subscription_status === "active" ? "ok" : u.subscription_status === "past_due" ? "bad" : "grey"}">${esc(u.subscription_status === "active" ? (u.cancel_at_period_end ? "gekündigt" : "Abo") : u.subscription_status)}</span>` : ""}${u.plan === "trial" && u.trial_ends_at ? `<div class="small ${days(u.trial_ends_at) > 0 ? "neg" : "muted"}">bis ${d(u.trial_ends_at.slice(0, 10))}</div>` : ""}</td>
         <td>${u.status === "active" ? '<span class="badge ok">aktiv</span>' : '<span class="badge bad">gesperrt</span>'}</td>
         <td class="num">${u.stats?.objects ?? 0} / ${u.stats?.units ?? 0}</td><td class="num">${u.stats?.documents ?? 0}<div class="small muted">${fmtBytes(Number(u.storage_bytes))}</div></td>
         <td class="small">${d(u.created_at.slice(0, 10))}</td><td class="small">${u.last_seen_at ? d(u.last_seen_at.slice(0, 10)) : "–"}</td></tr>`).join("")}</tbody></table></div>`,
     tarife: `<div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th class="num">Preis / Monat</th><th class="num">Max. Einheiten</th><th>KI inkl.</th><th>Stripe</th><th>Aktiv</th><th></th></tr></thead><tbody>
-      ${auth.plans.map((p) => `<tr><td class="small">${esc(p.id)}</td><td>${esc(p.name)}<div class="small muted">${esc(p.description)}</div></td><td class="num">${eur(p.price_month_cents)}</td><td class="num">${p.max_units ?? "∞"}</td><td>${p.ki_included ? "✓" : ""}</td><td class="small">${p.stripe_price_id ? "✓ online buchbar" : '<span class="muted">manuell</span>'}</td><td>${p.active ? "✓" : "–"}</td><td>${btn("adminPlan", "✎", "sm", p.id)}</td></tr>`).join("")}</tbody></table></div>
+      ${auth.plans.map((p) => `<tr><td class="small">${esc(p.id)}</td><td>${esc(p.name)}<div class="small muted">${esc(p.description)}</div></td><td class="num">${eur(p.price_month_cents)}</td><td class="num">${p.max_units ?? "∞"}<div class="small muted">Team +${p.max_members ?? "∞"}</div></td><td>${p.ki_included ? "✓" : ""}</td><td class="small">${p.stripe_price_id ? "✓ online buchbar" : '<span class="muted">manuell</span>'}</td><td>${p.active ? "✓" : "–"}</td><td>${btn("adminPlan", "✎", "sm", p.id)}</td></tr>`).join("")}</tbody></table></div>
       ${btn("adminPlan", "+ Tarif", "", "")}
       <p class="small muted" style="margin-top:8px">Das Einheiten-Limit wird serverseitig geprüft. Online-Zahlung (z. B. Stripe) ist der nächste Ausbauschritt – bis dahin Tarife hier manuell zuweisen.</p>`,
     einstellungen: `<form data-form="appsettings"><div class="fgrid">
@@ -3141,17 +3350,17 @@ function adminUserDialog(id) {
 function adminPlanDialog(id) {
   const p = auth.plans.find((x) => x.id === id) || { id: "", name: "", price_month_cents: 0, max_units: null, ki_included: false, description: "", sort: auth.plans.length, active: true };
   formDialog({
-    title: id ? `Tarif ${p.name}` : "Neuer Tarif", data: { ...p, max_units: p.max_units ?? "" },
+    title: id ? `Tarif ${p.name}` : "Neuer Tarif", data: { ...p, max_units: p.max_units ?? "", max_members: p.max_members ?? "" },
     spec: [
       { k: "id", l: "ID (klein, ohne Leerzeichen)", req: 1 }, { k: "name", l: "Name", req: 1 },
-      { k: "price_month_cents", l: "Preis pro Monat (€)", t: "money" }, { k: "max_units", l: "Max. Einheiten (leer = unbegrenzt)", t: "number" },
+      { k: "price_month_cents", l: "Preis pro Monat (€)", t: "money" }, { k: "max_units", l: "Max. Einheiten (leer = unbegrenzt)", t: "number" }, { k: "max_members", l: "Weitere Personen im Team (leer = unbegrenzt, 0 = keine)", t: "number" },
       { k: "description", l: "Beschreibung", full: 1 }, { k: "sort", l: "Reihenfolge", t: "number" },
       { k: "stripe_price_id", l: "Stripe Preis-ID (price_…) – leer = nicht online buchbar", full: 1, hint: "Stripe Dashboard → Produktkatalog → Produkt → Preis (monatlich, wiederkehrend) → ID kopieren" },
       { k: "ki_included", l: "KI inklusive", t: "checkbox" }, { k: "active", l: "Buchbar / sichtbar", t: "checkbox" },
     ],
     onSave: async (v) => {
       if (id && v.id !== id) { toast("Die ID kann nicht geändert werden."); return false; }
-      try { await Cloud.savePlan({ ...v, id: v.id.toLowerCase().replace(/[^a-z0-9_-]/g, ""), max_units: v.max_units === "" ? null : v.max_units, sort: Number(v.sort) || 0 }); toast("Tarif gespeichert"); loadAdmin(); }
+      try { await Cloud.savePlan({ ...v, id: v.id.toLowerCase().replace(/[^a-z0-9_-]/g, ""), max_units: v.max_units === "" ? null : v.max_units, max_members: v.max_members === "" ? null : v.max_members, sort: Number(v.sort) || 0 }); toast("Tarif gespeichert"); loadAdmin(); }
       catch (e) { alert(e.message); }
     },
   });
@@ -3172,7 +3381,7 @@ function render() {
   if (route === "kuendigen" && !auth.user) { document.body.classList.add("authscreen"); $("#view").innerHTML = `<div style="padding:24px 16px">${viewCancelForm()}</div>`; return; }
   document.body.classList.toggle("authscreen", gate);
   if (gate) { $("#view").innerHTML = auth.user && auth.profile?.status === "blocked" && ui.authTab !== "newpw" ? viewBlocked() : viewAuth(); return; }
-  $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${esc(planOf()?.name || "")}<br><span id="sync">${syncLabel()}</span><br><span id="livesync"></span>` : `Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.<br><span id="livesync"></span>`;
+  $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${wsFoot()}<span id="sync">${syncLabel()}</span><br><span id="lastchange">${lastChangeLabel()}</span><span id="livesync"></span>` : `Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.<br><span id="livesync"></span>`;
   setTimeout(setSyncBadge, 0);
   if (!$("#gsearch")) $("#nav").insertAdjacentHTML("beforebegin", `<input id="gsearch" type="search" placeholder="🔎 Suchen … ( / )" autocomplete="off">`);
   if (route === "mieter" && arg && ui.folderTenant !== arg) { ui.folderTenant = arg; ui.folderTab = ui.nextFolderTab || "ueberblick"; ui.nextFolderTab = null; }
@@ -3238,8 +3447,22 @@ const actions = {
   logout: async () => { await syncNow(); await Cloud.signOut(); location.hash = "#/"; },
   authTab: (t) => { ui.authTab = t; ui.authMsg = ""; render(); },
   legal: showLegal,
+  teamInvite: () => inviteDialog(),
+  teamShareInvite: (v) => { const [token, email] = v.split("|"); shareInvite(token, email); },
+  teamRevoke: async (token) => { if (!confirm("Einladung zurückziehen? Der Link funktioniert danach nicht mehr.")) return; try { await Cloud.teamRevokeInvite(token); toast("Einladung zurückgezogen"); loadTeam(); } catch (e) { alert(e.message); } },
+  teamRemove: async (member) => { const m = (ui.team || []).find((t) => t.member_id === member); if (!confirm(`${m?.name || m?.email || "Person"} den Zugriff entziehen? Die Person kann deinen Bestand danach nicht mehr sehen.`)) return; try { await Cloud.teamRemove(auth.user.id, member); toast("Zugriff entzogen"); loadTeam(); } catch (e) { alert(e.message); } },
+  teamLeave: async (owner) => {
+    const w = auth.workspaces.find((x) => x.owner_id === owner);
+    if (!confirm(`Bestand „${w?.owner_name || ""}“ verlassen? Du verlierst den Zugriff, bis du erneut eingeladen wirst.`)) return;
+    try {
+      if (owner === wsId()) await switchWorkspace(auth.user.id);
+      await Cloud.teamRemove(owner, auth.user.id); await loadWorkspaces(); toast("Bestand verlassen"); render();
+    } catch (e) { alert(e.message); }
+  },
+  switchWs: (owner) => switchWorkspace(owner),
+  copyText: (t) => copyText(t),
   deleteSelf: async () => {
-    if (prompt("Konto und ALLE Daten endgültig löschen? Zur Bestätigung LÖSCHEN eintippen.") !== "LÖSCHEN") return;
+    if (prompt(`Konto und ALLE Daten endgültig löschen?${(ui.team || []).some((t) => t.kind === "member") ? " Alle eingeladenen Teammitglieder verlieren ebenfalls den Zugriff." : ""} Zur Bestätigung LÖSCHEN eintippen.`) !== "LÖSCHEN") return;
     try { await Cloud.deleteAccount(null); localStorage.removeItem(`hausops-immo-v1:${auth.user.id}`); await Cloud.signOut(); alert("Dein Konto wurde gelöscht."); }
     catch (e) { alert("Löschen fehlgeschlagen: " + e.message); }
   },
@@ -3396,6 +3619,8 @@ document.addEventListener("change", async (e) => {
   }
   if (k === "tenantSearch") { ui.tenantSearch = e.target.value; render(); return; }
   if (k === "adminSearch") { ui.adminSearch = e.target.value; render(); return; }
+  if (k === "switchWs") { switchWorkspace(e.target.value); return; }
+  if (k === "teamRole") { try { await Cloud.teamSetRole(e.target.dataset.id, e.target.value); toast("Rolle geändert"); loadTeam(); } catch (err) { alert(err.message); } return; }
   if (k === "attachExpense") { const id = e.target.dataset.id; if (!byId("expenses", id)) return toast("Bitte die Ausgabe zuerst speichern."); $("#modal").close(); await addFiles(e.target.files, { expenseId: id }); editExpense(id); return; }
   if (k === "kiKey") { K.setKey(e.target.value); toast(e.target.value ? "KI-Schlüssel gespeichert (nur auf diesem Gerät)" : "KI-Schlüssel entfernt"); render(); return; }
   const v = e.target.value;
@@ -3512,6 +3737,7 @@ document.addEventListener("submit", (e) => {
 window.addEventListener("hashchange", () => {
   const [route, arg] = location.hash.replace(/^#\/?/, "").split("/");
   if (route === "mieter" && arg) { ui.folderTenant = arg; ui.folderTab = ui.nextFolderTab || "ueberblick"; ui.nextFolderTab = null; }
+  if (route === "konto" && isCloud()) { ui.team = null; loadWorkspaces().then(() => { if (location.hash.startsWith("#/konto")) render(); }); }
   render(); window.scrollTo(0, 0);
 });
 boot();

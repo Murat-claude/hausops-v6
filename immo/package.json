@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/core.test.mjs tests/recht.test.mjs tests/steuer.test.mjs tests/billing.test.cjs tests/sync.test.cjs",
-    "test:db": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f supabase/tests/supabase_stub.sql -f supabase/migrations/20261105000000_hausops_immo.sql -f supabase/migrations/20261106000000_billing.sql -f supabase/migrations/20261107000000_legal.sql -f supabase/tests/rls_test.sql -f supabase/tests/billing_test.sql -f supabase/tests/legal_test.sql"
+    "test": "node --test tests/core.test.mjs tests/recht.test.mjs tests/steuer.test.mjs tests/billing.test.cjs tests/sync.test.cjs tests/team.test.mjs",
+    "test:db": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f supabase/tests/supabase_stub.sql -f supabase/migrations/20261105000000_hausops_immo.sql -f supabase/migrations/20261106000000_billing.sql -f supabase/migrations/20261107000000_legal.sql -f supabase/migrations/20261108000000_team.sql -f supabase/tests/rls_test.sql -f supabase/tests/billing_test.sql -f supabase/tests/legal_test.sql -f supabase/tests/team_test.sql"
   }
 }

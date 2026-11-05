@@ -128,3 +128,60 @@ export function demoState() {
   b(d(14), d(21), "Thomas Wagner", 91000, 3, "Booking.com");
   return s;
 }
+
+// ---------------------------------------------------------------- Team: gleichzeitige Änderungen zusammenführen
+// Drei-Wege-Abgleich: base = zuletzt gemeinsam gespeicherter Stand, local = meine Änderungen, remote = Stand der anderen.
+// Listen mit id werden je Datensatz zusammengeführt, Objekte (Einstellungen, Regeln) je Feld.
+// Haben beide denselben Datensatz verschieden geändert, gewinnt die eigene Änderung (conflicts zählt diese Fälle).
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
+const isIdList = (x) => Array.isArray(x) && x.every((e) => isObj(e) && e.id != null);
+
+export function mergeStates(base, local, remote) {
+  let conflicts = 0;
+  function mergeVal(b, l, r) {
+    if (same(l, b)) return r;            // nur die anderen haben geändert (oder niemand)
+    if (same(r, b) || same(l, r)) return l; // nur ich habe geändert
+    if (isIdList(l) && isIdList(r) && (b === undefined || isIdList(b))) return mergeList(b || [], l, r);
+    if (isObj(l) && isObj(r) && (b === undefined || isObj(b))) return mergeObj(b || {}, l, r);
+    conflicts++;
+    return l;
+  }
+  function mergeObj(b, l, r) {
+    const out = {};
+    for (const k of new Set([...Object.keys(b), ...Object.keys(l), ...Object.keys(r)])) {
+      const inL = k in l, inR = k in r, inB = k in b;
+      if (inB && !inL) { if (inR && !same(r[k], b[k])) { conflicts++; } continue; } // ich habe gelöscht
+      if (inB && !inR) { if (!same(l[k], b[k])) { conflicts++; out[k] = l[k]; } continue; } // andere haben gelöscht
+      const v = mergeVal(b[k], l[k], r[k]);
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+  function mergeList(b, l, r) {
+    const bm = new Map(b.map((x) => [x.id, x])), lm = new Map(l.map((x) => [x.id, x])), rm = new Map(r.map((x) => [x.id, x]));
+    const out = [];
+    const seen = new Set();
+    // Reihenfolge der anderen beibehalten, eigene neue Einträge hinten anfügen
+    for (const id of [...rm.keys(), ...lm.keys()]) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const inB = bm.has(id), inL = lm.has(id), inR = rm.has(id);
+      if (inB && !inL) { if (inR && !same(rm.get(id), bm.get(id))) conflicts++; continue; }
+      if (inB && !inR) { if (!same(lm.get(id), bm.get(id))) { conflicts++; out.push(lm.get(id)); } continue; }
+      if (!inB) { out.push(inL && inR ? mergeVal(undefined, lm.get(id), rm.get(id)) : (lm.get(id) || rm.get(id))); continue; }
+      out.push(mergeVal(bm.get(id), lm.get(id), rm.get(id)));
+    }
+    return out;
+  }
+  const merged = mergeObj(base || {}, local || {}, remote || {});
+  // Rechnungsnummern: Zähler nie zurücksetzen (höchster Stand gewinnt), doppelte Nummern melden
+  const lc = local?.settings?.invoiceCounters || {}, rc = remote?.settings?.invoiceCounters || {};
+  if (merged.settings) {
+    merged.settings.invoiceCounters = { ...lc, ...rc };
+    for (const k of Object.keys(lc)) merged.settings.invoiceCounters[k] = Math.max(Number(lc[k]) || 0, Number(rc[k]) || 0);
+  }
+  const nums = (merged.invoices || []).map((i) => i.number).filter(Boolean);
+  const duplicateNumbers = [...new Set(nums.filter((n, i) => nums.indexOf(n) !== i))];
+  return { merged, conflicts, duplicateNumbers };
+}

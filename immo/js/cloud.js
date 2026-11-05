@@ -93,18 +93,37 @@ export async function loadState(uid) {
   return data;
 }
 
-export async function saveState(data, version) {
-  const { data: v, error } = await sb.rpc("save_state", { p_data: data, p_version: version });
+export async function saveState(data, version, owner) {
+  const { data: v, error } = await sb.rpc("save_state", { p_data: data, p_version: version, p_owner: owner || null });
   if (error) {
     const m = error.message || "";
     if (m.includes("version_conflict")) throw Object.assign(new Error("version_conflict"), { code: "conflict" });
     if (m.includes("plan_limit")) throw Object.assign(new Error(m), { code: "plan_limit", limit: Number(m.split(":")[1]) });
     if (m.includes("trial_expired")) throw Object.assign(new Error(m), { code: "trial_expired" });
     if (m.includes("account_blocked")) throw Object.assign(new Error(m), { code: "blocked" });
+    if (m.includes("read_only")) throw Object.assign(new Error(m), { code: "read_only" });
+    if (m.includes("no_access")) throw Object.assign(new Error(m), { code: "no_access" });
     throw error;
   }
   return v;
 }
+
+// ---------------------------------------------------------------- Team (mehrere Personen, ein Bestand)
+
+const rpc = async (fn, args) => { const { data, error } = await sb.rpc(fn, args); fail(error); return data; };
+export const myWorkspaces = () => rpc("my_workspaces");
+export const myInvites = () => rpc("my_invites");
+export const stateInfo = async (owner) => ((await rpc("state_info", { p_owner: owner })) || [])[0] || null;
+export const team = () => rpc("team");
+export async function createInvite(email, role) {
+  try { return await rpc("create_invite", { p_email: email, p_role: role }); }
+  catch (e) { const m = e.message || ""; if (m.includes("member_limit")) throw Object.assign(new Error(m), { code: "member_limit", limit: Number(m.split(":")[1]) }); throw e; }
+}
+export const acceptInvite = (token) => rpc("accept_invite", { p_token: token });
+export const teamSetRole = (member, role) => rpc("team_set_role", { p_member: member, p_role: role });
+export const teamRemove = (owner, member) => rpc("team_remove", { p_owner: owner, p_member: member });
+export const adminTeamSizes = () => rpc("admin_team_sizes");
+export const teamRevokeInvite = (token) => rpc("team_revoke_invite", { p_token: token });
 
 // ---------------------------------------------------------------- Belege (Storage)
 

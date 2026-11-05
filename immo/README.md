@@ -52,12 +52,28 @@ Die App läuft in zwei Modi:
 |---|---|
 | **Anmeldung** | Registrierung mit Name, Firma, E-Mail und Passwort, Zustimmung zu AGB und Datenschutz, E-Mail-Bestätigung, Passwort vergessen, Tarifübersicht auf der Startseite. Das **erste registrierte Konto wird automatisch Admin** |
 | **Mein Konto** | Profil, Passwort ändern, Tarif und Nutzung (Einheiten-Limit), Testphase, Tarifwechsel anfragen, alle Daten exportieren, **Konto und Daten löschen** (DSGVO) |
+| **Team & Zugriff** | Mehrere Personen auf **einen gemeinsamen Bestand**, z. B. Ehepartner, Mitarbeiter oder Steuerberater, jede mit eigenem Login. Details unten |
 | **Cloud-Speicherung** | Automatisch nach jeder Änderung, mit Versionsprüfung (zwei Geräte überschreiben sich nicht), Offline-Zwischenspeicher und Nachholen. Belege liegen im privaten Ordner des Nutzers. Lokale Daten werden beim ersten Login auf Wunsch übernommen |
 | **Admin: Übersicht** | Nutzer gesamt, neue und aktive Nutzer, zahlende Kunden, **Monatsumsatz (MRR)**, Speicher, Testphasen, die bald enden |
 | **Admin: Nutzer** | Suche, Objekte/Einheiten/Dokumente je Kunde (nur Anzahl), Tarif zuweisen, Testphase verlängern, **sperren/entsperren**, Admin-Rechte vergeben, interne Notiz, Passwort-Reset-Mail, Konto löschen |
 | **Admin: Tarife** | Preise, Einheiten-Limit (**wird serverseitig geprüft**), KI inklusive, sichtbar/buchbar |
 | **Admin: Einstellungen** | Produktname, Support-E-Mail, Dauer der Testphase, Registrierung öffnen/schließen, **Ankündigungsbanner**, **Impressum, Datenschutzerklärung, AGB** |
 | **Admin: Protokoll** | Alle Admin-Änderungen mit Zeitpunkt |
+
+### Team: gemeinsam verwalten (z. B. Ehepaar, Hausverwaltung)
+
+- **Einladen**: Unter „Mein Konto → Team & Zugriff“ die E-Mail-Adresse und die Rolle eingeben. Die App erzeugt einen Einladungslink zum Verschicken per E-Mail oder WhatsApp, 14 Tage gültig. Er funktioniert **nur mit der eingeladenen E-Mail-Adresse**. Meldet sich die Person mit dieser Adresse an, erscheint die Einladung auch ohne Link.
+- **Rollen**:
+  - **Inhaber**: alles, inklusive Tarif, Team und Kontolöschung.
+  - **Bearbeiten**: alle Daten und Belege.
+  - **Nur lesen**: Einsicht und Export, ideal für den Steuerberater.
+  - Die Rechte prüft der Server (Datenbank und Beleg-Speicher), nicht nur die Oberfläche.
+- **Gleichzeitig arbeiten**: Speichern zwei Personen fast gleichzeitig, führt die App die Änderungen **je Datensatz und Feld zusammen**, statt eine zu verwerfen. Nur wenn beide dieselbe Angabe ändern, gilt die zuletzt gespeicherte. Änderungen der anderen erscheinen nach spätestens 30 Sekunden, beim Zurückkehren zur App sofort, mit dem Hinweis „Änderung von …“.
+- **Rechnungsnummern**: Vor dem Festschreiben holt die App den neuesten Stand, damit keine Nummer doppelt vergeben wird. Passiert es trotzdem, weist sie darauf hin.
+- **Mehrere Bestände**: Wer eingeladen wurde, behält seinen eigenen Bestand und wechselt über die Auswahl in der Seitenleiste oder unter „Mein Konto“.
+- **Tarif**: Abo und Limits richten sich nach dem Inhaber. Die Anzahl weiterer Personen pro Tarif wird im Admin-Bereich unter „Tarife“ festgelegt; Standard ist Testphase +2, Basis +1, Pro +4, Business unbegrenzt.
+- **Sperre**: Wird der Inhaber gesperrt oder läuft sein Abo ab, gilt das auch für die Mitglieder (Sperre bzw. Nur-Lesen).
+- **Lokaler Modus**: Ohne Konto liegen die Daten nur im Browser; ein Team ist dann nicht möglich.
 
 ### Einrichtung (einmalig, ca. 15 Minuten)
 
@@ -71,7 +87,7 @@ Die App läuft in zwei Modi:
 5. Neu deployen, `/immo/` öffnen und **sofort selbst registrieren**: Das erste Konto wird Admin.
 6. Im Admin-Bereich unter **Einstellungen** Impressum, Datenschutz und AGB eintragen (vor dem Verkauf rechtlich prüfen lassen) und die Support-E-Mail setzen.
 
-Getestet: Die Zugriffsregeln laufen mit `immo/supabase/tests/rls_test.sql` gegen ein lokales Postgres mit nachgebauter Supabase-Umgebung (`tests/supabase_stub.sql`). Geprüft werden Datentrennung, Rechte, Tarif-Limit, Versionskonflikt, Sperre und geschlossene Registrierung.
+Getestet: Die Zugriffsregeln laufen mit `immo/supabase/tests/rls_test.sql` gegen ein lokales Postgres mit nachgebauter Supabase-Umgebung (`tests/supabase_stub.sql`). Geprüft werden Datentrennung, Rechte, Tarif-Limit, Versionskonflikt, Sperre und geschlossene Registrierung. `team_test.sql` prüft Einladen, Annehmen nur mit der richtigen E-Mail, „Bearbeiten“ und „Nur lesen“ für Daten und Belege, Entfernen, Verlassen, Team-Limit und die Sperre des Inhabers. Das Zusammenführen gleichzeitiger Änderungen testet `tests/team.test.mjs`.
 
 ### Online-Bezahlung mit Stripe (Abos)
 
@@ -84,7 +100,7 @@ So funktioniert es für deine Kunden:
 - Tarife ohne Stripe-Preis-ID bleiben manuell (Admin weist zu, oder es geht eine E-Mail an den Support).
 
 Einrichtung:
-1. In Supabase zusätzlich `immo/supabase/migrations/20261106000000_billing.sql` und `immo/supabase/migrations/20261107000000_legal.sql` ausführen.
+1. In Supabase zusätzlich `immo/supabase/migrations/20261106000000_billing.sql`, `immo/supabase/migrations/20261107000000_legal.sql` und `immo/supabase/migrations/20261108000000_team.sql` ausführen (Team-Zugriff).
 2. Bei https://dashboard.stripe.com je Tarif ein **Produkt mit monatlichem, wiederkehrendem Preis** anlegen und die **Preis-ID** (`price_…`) im Admin-Bereich unter „Tarife“ eintragen.
 3. Stripe → **Einstellungen → Billing → Kundenportal** aktivieren: Zahlungsmethode ändern, Rechnungen, Kündigung und Tarifwechsel (die Produkte freigeben).
 4. Stripe → **Entwickler → Webhooks**: Endpoint `https://<deine-seite>/.netlify/functions/immo-stripe-webhook` mit den Ereignissen `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted` und `invoice.payment_failed`.
