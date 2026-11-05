@@ -311,3 +311,16 @@ test("Live-Umsatz erkennt vorher per CSV importierten Umsatz", () => {
   assert.equal(fresh.length, 0);
   assert.equal(csv[0].extId, "acc:E1");
 });
+
+import { recipientLines, recipientFromBooking, channelNote, recipientName, recipientHasAddress } from "../js/core.js";
+test("Rechnungsempfänger: Firma statt Gast, Auslandsadresse, Altformat", () => {
+  const b = { guest: "Anna Gast", guestStreet: "Hauptstr. 1", guestZip: "1010", guestCity: "Wien", guestCountry: "AT", email: "anna@example.at", channel: "Booking.com", channelRef: "4711" };
+  const r = recipientFromBooking(b);
+  assert.deepEqual(recipientLines(r), ["Anna Gast", "Hauptstr. 1", "1010 Wien", "AT"]);
+  const firma = { ...r, company: "Muster GmbH", street: "Industriestr. 5", zip: "20095", city: "Hamburg", country: "DE" };
+  assert.deepEqual(recipientLines(firma), ["Muster GmbH", "z. Hd. Anna Gast", "Industriestr. 5", "20095 Hamburg"]);
+  assert.equal(recipientName(firma), "Muster GmbH");
+  assert.deepEqual(recipientLines({ name: "Alt", address: "Weg 2\n12345 Ort" }), ["Alt", "Weg 2", "12345 Ort"]);
+  assert.equal(recipientHasAddress({ name: "X" }), false);
+  assert.equal(channelNote(b), "Buchung über Booking.com (Buchungsnr. 4711).");
+});

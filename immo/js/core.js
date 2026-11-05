@@ -284,7 +284,7 @@ export function suggestAssignment(tx, state) {
       let score = 0; const why = [];
       if (inv.number && normalize(text).includes(normalize(inv.number))) { score += 70; why.push("Rechnungsnr. im Verwendungszweck"); }
       if (open === tx.amount) { score += 30; why.push("Betrag = offener Rechnungsbetrag"); }
-      const ns = nameScore(inv.recipient?.name, text);
+      const ns = Math.max(nameScore(inv.recipient?.name, text) || 0, nameScore(inv.recipient?.company, text) || 0);
       if (ns) { score += Math.round(30 * ns); why.push("Name passt"); }
       if (score) cands.push({ kind: "fewo", invoiceId: inv.id, score: Math.min(100, score), why });
     }
@@ -533,7 +533,7 @@ export function datevRows(state, fromIso, toIso) {
       else if (part.type === "sonstige") gegen = acc.sonstErtrag;
       else gegen = part.vat === 7 ? acc.erl7 : part.vat === 19 ? acc.erl19 : acc.steuerfrei;
       const label = { kalt: "Miete", umlage: "NK-Vorauszahlung", fewo: "FeWo", durchlaufend: "Kurtaxe", sonstige: "Einnahme" }[part.type];
-      const who = inv?.recipient?.name || tenant?.name || p.note || "";
+      const who = inv?.recipient?.company || inv?.recipient?.name || tenant?.name || p.note || "";
       rows.push({
         amount: part.amount, sh: "S", konto: money, gegen, date: p.date,
         beleg: inv?.number || (p.period ? `M${p.period.replace("-", "")}` : ""),
@@ -1049,4 +1049,42 @@ export function mergeBankTx(transactions, accountId, incoming) {
     known.add(id); fresh.push(tx);
   }
   return fresh;
+}
+
+// ---------------------------------------------------------------- Rechnungsempfänger (Gast oder Firma)
+// recipient: { name, company, attn, street, zip, city, country, address (Altformat, Freitext), business, vatId, email }
+const COUNTRY_DE = /^(de|deu|deutschland|germany)?$/i;
+
+export function recipientLines(r = {}) {
+  const out = [];
+  if (r.company) {
+    out.push(r.company);
+    const person = r.attn || r.name;
+    if (person) out.push(`z. Hd. ${person}`);
+  } else if (r.name) out.push(r.name);
+  if (r.street || r.zip || r.city) {
+    if (r.street) out.push(r.street);
+    const place = [r.zip, r.city].filter(Boolean).join(" ");
+    if (place) out.push(place);
+    if (r.country && !COUNTRY_DE.test(String(r.country).trim())) out.push(String(r.country).toUpperCase().length === 2 ? String(r.country).toUpperCase() : r.country);
+  } else if (r.address) out.push(...String(r.address).split(/\n/).map((x) => x.trim()).filter(Boolean));
+  return out;
+}
+
+// Anzeigename in Listen
+export const recipientName = (r = {}) => r.company || r.name || "";
+export const recipientHasAddress = (r = {}) => !!((r.street && (r.zip || r.city)) || (r.address && r.address.trim()));
+
+export function recipientFromBooking(b = {}) {
+  return {
+    name: b.guest || "", company: b.guestCompany || "", attn: "",
+    street: b.guestStreet || "", zip: b.guestZip || "", city: b.guestCity || "", country: b.guestCountry || "",
+    business: !!b.guestCompany, vatId: "", email: b.email || "",
+  };
+}
+
+// Text für den Kanal-Hinweis auf der Rechnung
+export function channelNote(b = {}) {
+  if (!b.channel || b.channel === "Direkt") return "";
+  return `Buchung über ${b.channel}${b.channelRef ? ` (Buchungsnr. ${b.channelRef})` : ""}.`;
 }

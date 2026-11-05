@@ -30,7 +30,7 @@ Läuft als eigenständige Web-App unter **`/immo/`** auf derselben Netlify-Seite
 | **Mieteingänge** | Soll/Ist je Monat, Jahresmatrix (✓ / ½ / ✗), Rückstände, Barzahlungen |
 | **Ausgaben** | Werbungskosten nach Kategorien, je Objekt, aus Bankumsätzen oder manuell (bar/Karte) |
 | **Ferienwohnung** | Belegungskalender inkl. Eigennutzung, Buchungen mit Kanal (Airbnb, Booking …), Prüfung auf Überschneidungen, **Smoobu-Import** über die vorhandene Netlify-Function. Kennzahlen **Auslastung, ADR, RevPAR** mit Vorjahresvergleich, Ø Aufenthaltsdauer, **Stornoquote**, **Direktbuchungsanteil**, Netto-Ertrag. **Reinigungsplan** mit Hinweis auf Wechsel am selben Tag und Auftrag zum Kopieren. **Gäste-Nachrichten** (Bestätigung, 3 Tage vor Anreise, während des Aufenthalts, Abreise/Bewertung). Hinweis auf den **Meldeschein** bei ausländischen Gästen, **Registrierungsnummer** auf Rechnungen |
-| **Rechnungen** | Fortlaufende Nummern (`RE-2026-0001`), 7 % USt auf Übernachtung und Endreinigung, 19 % auf Extras, **Kurtaxe als durchlaufender Posten**, Kleinunternehmer-Option (§ 19 UStG), Pflichtangaben nach § 14 UStG, Druck/PDF, Storno mit Stornorechnung, Zahlungsstatus |
+| **Rechnungen** | Fortlaufende Nummern (`RE-2026-0001`), 7 % USt auf Übernachtung und Endreinigung, 19 % auf Extras, **Kurtaxe als durchlaufender Posten**, Kleinunternehmer-Option (§ 19 UStG), Pflichtangaben nach § 14 UStG, Storno mit Stornorechnung, Zahlungsstatus. Details unten unter „Rechnungen für Portal-Buchungen“ |
 | **Nebenkostenabrechnung** | Kostenarten nach § 2 BetrKV, Umlageschlüssel Fläche, Personen(-tage), Einheiten, Verbrauch, **Heizkosten-VO (50–70 % Verbrauch)** oder direkt je Einheit. Abrechnung **tagegenau** bei Mieterwechsel; den Leerstandsanteil trägt der Vermieter. Vorauszahlungen werden aus den echten Zahlungseingängen übernommen. Die App prüft die **12-Monats-Frist** (§ 556 Abs. 3 BGB), schlägt eine neue Vorauszahlung vor und erstellt ein druckbares **Anschreiben** je Mieter mit Hinweis auf Belegeinsicht. Garagen und Stellplätze tragen keine Hauskosten |
 | **Belege & Dokumente** | **Foto aufnehmen** (Handykamera), **Dokument scannen** (Kontrastverstärkung zu Schwarz-Weiß), **PDFs/Bilder hochladen** oder per Drag & Drop. Ein Eingangskorb mit Kategorien (Rechnung, Bescheid, Versorgerabrechnung, Mietvertrag, Übergabeprotokoll, Zählerstand …). Belege lassen sich an Ausgaben anhängen, Ausgaben ohne Beleg sind markiert. Gespeichert wird lokal (IndexedDB), die Sicherung kann die Belege enthalten |
 | **KI (Claude)** | **Belegerkennung, vermieterfreundlich**: Aussteller, Datum, Betrag, Rechnungsnummer, Kategorie, Zeitraum und Zählerstände werden aus Foto oder PDF gelesen. **Gemischte Rechnungen** (Hausmeister, Heizungsfirma, Aufzug, Versicherung) werden in Positionen zerlegt, jede mit Betriebskostenart und Begründung, ob sie umlagefähig ist. Auf Wunsch wird die Rechnung in mehrere Buchungen aufgeteilt (je Kostenart + nicht umlagefähiger Rest), dazu kommt ein konkreter Tipp, wie mehr umgelegt werden kann. Erkannte Zählerstände lassen sich direkt einer Einheit zuordnen. Beim Buchen schlägt die App vor, den Beleg an eine vorhandene Ausgabe oder einen Bankumsatz zu hängen statt doppelt zu buchen. **KI-Assistent** mit Zugriff auf die App-Daten (Rückstände, Anlage V, NK-Abrechnungen, Ferienwohnung …). **KI-Prüfung** der Nebenkostenabrechnung. **Briefe mit KI** formulieren, umformulieren oder übersetzen |
@@ -115,6 +115,22 @@ Getestet: Signaturprüfung, Formularkodierung und die Abbildung aller Abo-Ereign
 - **KI für Kunden**: Derzeit trägt jeder Nutzer seinen eigenen Claude-API-Schlüssel ein. Für „KI inklusive“-Tarife braucht es eine Server-Funktion mit deinem Schlüssel und einem Nutzungslimit.
 - Rechtliches: Impressum, Datenschutzerklärung mit Auftragsverarbeitung (Supabase, Netlify, Anthropic), AGB, AV-Vertrag für Kunden.
 - Eigene Domain und Branding (Produktname ist im Admin-Bereich einstellbar).
+
+## Rechnungen für Portal-Buchungen (Booking.com, Airbnb … über Smoobu)
+
+1. **Daten aus Smoobu**: Gast, Anschrift mit Land, E-Mail, Telefon, Kanal und **Buchungsnummer des Portals** werden übernommen, die Firma, wenn der Kanal sie liefert. Fehlen Anschrift oder E-Mail in der Reservierung, ergänzt die App sie aus dem Gast-Profil in Smoobu.
+2. **Buchungen ohne Rechnung**: Unter „Gäste-Rechnungen“ stehen alle Buchungen ohne Rechnung. Mit einem Klick entsteht ein Entwurf, auf Wunsch für alle auf einmal. Wahlweise legt die App für jede neue Smoobu-Buchung automatisch einen Entwurf an.
+3. **Firma statt Gast**: „👤 Empfänger / Firma“ öffnet das Formular für Firma, Ansprechpartner, Anschrift, USt-IdNr. und Rechnungs-E-Mail. Der Gast steht dann als „z. Hd.“ und „Gast: …“ auf der Rechnung.
+   - **Nach dem Festschreiben** darf eine Rechnung nicht mehr überschrieben werden (GoBD, § 14 UStG). Deshalb erzeugt „Empfänger ändern“ automatisch eine **Stornorechnung** und eine **neue Rechnung** mit neuer Nummer und dem Hinweis „ersetzt Rechnung …“. Zahlungen werden übernommen.
+4. **Zahlungshinweis**: Überweisung mit Zahlungsziel oder „bereits bezahlt über Booking.com/Airbnb/bar“. Bei Airbnb ist „über Airbnb bezahlt“ voreingestellt.
+5. **PDF im Ordner**: Beim Festschreiben (und bei Storno oder Korrektur) entsteht ein echtes PDF (A4, passend für Fensterumschläge). Es wird unter **Belege & Dokumente → Ausgangsrechnungen** abgelegt, im Cloud-Modus auch online. Das Original bleibt unverändert, so wie es die Aufbewahrungspflicht verlangt.
+6. **Per E-Mail senden**:
+   - Empfänger, Betreff und Text sind vorausgefüllt, das PDF ist angehängt. Auf Wunsch geht eine Kopie an dich, und Antworten des Gastes landen bei dir.
+   - Jeder Versand wird mit Datum und Empfänger protokolliert.
+   - Ohne eingerichteten Mailversand geht es über das Teilen-Menü des Handys oder per Download und eigenem Mail-Programm.
+   - Bei Weiterleitungs-Adressen der Portale (`…@guest.booking.com`) weist die App darauf hin, dass Anhänge dort nicht immer ankommen. Für Firmen besser die Adresse der Buchhaltung eintragen.
+
+**Mailversand einrichten** (einmalig): Bei https://resend.com ein Konto anlegen und deine Domain verifizieren. Dann in Netlify `RESEND_API_KEY` und `IMMO_MAIL_FROM` setzen (z. B. `Rechnungen <rechnung@deine-domain.de>`). Der Absendername wird automatisch dein Name aus den Einstellungen. Die Funktion `immo-mail` nimmt nur angemeldete Nutzer bzw. den Sync-Schlüssel an, erlaubt nur PDF-Anhänge bis 4 MB und höchstens 60 Mails pro Stunde.
 
 ## Steuererklärung selbst machen (ohne Steuerberater)
 
@@ -206,11 +222,13 @@ immo/
   js/files.js   Belege/Dokumente (IndexedDB, Bildverkleinerung, Scan-Filter)
   js/ki.js      KI-Funktionen (Belegerkennung, Assistent, Briefe) über die Claude API
   js/cloud.js   Anmeldung, Cloud-Speicherung, Admin (Supabase)
+  js/pdf.js     PDF-Rechnungen (jsPDF, vendor/jspdf.js, MIT-Lizenz)
   js/app.js     Oberfläche
   supabase/     Datenbank-Migrationen + RLS-/Billing-Tests
 netlify/functions/immo-billing.js         Stripe Checkout + Kundenportal
 netlify/functions/immo-stripe-webhook.js  Stripe-Webhook (Signatur geprüft) → Tarif im Profil
 netlify/lib/immo-billing-lib.js           gemeinsame Stripe-/Supabase-Logik
+netlify/functions/immo-mail.js            Rechnungsversand per E-Mail mit PDF-Anhang (Resend)
 netlify/functions/immo-kuendigung.js      Kündigungsbutton / Widerruf (öffentlich) mit Bestätigung
 netlify/functions/immo-bank.js            Live-Bankanbindung (Enable Banking, PSD2)
 netlify/functions/immo-ical.js            iCal-Kalender der Portale abrufen (nur erlaubte Anbieter)

@@ -426,7 +426,7 @@ function assignDialog(txId) {
     ? [["miete", "Miete"], ["fewo", "Ferienwohnung-Rechnung"], ["nk_nachzahlung", "Nebenkosten-Nachzahlung"], ["kaution", "Kaution"], ["sonstige", "Sonstige Einnahme"], ["ignorieren", "Ignorieren (privat / Umbuchung)"]]
     : [["ausgabe", "Ausgabe / Werbungskosten"], ["ignorieren", "Ignorieren (privat / Umbuchung)"], ["miete", "Mietrückzahlung (negativ)"]];
   const kind = sug.kind || kinds[0][0];
-  const invOpts = state.invoices.filter((i) => i.type !== "storno" && !["storniert", "entwurf"].includes(i.status)).map((i) => [i.id, `${i.number} · ${i.recipient?.name || ""} · ${eur(C.invoiceTotals(i).gross)} (${i.status})`]);
+  const invOpts = state.invoices.filter((i) => i.type !== "storno" && !["storniert", "entwurf"].includes(i.status)).map((i) => [i.id, `${i.number} · ${C.recipientName(i.recipient)} · ${eur(C.invoiceTotals(i).gross)} (${i.status})`]);
   const body = `
     <div class="note"><b>${eur(tx.amount)}</b> · ${d(tx.date)} · ${esc(tx.name)}<br><span class="small">${esc(tx.purpose)}</span>${tx.iban ? `<br><span class="small muted">${esc(tx.iban)}</span>` : ""}</div>
     <div class="fgrid">
@@ -522,22 +522,74 @@ function takeInvoiceNumber(dateIso) {
   return n.number;
 }
 
-function invoiceFromBooking(bookingId) {
-  const b = byId("bookings", bookingId);
-  if (b.invoiceId && byId("invoices", b.invoiceId)) { location.hash = `#/rechnung/${b.invoiceId}`; return; }
+// Rechnungsentwurf aus einer Buchung (auch Booking.com/Airbnb über Smoobu): Gast, Anschrift, Kanal und Buchungsnr. werden übernommen
+function createInvoiceDraft(b) {
   const u = byId("units", b.unitId);
-  const date = today();
   const inv = {
-    id: C.uid("i_"), number: "", date, serviceFrom: b.from, serviceTo: b.to, bookingId: b.id, unitId: b.unitId,
-    recipient: { name: b.guest, address: [b.guestStreet, [b.guestZip, b.guestCity].filter(Boolean).join(" ")].filter(Boolean).join("\n") },
+    id: C.uid("i_"), number: "", date: today(), serviceFrom: b.from, serviceTo: b.to, bookingId: b.id, unitId: b.unitId,
+    recipient: C.recipientFromBooking(b), guestName: b.guest || "",
     lines: C.linesFromBooking(b, u), kleinunternehmer: !!state.settings.kleinunternehmer, status: "entwurf", type: "rechnung",
-    note: b.channel && b.channel !== "Direkt" ? `Buchung über ${b.channel}.` : "",
+    note: C.channelNote(b), paidVia: /airbnb/i.test(b.channel || "") ? "portal" : "",
   };
   state.invoices.push(inv);
   b.invoiceId = inv.id;
+  return inv;
+}
+
+function invoiceFromBooking(bookingId) {
+  const b = byId("bookings", bookingId);
+  if (b.invoiceId && byId("invoices", b.invoiceId)) { location.hash = `#/rechnung/${b.invoiceId}`; return; }
+  if (blockedWrite()) return;
+  const inv = createInvoiceDraft(b);
   persist();
   location.hash = `#/rechnung/${inv.id}`;
-  toast("Rechnungsentwurf erstellt – prüfen und dann festschreiben");
+  toast("Rechnungsentwurf erstellt – Empfänger prüfen (z. B. Firma statt Gast) und dann festschreiben");
+}
+
+// Buchungen, für die noch eine Rechnung fehlt (Portal- und Direktbuchungen)
+const bookingsWithoutInvoice = () => state.bookings
+  .filter((b) => !["storniert", "eigennutzung"].includes(b.status) && !(b.invoiceId && byId("invoices", b.invoiceId)) && b.from >= `${Number(today().slice(0, 4)) - 1}-01-01` && b.from <= addDays(today(), 60))
+  .sort((a, b) => (a.from < b.from ? -1 : 1));
+
+// ---- Empfängerfelder (Gast oder Firma)
+function recipientFieldsHtml(r0 = {}) {
+  const r = { ...r0 };
+  if (!(r.street || r.zip || r.city) && r.address) { // Altformat (Freitext) in Felder aufteilen
+    const lines = String(r.address).split(/\n/).map((x) => x.trim()).filter(Boolean);
+    const m = (lines[lines.length - 1] || "").match(/^(\d{4,5})\s+(.+)$/);
+    if (m) { r.zip = m[1]; r.city = m[2]; r.street = lines.slice(0, -1).join(", "); } else r.street = lines.join(", ");
+  }
+  return `<div class="fgrid">
+      <label class="f"><span>Firma <small class="muted">(leer lassen bei Privatgast)</small></span><input name="rcompany" value="${esc(r.company || "")}" placeholder="z. B. Muster GmbH"></label>
+      <label class="f"><span>Name (Gast bzw. Ansprechpartner) *</span><input name="rname" value="${esc(r.name || "")}"></label>
+      <label class="f"><span>Straße & Hausnummer</span><input name="rstreet" value="${esc(r.street || "")}"></label>
+      <label class="f"><span>PLZ / Ort</span><span class="inline"><input name="rzip" value="${esc(r.zip || "")}" style="max-width:90px"><input name="rcity" value="${esc(r.city || "")}"></span></label>
+      <label class="f"><span>Land <small class="muted">(leer = Deutschland)</small></span><input name="rcountry" value="${esc(r.country || "")}" placeholder="z. B. AT, NL"></label>
+      <label class="f"><span>USt-IdNr. der Firma (optional)</span><input name="rvat" value="${esc(r.vatId || "")}"></label>
+      <label class="f full"><span>E-Mail für den Rechnungsversand</span><input name="remail" type="email" value="${esc(r.email || "")}" placeholder="z. B. buchhaltung@firma.de"></label>
+    </div>`;
+}
+function readRecipient(form) {
+  const v = (k) => (form[k]?.value || "").trim();
+  return { name: v("rname"), company: v("rcompany"), attn: "", street: v("rstreet"), zip: v("rzip"), city: v("rcity"), country: v("rcountry"), vatId: v("rvat"), email: v("remail"), business: !!v("rcompany") };
+}
+
+function recipientDialog(id) {
+  const inv = byId("invoices", id);
+  const final = inv.status !== "entwurf";
+  dialog({
+    title: final ? `Empfänger ändern – Rechnung ${inv.number}` : "Rechnungsempfänger",
+    submit: final ? "Korrigierte Rechnung erstellen" : "Übernehmen",
+    body: `${final ? `<div class="note">Festgeschriebene Rechnungen dürfen nicht überschrieben werden (GoBD, § 14 UStG). Deshalb erstellt die App automatisch eine <b>Stornorechnung</b> zu ${esc(inv.number)} und eine <b>neue Rechnung mit neuer Nummer</b> an den geänderten Empfänger – mit Hinweis „ersetzt Rechnung ${esc(inv.number)}“. Bereits erfasste Zahlungen werden übernommen; beide PDFs werden abgelegt.</div>` : ""}
+      ${inv.guestName ? `<p class="small muted" style="margin-bottom:8px">Gast laut Buchung: <b>${esc(inv.guestName)}</b>${byId("bookings", inv.bookingId)?.channel ? ` · ${esc(byId("bookings", inv.bookingId).channel)}` : ""}</p>` : ""}
+      ${recipientFieldsHtml(inv.recipient)}`,
+    onSubmit: (form) => {
+      const r = readRecipient(form);
+      if (!r.name && !r.company) { toast("Bitte Name oder Firma angeben."); return false; }
+      if (!final) { if (blockedWrite()) return; inv.recipient = r; commit("Empfänger übernommen"); return; }
+      correctInvoiceRecipient(id, r);
+    },
+  });
 }
 
 function editInvoice(id) {
@@ -556,15 +608,14 @@ function editInvoice(id) {
       <label class="f"><span>Ferienwohnung / Einheit</span><select name="unitId">${opt([["", "–"], ...unitOpts()], inv.unitId)}</select></label>
       <label class="f"><span>Leistungszeitraum von</span><input type="date" name="serviceFrom" value="${esc(inv.serviceFrom || "")}"></label>
       <label class="f"><span>bis</span><input type="date" name="serviceTo" value="${esc(inv.serviceTo || "")}"></label>
-      <label class="f"><span>Empfänger</span><input name="rname" value="${esc(inv.recipient?.name)}" required></label>
-      <label class="f"><span>Anschrift</span><textarea name="raddr" style="min-height:40px">${esc(inv.recipient?.address)}</textarea></label>
-      <label class="f inline"><input type="checkbox" name="business" ${inv.recipient?.business ? "checked" : ""}> Empfänger ist ein Unternehmen (B2B)</label>
-      <label class="f"><span>USt-IdNr. des Empfängers (optional)</span><input name="rvat" value="${esc(inv.recipient?.vatId || "")}"></label>
     </div>
+    <h3 style="margin:6px 0">Rechnungsempfänger</h3>
+    ${recipientFieldsHtml(inv.recipient)}
     <div class="table-wrap"><table><thead><tr><th>Beschreibung</th><th>Menge</th><th>Einzelpreis brutto</th><th>USt</th><th>durchl.</th><th></th></tr></thead>
     <tbody id="lines">${inv.lines.map(lineRow).join("")}</tbody></table></div>
     <button type="button" class="btn sm" id="addLine" style="margin:8px 0 12px">+ Position</button>
     <label class="f inline"><input type="checkbox" name="ku" ${inv.kleinunternehmer ? "checked" : ""}> Kleinunternehmer (§ 19 UStG) – keine Umsatzsteuer ausweisen</label>
+    <label class="f"><span>Zahlung</span><select name="paidVia">${opt(PAID_VIA(byId("bookings", inv.bookingId)?.channel), inv.paidVia || "")}</select></label>
     <label class="f"><span>Hinweis auf der Rechnung</span><textarea name="note">${esc(inv.note || "")}</textarea></label>`;
   dialog({
     title: isNew ? "Neuer Rechnungsentwurf" : "Rechnungsentwurf bearbeiten", body, wide: true,
@@ -579,9 +630,10 @@ function editInvoice(id) {
         passThrough: tr.querySelector("[name=pt]").checked,
       })).filter((l) => l.desc || l.price);
       if (!lines.length) { toast("Mindestens eine Position angeben."); return false; }
+      if (!form.rname.value.trim() && !form.rcompany.value.trim()) { toast("Bitte Name oder Firma des Empfängers angeben."); return false; }
       Object.assign(inv, {
         date: form.date.value, unitId: form.unitId.value, serviceFrom: form.serviceFrom.value, serviceTo: form.serviceTo.value,
-        recipient: { name: form.rname.value.trim(), address: form.raddr.value.trim(), business: form.business.checked, vatId: form.rvat.value.trim() }, lines, kleinunternehmer: form.ku.checked, note: form.note.value.trim(),
+        recipient: readRecipient(form), lines, kleinunternehmer: form.ku.checked, note: form.note.value.trim(), paidVia: form.paidVia.value,
       });
       if (isNew) state.invoices.push(inv);
       refreshInvoiceStatus(inv.id);
@@ -597,8 +649,8 @@ function invoiceMissing(inv) {
   const s = state.settings, t = C.invoiceTotals(inv);
   return [
     !s.ownerName && "Name des Vermieters (Einstellungen)", !(s.ownerStreet && s.ownerCity) && "Anschrift des Vermieters (Einstellungen)",
-    !s.taxNumber && !s.vatId && "Steuernummer oder USt-IdNr. (Einstellungen)", !inv.recipient?.name && "Name des Empfängers",
-    t.gross > 25000 && !inv.recipient?.address && "Anschrift des Empfängers (Pflicht ab 250 € brutto)",
+    !s.taxNumber && !s.vatId && "Steuernummer oder USt-IdNr. (Einstellungen)", !C.recipientName(inv.recipient) && "Name des Empfängers",
+    t.gross > 25000 && !C.recipientHasAddress(inv.recipient) && "Anschrift des Empfängers (Pflicht ab 250 € brutto)",
     !inv.serviceFrom && "Leistungszeitraum", !(inv.lines || []).length && "Positionen",
   ].filter(Boolean);
 }
@@ -609,12 +661,9 @@ async function finalizeInvoice(id) {
   if (miss.length) return alert(`Für eine ordnungsgemäße Rechnung fehlt noch:\n• ${miss.join("\n• ")}`);
   if (!confirm("Rechnung festschreiben? Sie erhält eine fortlaufende Rechnungsnummer und kann danach nicht mehr geändert, sondern nur noch storniert werden (GoBD).")) return;
   if (blockedWrite()) return;
-  if (isCloud()) {
-    // Im Team: vorher den neuesten Stand holen, damit keine Rechnungsnummer doppelt vergeben wird
-    clearTimeout(auth.syncTimer); await syncNow(); await pullRemote({ force: true });
-    inv = byId("invoices", id);
-    if (!inv || inv.status !== "entwurf") { render(); return toast("Diese Rechnung wurde inzwischen von jemand anderem bearbeitet."); }
-  }
+  await freshForNumbering();
+  inv = byId("invoices", id);
+  if (!inv || inv.status !== "entwurf") { render(); return toast("Diese Rechnung wurde inzwischen von jemand anderem bearbeitet."); }
   inv.date = today();
   inv.number = takeInvoiceNumber(inv.date);
   inv.status = "offen";
@@ -622,6 +671,43 @@ async function finalizeInvoice(id) {
   refreshInvoiceStatus(inv.id);
   commit(`Rechnung ${inv.number} festgeschrieben`);
   if (isCloud()) { clearTimeout(auth.syncTimer); syncNow(); }
+  await archiveInvoicePdf(inv.id);
+}
+
+// Im Team: vor dem Vergeben einer Rechnungsnummer den neuesten Stand holen (keine doppelten Nummern)
+async function freshForNumbering() {
+  if (!isCloud()) return;
+  clearTimeout(auth.syncTimer); await syncNow(); await pullRemote({ force: true });
+}
+
+function makeStorno(inv) {
+  const st = { ...structuredClone(inv), id: C.uid("i_"), number: takeInvoiceNumber(today()), date: today(), type: "storno", refNumber: inv.number, status: "storno",
+    lines: inv.lines.map((l) => ({ ...l, price: -l.price })), note: `Storno zu Rechnung ${inv.number} vom ${d(inv.date)}.`, pdfDocId: null, sentLog: [], finalizedAt: new Date().toISOString() };
+  inv.status = "storniert";
+  state.invoices.push(st);
+  return st;
+}
+
+// Empfänger einer festgeschriebenen Rechnung ändern: Storno + neue Rechnung (GoBD-konform)
+async function correctInvoiceRecipient(id, r) {
+  if (blockedWrite()) return;
+  await freshForNumbering();
+  const inv = byId("invoices", id);
+  if (!inv || inv.type === "storno" || ["storniert", "entwurf"].includes(inv.status)) return toast("Diese Rechnung kann nicht (mehr) korrigiert werden.");
+  const st = makeStorno(inv);
+  const neu = { ...structuredClone(inv), id: C.uid("i_"), recipient: r, date: today(), status: "offen", type: "rechnung", finalizedAt: new Date().toISOString(),
+    replaces: inv.number, pdfDocId: null, sentLog: [],
+    note: [`Diese Rechnung ersetzt Rechnung ${inv.number} vom ${d(inv.date)} (geänderter Rechnungsempfänger).`, (inv.note || "").replace(/^Diese Rechnung ersetzt.*\n?/, "")].filter(Boolean).join("\n") };
+  neu.number = takeInvoiceNumber(neu.date);
+  state.invoices.push(neu);
+  for (const pay of state.payments) if (pay.invoiceId === inv.id) pay.invoiceId = neu.id;
+  const b = byId("bookings", inv.bookingId); if (b) b.invoiceId = neu.id;
+  refreshInvoiceStatus(neu.id);
+  commit(`Storno ${st.number} und neue Rechnung ${neu.number} erstellt`);
+  if (isCloud()) { clearTimeout(auth.syncTimer); syncNow(); }
+  await archiveInvoicePdf(st.id, { quiet: true });
+  await archiveInvoicePdf(neu.id);
+  location.hash = `#/rechnung/${neu.id}`;
 }
 
 function deleteDraft(id) {
@@ -632,17 +718,20 @@ function deleteDraft(id) {
   location.hash = "#/rechnungen"; commit("Entwurf gelöscht");
 }
 
-function cancelInvoice(id) {
-  const inv = byId("invoices", id);
+async function cancelInvoice(id) {
+  let inv = byId("invoices", id);
   if (!confirm(`Rechnung ${inv.number} stornieren? Es wird eine Stornorechnung mit eigener Nummer erstellt.`)) return;
-  const st = { ...structuredClone(inv), id: C.uid("i_"), number: takeInvoiceNumber(today()), date: today(), type: "storno", refNumber: inv.number, status: "storno",
-    lines: inv.lines.map((l) => ({ ...l, price: -l.price })), note: `Storno zu Rechnung ${inv.number} vom ${d(inv.date)}.` };
-  inv.status = "storniert";
-  state.invoices.push(st);
+  if (blockedWrite()) return;
+  await freshForNumbering();
+  inv = byId("invoices", id);
+  if (!inv || inv.status === "storniert") { render(); return toast("Diese Rechnung wurde bereits storniert."); }
+  const st = makeStorno(inv);
   const b = byId("bookings", inv.bookingId);
   if (b) b.invoiceId = null;
-  persist();
+  commit(`Stornorechnung ${st.number} erstellt`);
+  if (isCloud()) { clearTimeout(auth.syncTimer); syncNow(); }
   location.hash = `#/rechnung/${st.id}`;
+  await archiveInvoicePdf(st.id);
 }
 
 function markPaid(id) {
@@ -653,7 +742,7 @@ function markPaid(id) {
     spec: [{ k: "date", l: "Datum", t: "date", req: 1 }, { k: "amount", l: "Betrag", t: "money", req: 1 }, { k: "via", l: "Zahlweg", t: "select", opts: [["kasse", "Bar / Kasse"], ["bank", "Überweisung (ohne Kontoimport)"]] }],
     intro: `<div class="note">Tipp: Bei importierten Kontoumsätzen die Zahlung lieber unter „Bank“ zuordnen – dann ist sie automatisch verknüpft.</div>`,
     onSave: (v) => {
-      state.payments.push({ id: C.uid("p_"), date: v.date, amount: v.amount, kind: "fewo", invoiceId: id, txId: v.via === "bank" ? "manuell" : null, note: inv.recipient?.name });
+      state.payments.push({ id: C.uid("p_"), date: v.date, amount: v.amount, kind: "fewo", invoiceId: id, txId: v.via === "bank" ? "manuell" : null, note: C.recipientName(inv.recipient) });
       refreshInvoiceStatus(id); commit("Zahlung erfasst");
     },
   });
@@ -662,22 +751,27 @@ function markPaid(id) {
 async function smoobuImport({ silent = false } = {}) {
   try {
     if (!silent) toast("Hole Buchungen von Smoobu …");
-    const res = await fetch("/.netlify/functions/smoobu-sync");
+    const res = await fetch("/.netlify/functions/smoobu-sync?gaeste=1");
     const data = await res.json().catch(() => ({ success: false, error: `Smoobu-Funktion nicht erreichbar (${res.status})` }));
     if (!data.success) throw new Error(data.error || "Unbekannter Fehler");
-    let added = 0, updated = 0, unknown = new Set();
+    let added = 0, updated = 0, drafts = 0, unknown = new Set();
     for (const sb of data.buchungen) {
       const unit = fewoUnits().find((u) => C.normalize(u.smoobuName || u.name) === C.normalize(sb.einheit_name));
       if (!unit) { unknown.add(sb.einheit_name); continue; }
       const existing = state.bookings.find((b) => b.smoobuId === sb.smoobu_id);
       const v = { unitId: unit.id, guest: sb.gast_name, from: sb.start_datum, to: sb.end_datum, adults: sb.erwachsene || sb.personen, children: sb.kinder || 0, total: Math.round((sb.preis || 0) * 100), channel: sb.kanal, status: sb.status === "cancelled" ? "storniert" : "bestaetigt", smoobuId: sb.smoobu_id,
         ...(sb.email ? { email: sb.email } : {}), ...(sb.telefon ? { phone: sb.telefon } : {}),
-        ...(sb.adresse?.street ? { guestStreet: sb.adresse.street, guestZip: sb.adresse.postalCode || "", guestCity: sb.adresse.location || "" } : {}) };
+        ...(sb.adresse?.street || sb.adresse?.location ? { guestStreet: sb.adresse.street || "", guestZip: sb.adresse.postalCode || "", guestCity: sb.adresse.location || "", guestCountry: sb.adresse.country || "" } : {}),
+        ...(sb.firma ? { guestCompany: sb.firma } : {}), ...(sb.referenz ? { channelRef: String(sb.referenz) } : {}) };
       if (existing) { const changed = ["from", "to", "status", "total", "guest"].some((k) => existing[k] !== v[k]); Object.assign(existing, v); if (changed) updated++; }
-      else { state.bookings.push({ id: C.uid("b_"), children: 0, cleaning: 0, kurtaxe: state.settings.defaultKurtaxe || 0, note: "", ...v }); added++; }
+      else {
+        const nb = { id: C.uid("b_"), children: 0, cleaning: 0, kurtaxe: state.settings.defaultKurtaxe || 0, note: "", ...v };
+        state.bookings.push(nb); added++;
+        if (state.settings.autoInvoiceDrafts && nb.status !== "storniert") { createInvoiceDraft(nb); drafts++; }
+      }
     }
-    if (silent) return { added, updated, unknown: [...unknown] };
-    commit(`Smoobu: ${added} neu, ${updated} aktualisiert${unknown.size ? ` · nicht zugeordnet: ${[...unknown].join(", ")} (Smoobu-Namen bei der Einheit eintragen)` : ""}`);
+    if (silent) return { added, updated, drafts, unknown: [...unknown] };
+    commit(`Smoobu: ${added} neu, ${updated} aktualisiert${drafts ? `, ${drafts} Rechnungsentwürfe` : ""}${unknown.size ? ` · nicht zugeordnet: ${[...unknown].join(", ")} (Smoobu-Namen bei der Einheit eintragen)` : ""}`);
   } catch (e) {
     if (silent) throw e;
     alert(`Smoobu-Import fehlgeschlagen: ${e.message}\n\nDer Import funktioniert, wenn die App über Netlify läuft und SMOOBU_API_KEY + SMOOBU_API_SECRET gesetzt sind.`);
@@ -744,7 +838,7 @@ function viewDashboard() {
     <div class="grid g2">
       <div class="card"><h2>Mietrückstände</h2>${Object.keys(backBy).length ? `<table>${Object.entries(backBy).map(([cid, v]) => `<tr><td>${esc(contractLabel(byId("contracts", cid)))}</td><td class="num neg">${eur(v)}</td></tr>`).join("")}</table>` : '<p class="muted">Keine Rückstände 🎉</p>'}</div>
       <div class="card"><h2>Nächste Anreisen</h2>${upcoming.length ? `<table>${upcoming.map((b) => `<tr class="click" data-act="editBooking" data-id="${b.id}"><td class="nowrap">${d(b.from)}</td><td>${esc(b.guest)}<div class="small muted">${esc(byId("units", b.unitId)?.name)} · ${C.nightsBetween(b.from, b.to)} N · ${esc(b.channel)}</div></td></tr>`).join("")}</table>` : '<p class="muted">Keine anstehenden Buchungen.</p>'}</div>
-      <div class="card"><h2>Offene Rechnungen</h2>${openInv.length ? `<table>${openInv.map((i) => `<tr class="click" data-go="#/rechnung/${i.id}"><td>${esc(i.number)}</td><td>${esc(i.recipient?.name)}</td><td class="num">${eur(C.invoiceTotals(i).gross - C.paidForInvoice(state, i.id))}</td></tr>`).join("")}</table>` : '<p class="muted">Alle Rechnungen bezahlt.</p>'}</div>
+      <div class="card"><h2>Offene Rechnungen</h2>${openInv.length ? `<table>${openInv.map((i) => `<tr class="click" data-go="#/rechnung/${i.id}"><td>${esc(i.number)}</td><td>${esc(C.recipientName(i.recipient))}</td><td class="num">${eur(C.invoiceTotals(i).gross - C.paidForInvoice(state, i.id))}</td></tr>`).join("")}</table>` : '<p class="muted">Alle Rechnungen bezahlt.</p>'}</div>
       ${(() => { const opp = R.increaseOpportunities(state, today()); return opp.length ? `<div class="card"><h2>💶 Mieterhöhung möglich</h2>${opp.map((o) => `<div class="small" style="margin-bottom:6px"><b>${esc(contractLabel(byId("contracts", o.contractId)))}</b><br>Kaltmiete ${eur(o.now)} → bis zu ${eur(o.maxByCap)} (Kappungsgrenze ${o.cap} %), wirksam frühestens ${C.fmtMonth(o.effective)}. Ortsübliche Vergleichsmiete beachten. ${btn("letterFor", "Erhöhungsverlangen", "sm link", `mieterhoehung|${o.contractId}`)}</div>`).join("")}</div>` : ""; })()}
       ${(() => { const tasks = openTasks(); return tasks.length ? `<div class="card"><h2>📌 Offene Vorgänge & Wiedervorlagen</h2>${tasks.slice(0, 8).map((n) => `<div class="small click" data-go="#/mieter/${n.tenantId}" data-folder-tab="vorgaenge" style="margin-bottom:4px">${NOTE_TYPES[n.type]?.split(" ")[0] || ""} <b>${esc(n.title)}</b> – ${esc(byId("tenants", n.tenantId)?.name || "")}${n.due ? ` <span class="${n.due < today() ? "neg" : "muted"}">fällig ${d(n.due)}</span>` : ""}</div>`).join("")}</div>` : ""; })()}
       ${(() => { const inc = state.contracts.filter((c) => c.start <= today() && (!c.end || c.end >= today())).filter((c) => folderChecklist(c).missing.length); return inc.length ? `<div class="card"><h2>📁 Unvollständige Mieterakten</h2>${inc.slice(0, 8).map((c) => `<div class="small click" data-go="#/mieter/${c.tenantIds[0]}" style="margin-bottom:4px"><b>${esc(tenantNames(c))}</b> – fehlt: ${folderChecklist(c).missing.map((m) => esc(m.label.split(" (")[0])).join(", ")}</div>`).join("")}</div>` : ""; })()}
@@ -1029,53 +1123,209 @@ const invBadge = (i) => ({ entwurf: '<span class="badge grey">Entwurf</span>', o
 
 function viewInvoices() {
   const list = [...state.invoices].sort((a, b) => (a.number < b.number ? 1 : -1));
-  return head("Rechnungen", "Gäste-Rechnungen mit fortlaufender Nummer, 7 % USt und Kurtaxe", btn("newInvoice", "+ Rechnung", "primary")) + `
+  const missing = bookingsWithoutInvoice();
+  const openBk = missing.filter((b) => b.from <= today());
+  return head("Rechnungen", "Gäste-Rechnungen mit fortlaufender Nummer, 7 % USt und Kurtaxe – auch für Booking.com, Airbnb & Co. (über Smoobu)", btn("newInvoice", "+ Rechnung", "primary")) + `
+    <div class="card"><h2>🧾 Buchungen ohne Rechnung ${missing.length ? `<span class="badge warn">${missing.length}</span>` : ""}</h2>
+      ${missing.length ? `<div class="table-wrap"><table><thead><tr><th>Gast</th><th>Kanal</th><th>Zeitraum</th><th class="num">Betrag</th><th></th></tr></thead><tbody>
+        ${missing.slice(0, 30).map((b) => `<tr><td><b>${esc(b.guest || "Gast")}</b>${b.guestCompany ? `<div class="small muted">${esc(b.guestCompany)}</div>` : ""}${!b.guestStreet ? '<div class="small muted">Anschrift fehlt noch</div>' : ""}</td><td>${esc(b.channel || "Direkt")}${b.channelRef ? `<div class="small muted">Nr. ${esc(b.channelRef)}</div>` : ""}</td><td class="small nowrap">${d(b.from)} – ${d(b.to)}</td><td class="num">${eur(b.total || 0)}</td><td>${btn("invoiceFromBooking", "Rechnung erstellen", "sm primary", b.id)}</td></tr>`).join("")}
+      </tbody></table></div>
+      <div class="toolbar" style="margin-top:8px">${openBk.length ? btn("draftsForAll", `Für alle ${openBk.length} begonnenen Aufenthalte Entwürfe anlegen`, "") : ""}</div>` : '<p class="small muted">Alle Buchungen haben eine Rechnung. 👍</p>'}
+      <label class="f inline small" style="margin-top:8px"><input type="checkbox" data-change="autoInvoiceDrafts" ${state.settings.autoInvoiceDrafts ? "checked" : ""}> Für neue Smoobu-Buchungen (Booking.com, Airbnb …) automatisch einen Rechnungsentwurf anlegen</label>
+      <p class="small muted">Gast, Anschrift, E-Mail, Kanal und Buchungsnummer kommen aus Smoobu. Soll die Rechnung an eine <b>Firma</b> gehen, im Entwurf auf „👤 Empfänger / Firma“ tippen – auch nach dem Festschreiben änderbar (dann automatisch per Storno + neuer Rechnung).</p></div>` + `
     <div class="card">${list.length ? `<div class="table-wrap"><table><thead><tr><th>Nr.</th><th>Datum</th><th>Empfänger</th><th>Zeitraum</th><th class="num">Betrag</th><th class="num">Bezahlt</th><th>Status</th></tr></thead><tbody>
-      ${list.map((i) => `<tr class="click" data-go="#/rechnung/${i.id}"><td><b>${esc(i.number)}</b></td><td>${d(i.date)}</td><td>${esc(i.recipient?.name)}</td><td class="small nowrap">${i.serviceFrom ? `${d(i.serviceFrom)} – ${d(i.serviceTo)}` : ""}</td><td class="num">${eur(C.invoiceTotals(i).gross)}</td><td class="num">${eur(C.paidForInvoice(state, i.id))}</td><td>${invBadge(i)}</td></tr>`).join("")}
+      ${list.map((i) => `<tr class="click" data-go="#/rechnung/${i.id}"><td><b>${esc(i.number)}</b></td><td>${d(i.date)}</td><td>${esc(C.recipientName(i.recipient))}${i.recipient?.company && i.recipient?.name ? `<div class="small muted">${esc(i.recipient.name)}</div>` : ""}</td><td class="small nowrap">${i.serviceFrom ? `${d(i.serviceFrom)} – ${d(i.serviceTo)}` : ""}</td><td class="num">${eur(C.invoiceTotals(i).gross)}</td><td class="num">${eur(C.paidForInvoice(state, i.id))}</td><td>${invBadge(i)}${(i.sentLog || []).length ? ' <span title="versendet">📧</span>' : ""}${i.pdfDocId ? ' <span title="PDF abgelegt">📁</span>' : ""}</td></tr>`).join("")}
     </tbody></table></div>` : '<p class="muted">Noch keine Rechnungen. Am schnellsten: unter „Ferienwohnung“ bei einer Buchung „Rechnung erstellen“.</p>'}</div>`;
+}
+
+const PAID_VIA = (channel) => [["", "Per Überweisung (mit Zahlungsziel)"], ["portal", `Bereits bezahlt über ${channel && channel !== "Direkt" ? channel : "das Buchungsportal"}`], ["bar", "Bereits bar / vor Ort bezahlt"], ["ueberweisung", "Bereits per Überweisung bezahlt"]];
+
+function paymentText(inv) {
+  if (inv.type === "storno") return "";
+  const s = state.settings, b = byId("bookings", inv.bookingId);
+  if (inv.paidVia === "portal") return `Der Betrag wurde bereits über ${b?.channel && b.channel !== "Direkt" ? b.channel : "das Buchungsportal"} bezahlt.`;
+  if (inv.paidVia === "bar") return "Der Betrag wurde bereits bar bezahlt.";
+  if (inv.paidVia === "ueberweisung" || inv.status === "bezahlt") return "Der Betrag wurde bereits beglichen.";
+  return `Bitte überweisen Sie den Betrag bis zum ${d(addDays(inv.date, Number(s.paymentTermDays) || 14))} unter Angabe der Rechnungsnummer${s.invoiceIban ? " auf das unten genannte Konto" : ""}.`;
+}
+
+// Inhalt einer Rechnung – gemeinsame Grundlage für Bildschirm, Druck und PDF
+function invoiceModel(inv) {
+  const s = state.settings, t = C.invoiceTotals(inv);
+  const unit = byId("units", inv.unitId), obj = byId("objects", unit?.objectId);
+  const sender = [s.ownerName, s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean);
+  const draft = inv.status === "entwurf", ku = !!inv.kleinunternehmer;
+  const paid = inv.type !== "storno" && !inv.paidVia ? C.paidForInvoice(state, inv.id) : 0;
+  const title = `${draft ? "ENTWURF – " : ""}${inv.type === "storno" ? "Stornorechnung" : "Rechnung"} ${inv.number || ""}`.trim();
+  return {
+    draft, title, author: s.ownerName,
+    senderLine: sender.join(" · "),
+    recipient: [...C.recipientLines(inv.recipient), ...(inv.recipient?.vatId ? [`USt-IdNr. ${inv.recipient.vatId}`] : [])],
+    info: [s.ownerName, ...sender.slice(1), s.ownerPhone && `Tel. ${s.ownerPhone}`, s.ownerEmail].filter(Boolean),
+    meta: [["Rechnungsnr.", inv.number || "–"], ["Datum", d(inv.date)], inv.serviceFrom && ["Leistungszeitraum", `${d(inv.serviceFrom)} – ${d(inv.serviceTo || inv.serviceFrom)}`],
+      s.taxNumber && ["Steuernummer", s.taxNumber], s.vatId && ["USt-IdNr.", s.vatId]].filter(Boolean),
+    intro: [unit && `Unterkunft: ${unit.name}${obj ? `, ${[obj.street, [obj.zip, obj.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}` : ""}${unit.registrationNo ? ` · Registrierungsnr. ${unit.registrationNo}` : ""}`,
+      inv.guestName && inv.recipient?.company && `Gast: ${inv.guestName}`].filter(Boolean),
+    kleinunternehmer: ku,
+    lines: inv.lines.map((l, i) => ({ pos: i + 1, desc: l.desc, sub: l.passThrough ? "durchlaufender Posten, nicht umsatzsteuerbar" : "", qty: String(l.qty).replace(".", ","), price: eur(l.price), vat: l.passThrough ? "–" : `${l.vat} %`, total: eur(Math.round(l.qty * l.price)) })),
+    totals: [...(ku ? [] : t.taxes.flatMap((x) => [[`Nettobetrag ${x.rate} %`, eur(x.net)], [`zzgl. ${x.rate} % USt`, eur(x.vat)]])),
+      ...(t.passThrough ? [["Durchlaufende Posten", eur(t.passThrough)]] : []), ["Gesamtbetrag", eur(t.gross), true],
+      ...(paid ? [["bereits bezahlt", eur(paid)], ["Offen", eur(t.gross - paid), true]] : [])],
+    paragraphs: [ku && "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.", inv.note, paymentText(inv), s.invoiceFooter].filter(Boolean),
+    footer: [sender, [s.ownerEmail, s.ownerPhone, s.taxNumber && `St.-Nr. ${s.taxNumber}`, s.vatId && `USt-IdNr. ${s.vatId}`].filter(Boolean),
+      [s.invoiceBank, s.invoiceIban && `IBAN ${s.invoiceIban}`, s.invoiceBic && `BIC ${s.invoiceBic}`].filter(Boolean)],
+  };
+}
+
+const invoiceFileName = (inv) => `${inv.type === "storno" ? "Storno" : "Rechnung"} ${inv.number || "Entwurf"} ${C.recipientName(inv.recipient)}`.replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " ").trim().slice(0, 90) + ".pdf";
+
+// PDF erzeugen und in „Belege & Dokumente → Ausgangsrechnungen“ ablegen (unveränderbares Original, GoBD)
+async function archiveInvoicePdf(id, { quiet = false } = {}) {
+  const inv = byId("invoices", id);
+  if (!inv || inv.status === "entwurf" || (isCloud() && !canWrite())) return null;
+  try {
+    const P = await import("./pdf.js");
+    const blob = P.invoicePdf(invoiceModel(inv));
+    const docId = C.uid("d_");
+    await putDocBlob(docId, blob);
+    const unit = byId("units", inv.unitId);
+    state.documents.push({ id: docId, name: invoiceFileName(inv), type: "application/pdf", size: blob.size, thumb: null, created: new Date().toISOString(),
+      kind: "ausgangsrechnung", objectId: unit?.objectId || "", contractId: "", invoiceId: inv.id, bookingId: inv.bookingId || "", status: "verarbeitet",
+      note: `${inv.type === "storno" ? "Stornorechnung" : "Rechnung"} an ${C.recipientName(inv.recipient)}`, ki: null });
+    inv.pdfDocId = docId;
+    commit(quiet ? undefined : `📁 PDF abgelegt unter Belege & Dokumente → Ausgangsrechnungen`);
+    return blob;
+  } catch (e) {
+    if (!quiet) alert("PDF konnte nicht erstellt werden: " + e.message);
+    return null;
+  }
+}
+
+async function invoicePdfBlob(id) {
+  const inv = byId("invoices", id);
+  if (inv.pdfDocId) { const b = await getDocBlob(inv.pdfDocId); if (b) return b; }
+  if (inv.status !== "entwurf") { const b = await archiveInvoicePdf(id, { quiet: true }); if (b) return b; }
+  const P = await import("./pdf.js");
+  return P.invoicePdf(invoiceModel(inv)); // Entwurf: nur Vorschau, wird nicht abgelegt
+}
+
+async function downloadInvoicePdf(id) {
+  const inv = byId("invoices", id);
+  const blob = await invoicePdfBlob(id);
+  download(invoiceFileName(inv), blob);
+}
+
+// ---- Versand per E-Mail
+function invoiceMailDefaults(inv) {
+  const s = state.settings, unit = byId("units", inv.unitId), r = inv.recipient || {};
+  const what = inv.type === "storno" ? "Stornorechnung" : "Rechnung";
+  return {
+    to: r.email || byId("bookings", inv.bookingId)?.email || "",
+    subject: `${what} ${inv.number}${unit ? ` – ${unit.name}` : ""}`,
+    text: `${r.company ? "Sehr geehrte Damen und Herren," : `Guten Tag${r.name ? " " + r.name : ""},`}
+
+anbei erhalten Sie ${inv.type === "storno" ? "die Stornorechnung" : "die Rechnung"} ${inv.number}${inv.serviceFrom ? ` für den Aufenthalt vom ${d(inv.serviceFrom)} bis ${d(inv.serviceTo || inv.serviceFrom)}` : ""}${unit ? ` (${unit.name})` : ""} als PDF.${inv.replaces ? ` Sie ersetzt die Rechnung ${inv.replaces}.` : ""}
+${paymentText(inv) ? "\n" + paymentText(inv) + "\n" : ""}
+Mit freundlichen Grüßen
+${s.ownerName || ""}${s.ownerPhone ? "\nTel. " + s.ownerPhone : ""}`,
+  };
+}
+
+function emailInvoice(id) {
+  const inv = byId("invoices", id), s = state.settings;
+  if (inv.status === "entwurf") return alert("Bitte die Rechnung zuerst festschreiben – Entwürfe ohne Rechnungsnummer dürfen nicht verschickt werden.");
+  const m = invoiceMailDefaults(inv);
+  const proxy = /guest\.booking\.com|airbnb|expedia|vrbo/i.test(m.to);
+  const read = (form) => ({ to: form.to.value.trim(), copy: form.copy.checked, subject: form.subject.value.trim(), text: form.text.value });
+  dialog({
+    title: "Rechnung per E-Mail senden", submit: "📧 Jetzt senden", wide: true,
+    body: `<label class="f"><span>An *</span><input name="to" type="email" required value="${esc(m.to)}" placeholder="E-Mail des Gastes bzw. der Firma"></label>
+      ${proxy ? '<div class="note small">Das ist eine Weiterleitungs-Adresse des Portals. Anhänge kommen dort nicht immer an – für Firmenrechnungen besser die E-Mail der Buchhaltung eintragen.</div>' : ""}
+      <label class="f inline"><input type="checkbox" name="copy" ${s.ownerEmail ? "checked" : "disabled"}> Kopie an mich ${s.ownerEmail ? `(${esc(s.ownerEmail)})` : '<span class="muted">(eigene E-Mail unter Einstellungen eintragen)</span>'}</label>
+      <label class="f"><span>Betreff</span><input name="subject" value="${esc(m.subject)}"></label>
+      <label class="f"><span>Nachricht</span><textarea name="text" style="min-height:200px">${esc(m.text)}</textarea></label>
+      <p class="small muted">📎 Anhang: ${esc(invoiceFileName(inv))}</p>
+      <div class="toolbar"><button type="button" class="btn" data-share>📤 Stattdessen mit eigenem Mail-Programm / teilen</button></div>`,
+    onOpen: (form) => { form.querySelector("[data-share]").onclick = () => { $("#modal").close(); shareInvoice(id, read(form)); }; },
+    onSubmit: (form) => {
+      const v = read(form);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.to)) { toast("Bitte eine gültige E-Mail-Adresse eingeben."); return false; }
+      sendInvoiceMail(id, v);
+    },
+  });
+}
+
+function logSent(id, to, via) {
+  const inv = byId("invoices", id);
+  if (!inv || (isCloud() && !canWrite())) return;
+  (inv.sentLog ||= []).push({ at: new Date().toISOString(), to, via });
+  if (inv.recipient && to && !inv.recipient.email && via === "email") inv.recipient.email = to;
+  commit();
+}
+
+async function sendInvoiceMail(id, m) {
+  const inv = byId("invoices", id), s = state.settings;
+  toast("📧 Rechnung wird gesendet …");
+  try {
+    const blob = await invoicePdfBlob(id);
+    const content = await F.blobToBase64(blob);
+    await callFn("immo-mail", { to: m.to, bcc: m.copy && s.ownerEmail ? s.ownerEmail : "", replyTo: s.ownerEmail || "", fromName: s.ownerName || "", subject: m.subject, text: m.text,
+      attachment: { filename: invoiceFileName(inv), content, contentType: "application/pdf" } });
+    logSent(id, m.to, "email");
+    toast(`✅ Rechnung ${inv.number} an ${m.to} gesendet`);
+  } catch (e) {
+    if (confirm(`E-Mail konnte nicht über den Server gesendet werden:\n${e.message}\n\nStattdessen mit deinem eigenen Mail-Programm senden?`)) shareInvoice(id, m);
+  }
+}
+
+// Ohne Mail-Server: PDF über das Teilen-Menü (Handy) oder Download + Mail-Programm (Computer)
+async function shareInvoice(id, m) {
+  const inv = byId("invoices", id);
+  const blob = await invoicePdfBlob(id);
+  const name = invoiceFileName(inv);
+  const file = typeof File === "function" ? new File([blob], name, { type: "application/pdf" }) : null;
+  if (file && navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: m.subject, text: m.text }); logSent(id, m.to, "teilen"); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  download(name, blob);
+  location.href = `mailto:${encodeURIComponent(m.to)}?subject=${encodeURIComponent(m.subject)}&body=${encodeURIComponent(m.text)}`;
+  logSent(id, m.to, "mailprogramm");
+  toast("PDF wurde heruntergeladen – bitte im Mail-Programm als Anhang hinzufügen.");
 }
 
 function viewInvoice(id) {
   const inv = byId("invoices", id);
   if (!inv) return head("Rechnung nicht gefunden");
-  const s = state.settings, t = C.invoiceTotals(inv);
-  const unit = byId("units", inv.unitId), obj = byId("objects", unit?.objectId);
-  const due = addDays(inv.date, Number(s.paymentTermDays) || 14);
-  const sender = [s.ownerName, s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean);
+  const s = state.settings, m = invoiceModel(inv);
   const missing = [!s.ownerName && "Name", !s.ownerStreet && "Anschrift", !s.taxNumber && !s.vatId && "Steuernummer/USt-IdNr."].filter(Boolean);
+  const final = inv.status !== "entwurf", active = final && inv.type !== "storno" && inv.status !== "storniert";
+  const pdfDoc = byId("documents", inv.pdfDocId);
+  const sent = inv.sentLog || [];
+  const fmtAt = (iso) => new Date(iso).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
   return `<div class="head noprint"><div><a href="#/rechnungen">← Rechnungen</a></div><div class="toolbar">
-      ${inv.status === "entwurf" ? btn("editInvoice", "Bearbeiten", "", inv.id) + btn("deleteDraft", "Entwurf löschen", "danger", inv.id) + btn("finalizeInvoice", "✓ Festschreiben & Nummer vergeben", "primary", inv.id)
-        : inv.type !== "storno" && inv.status !== "storniert" ? (inv.status !== "bezahlt" ? btn("markPaid", "Zahlung erfassen", "", inv.id) : "") + btn("cancelInvoice", "Stornieren", "danger", inv.id) : ""}
-      <button class="btn primary" onclick="window.print()">Drucken / PDF</button></div></div>
-    ${inv.status === "entwurf" ? `<div class="note warn noprint">Entwurf – noch keine Rechnungsnummer. Erst nach dem Festschreiben versenden.${invoiceMissing(inv).length ? ` Es fehlen: ${invoiceMissing(inv).map(esc).join(", ")}.` : ""}</div>` : ""}
+      ${!final ? btn("editInvoice", "Bearbeiten", "", inv.id) + btn("invoiceRecipient", "👤 Empfänger / Firma", "", inv.id) + btn("deleteDraft", "Entwurf löschen", "danger", inv.id) + btn("invoicePdf", "📄 Vorschau-PDF", "", inv.id) + btn("finalizeInvoice", "✓ Festschreiben & Nummer vergeben", "primary", inv.id)
+        : `${btn("invoicePdf", "📄 PDF", "", inv.id)}${btn("emailInvoice", "📧 Per E-Mail senden", "primary", inv.id)}${active ? btn("invoiceRecipient", "👤 Empfänger ändern", "", inv.id) + (inv.status !== "bezahlt" ? btn("markPaid", "Zahlung erfassen", "", inv.id) : "") + btn("cancelInvoice", "Stornieren", "danger", inv.id) : ""}`}
+      <button class="btn" onclick="window.print()">🖨 Drucken</button></div></div>
+    ${!final ? `<div class="note warn noprint">Entwurf – noch keine Rechnungsnummer. Empfänger prüfen (z. B. <b>Firma statt Gast</b> über „👤 Empfänger / Firma“), dann festschreiben. Danach wird das PDF automatisch abgelegt und kann per E-Mail verschickt werden.${invoiceMissing(inv).length ? ` Es fehlen: ${invoiceMissing(inv).map(esc).join(", ")}.` : ""}</div>` : ""}
+    ${final ? `<div class="note noprint small">${pdfDoc ? `📁 PDF abgelegt: <button class="btn link small" data-act="openDoc" data-id="${pdfDoc.id}">${esc(pdfDoc.name)}</button> (Belege & Dokumente → Ausgangsrechnungen)` : `📄 PDF noch nicht abgelegt ${btn("archiveInvoice", "Jetzt ablegen", "sm", inv.id)}`}
+      ${sent.length ? `<br>📧 Versendet: ${sent.map((x) => `${fmtAt(x.at)} an ${esc(x.to || "–")}${x.via !== "email" ? " (eigenes Mail-Programm)" : ""}`).join(" · ")}` : ""}
+      ${inv.replaces ? `<br>↺ Ersetzt Rechnung ${esc(inv.replaces)}` : ""}${inv.status === "storniert" ? `<br>⚠️ Diese Rechnung wurde storniert.` : ""}</div>` : ""}
     ${R.eInvoiceHint(inv) ? `<div class="note noprint small">§ ${esc(R.eInvoiceHint(inv))}</div>` : ""}
     ${missing.length ? `<div class="note warn noprint">Pflichtangaben fehlen: ${missing.join(", ")} – bitte unter <a href="#/einstellungen">Einstellungen</a> ergänzen.</div>` : ""}
     <div class="paper">
-      <div class="top"><div><div class="sender">${esc(sender.join(" · "))}</div>
-        <div><b>${esc(inv.recipient?.name)}</b><br>${esc(inv.recipient?.address || "").replace(/\n/g, "<br>")}${inv.recipient?.vatId ? `<br>USt-IdNr. ${esc(inv.recipient.vatId)}` : ""}</div></div>
-        <div><b>${esc(s.ownerName)}</b><br>${sender.slice(1).map(esc).join("<br>")}${s.ownerPhone ? `<br>Tel. ${esc(s.ownerPhone)}` : ""}${s.ownerEmail ? `<br>${esc(s.ownerEmail)}` : ""}
-          <table class="meta" style="margin-top:12px"><tr><td class="muted">Rechnungsnr.</td><td><b>${esc(inv.number)}</b></td></tr><tr><td class="muted">Datum</td><td>${d(inv.date)}</td></tr>
-          ${inv.serviceFrom ? `<tr><td class="muted">Leistungszeitraum</td><td>${d(inv.serviceFrom)} – ${d(inv.serviceTo)}</td></tr>` : ""}
-          ${s.taxNumber ? `<tr><td class="muted">Steuernummer</td><td>${esc(s.taxNumber)}</td></tr>` : ""}${s.vatId ? `<tr><td class="muted">USt-IdNr.</td><td>${esc(s.vatId)}</td></tr>` : ""}</table></div></div>
-      <h1>${inv.status === "entwurf" ? "ENTWURF – " : ""}${inv.type === "storno" ? "Stornorechnung" : "Rechnung"} ${esc(inv.number)}</h1>
-      ${unit ? `<p style="margin-bottom:12px">Unterkunft: ${esc(unit.name)}${obj ? `, ${esc([obj.street, [obj.zip, obj.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}` : ""}${unit.registrationNo ? ` · Registrierungsnr. ${esc(unit.registrationNo)}` : ""}</p>` : ""}
-      <table class="lines"><thead><tr><th>Pos.</th><th>Beschreibung</th><th class="num">Menge</th><th class="num">Einzelpreis</th>${inv.kleinunternehmer ? "" : '<th class="num">USt</th>'}<th class="num">Gesamt</th></tr></thead><tbody>
-        ${inv.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.desc)}${l.passThrough ? '<div class="small muted">durchlaufender Posten, nicht umsatzsteuerbar</div>' : ""}</td><td class="num">${String(l.qty).replace(".", ",")}</td><td class="num">${eur(l.price)}</td>${inv.kleinunternehmer ? "" : `<td class="num">${l.passThrough ? "–" : l.vat + " %"}</td>`}<td class="num">${eur(Math.round(l.qty * l.price))}</td></tr>`).join("")}
+      <div class="top"><div><div class="sender">${esc(m.senderLine)}</div>
+        <div>${m.recipient.map((l, i) => (i === 0 ? `<b>${esc(l)}</b>` : esc(l))).join("<br>")}</div></div>
+        <div><b>${esc(m.info[0] || "")}</b><br>${m.info.slice(1).map(esc).join("<br>")}
+          <table class="meta" style="margin-top:12px">${m.meta.map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join("")}</table></div></div>
+      <h1>${esc(m.title)}</h1>
+      ${m.intro.map((l) => `<p style="margin-bottom:6px">${esc(l)}</p>`).join("")}
+      <table class="lines"><thead><tr><th>Pos.</th><th>Beschreibung</th><th class="num">Menge</th><th class="num">Einzelpreis</th>${m.kleinunternehmer ? "" : '<th class="num">USt</th>'}<th class="num">Gesamt</th></tr></thead><tbody>
+        ${m.lines.map((l) => `<tr><td>${l.pos}</td><td>${esc(l.desc)}${l.sub ? `<div class="small muted">${esc(l.sub)}</div>` : ""}</td><td class="num">${esc(l.qty)}</td><td class="num">${esc(l.price)}</td>${m.kleinunternehmer ? "" : `<td class="num">${esc(l.vat)}</td>`}<td class="num">${esc(l.total)}</td></tr>`).join("")}
       </tbody></table>
-      <table class="totals">
-        ${inv.kleinunternehmer ? "" : t.taxes.map((x) => `<tr><td>Nettobetrag ${x.rate} %</td><td class="num">${eur(x.net)}</td></tr><tr><td>zzgl. ${x.rate} % USt</td><td class="num">${eur(x.vat)}</td></tr>`).join("")}
-        ${t.passThrough ? `<tr><td>Durchlaufende Posten</td><td class="num">${eur(t.passThrough)}</td></tr>` : ""}
-        <tr class="sum"><td>Gesamtbetrag</td><td class="num">${eur(t.gross)}</td></tr>
-        ${C.paidForInvoice(state, inv.id) && inv.type !== "storno" ? `<tr><td>bereits bezahlt</td><td class="num">${eur(C.paidForInvoice(state, inv.id))}</td></tr><tr><td><b>Offen</b></td><td class="num"><b>${eur(t.gross - C.paidForInvoice(state, inv.id))}</b></td></tr>` : ""}
-      </table>
-      <div style="margin-top:24px">
-        ${inv.kleinunternehmer ? "<p>Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>" : ""}
-        ${inv.note ? `<p>${esc(inv.note).replace(/\n/g, "<br>")}</p>` : ""}
-        ${inv.type !== "storno" && inv.status !== "bezahlt" ? `<p>Bitte überweisen Sie den Betrag bis zum ${d(due)} unter Angabe der Rechnungsnummer${s.invoiceIban ? ` auf das unten genannte Konto` : ""}.</p>` : inv.status === "bezahlt" ? "<p>Der Betrag wurde bereits beglichen.</p>" : ""}
-        ${s.invoiceFooter ? `<p style="margin-top:10px">${esc(s.invoiceFooter)}</p>` : ""}
-      </div>
-      <div class="foot"><div>${sender.map(esc).join("<br>")}</div><div>${s.ownerEmail ? esc(s.ownerEmail) + "<br>" : ""}${s.ownerPhone ? esc(s.ownerPhone) + "<br>" : ""}${s.taxNumber ? "St.-Nr. " + esc(s.taxNumber) : ""}${s.vatId ? "<br>USt-IdNr. " + esc(s.vatId) : ""}</div>
-        <div>${s.invoiceBank ? esc(s.invoiceBank) + "<br>" : ""}${s.invoiceIban ? "IBAN " + esc(s.invoiceIban) : ""}${s.invoiceBic ? "<br>BIC " + esc(s.invoiceBic) : ""}</div></div>
+      <table class="totals">${m.totals.map(([k, v, bold]) => `<tr class="${bold ? "sum" : ""}"><td>${esc(k)}</td><td class="num">${esc(v)}</td></tr>`).join("")}</table>
+      <div style="margin-top:24px">${m.paragraphs.map((p) => `<p style="margin-bottom:8px">${esc(p).replace(/\n/g, "<br>")}</p>`).join("")}</div>
+      <div class="foot">${m.footer.map((c) => `<div>${c.map(esc).join("<br>")}</div>`).join("")}</div>
     </div>`;
 }
 
@@ -1126,7 +1376,7 @@ function viewReport(range) {
   const s = state.settings;
   const kFrom = C.monthKey(from), kTo = C.monthKey(to);
   const si = C.sollIst(state, kFrom, kTo);
-  const payLabel = (p) => p.kind === "miete" ? `Miete ${C.fmtMonth(p.period)} · ${contractLabel(byId("contracts", p.contractId))}` : p.kind === "fewo" ? `Rechnung ${byId("invoices", p.invoiceId)?.number || ""} · ${byId("invoices", p.invoiceId)?.recipient?.name || ""}` : `${C.INCOME_KINDS[p.kind]} ${p.note || ""}`;
+  const payLabel = (p) => p.kind === "miete" ? `Miete ${C.fmtMonth(p.period)} · ${contractLabel(byId("contracts", p.contractId))}` : p.kind === "fewo" ? `Rechnung ${byId("invoices", p.invoiceId)?.number || ""} · ${C.recipientName(byId("invoices", p.invoiceId)?.recipient)}` : `${C.INCOME_KINDS[p.kind]} ${p.note || ""}`;
   return `<div class="head noprint"><a href="#/steuer">← Steuer & DATEV</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
     <div class="card"><h1>Immobilien-Bericht ${d(from)} – ${d(to)}</h1><p class="muted">${esc(s.ownerName)} · erstellt am ${d(today())}${s.datevMandant ? ` · Mandant ${esc(s.datevMandant)}` : ""}</p>
       <div class="kpis" style="margin-top:12px"><div class="kpi"><div class="l">Einnahmen</div><div class="v">${eur(sum(pays.filter((p) => p.kind !== "kaution"), (p) => p.amount))}</div></div>
@@ -1134,7 +1384,7 @@ function viewReport(range) {
         <div class="kpi"><div class="l">Mietrückstand im Zeitraum</div><div class="v">${eur(-sum(si.filter((r) => r.diff < 0), (r) => r.diff))}</div></div></div>
       <h3>Einnahmen</h3><table><thead><tr><th>Datum</th><th>Vorgang</th><th>Weg</th><th class="num">Betrag</th></tr></thead><tbody>${pays.map((p) => `<tr><td>${d(p.date)}</td><td>${esc(payLabel(p))}</td><td>${p.txId ? "Bank" : "Kasse"}</td><td class="num">${eur(p.amount)}</td></tr>`).join("")}</tbody></table>
       <h3>Ausgaben</h3><table><thead><tr><th>Datum</th><th>Empfänger</th><th>Kategorie</th><th>Objekt</th><th>Beleg</th><th class="num">Betrag</th></tr></thead><tbody>${exps.map((e) => `<tr><td>${d(e.date)}</td><td>${esc(e.vendor)}</td><td>${esc(C.EXPENSE_CATEGORIES[e.category]?.label)}</td><td>${esc(byId("objects", e.objectId)?.name || "")}</td><td>${esc(e.belegNr || "")}</td><td class="num">${eur(e.amount)}</td></tr>`).join("")}</tbody></table>
-      ${invs.length ? `<h3>Ausgestellte Rechnungen</h3><table><thead><tr><th>Nr.</th><th>Datum</th><th>Empfänger</th><th class="num">Netto</th><th class="num">USt</th><th class="num">Brutto</th><th>Status</th></tr></thead><tbody>${invs.map((i) => { const t = C.invoiceTotals(i); return `<tr><td>${esc(i.number)}</td><td>${d(i.date)}</td><td>${esc(i.recipient?.name)}</td><td class="num">${eur(t.net)}</td><td class="num">${eur(t.vat)}</td><td class="num">${eur(t.gross)}</td><td>${esc(i.status)}</td></tr>`; }).join("")}</tbody></table>` : ""}
+      ${invs.length ? `<h3>Ausgestellte Rechnungen</h3><table><thead><tr><th>Nr.</th><th>Datum</th><th>Empfänger</th><th class="num">Netto</th><th class="num">USt</th><th class="num">Brutto</th><th>Status</th></tr></thead><tbody>${invs.map((i) => { const t = C.invoiceTotals(i); return `<tr><td>${esc(i.number)}</td><td>${d(i.date)}</td><td>${esc(C.recipientName(i.recipient))}</td><td class="num">${eur(t.net)}</td><td class="num">${eur(t.vat)}</td><td class="num">${eur(t.gross)}</td><td>${esc(i.status)}</td></tr>`; }).join("")}</tbody></table>` : ""}
       <h3>Offene Mieten</h3><table>${si.filter((r) => r.diff < 0).map((r) => `<tr><td>${C.fmtMonth(r.key)}</td><td>${esc(contractLabel(byId("contracts", r.contractId)))}</td><td class="num neg">${eur(r.diff)}</td></tr>`).join("") || '<tr><td class="muted">keine</td></tr>'}</table>
     </div>`;
 }
@@ -1352,7 +1602,7 @@ function viewSettings() {
 
 // ---------------------------------------------------------------- Belege & Dokumente
 
-const DOC_KINDS = { beleg: "Rechnung / Beleg", bescheid: "Bescheid (Grundsteuer, Abgaben)", abrechnung: "Versorger-/Jahresabrechnung", vertrag: "Mietvertrag", nachtrag: "Nachtrag / Mieterhöhung / Vereinbarung", protokoll: "Übergabeprotokoll", kaution: "Kaution (Nachweis, Kautionskonto)", selbstauskunft: "Mieterselbstauskunft / Bonität", wohnungsgeber: "Wohnungsgeberbestätigung", kuendigung: "Kündigung", korrespondenz: "Schriftverkehr", foto: "Fotos / Mängel", zaehler: "Zählerstand / Foto", zinsbescheinigung: "Zinsbescheinigung (Darlehen)", steuerbescheid: "Steuerbescheid", sonstiges: "Sonstiges" };
+const DOC_KINDS = { beleg: "Rechnung / Beleg", ausgangsrechnung: "Ausgangsrechnung (an Gäste/Firmen)", bescheid: "Bescheid (Grundsteuer, Abgaben)", abrechnung: "Versorger-/Jahresabrechnung", vertrag: "Mietvertrag", nachtrag: "Nachtrag / Mieterhöhung / Vereinbarung", protokoll: "Übergabeprotokoll", kaution: "Kaution (Nachweis, Kautionskonto)", selbstauskunft: "Mieterselbstauskunft / Bonität", wohnungsgeber: "Wohnungsgeberbestätigung", kuendigung: "Kündigung", korrespondenz: "Schriftverkehr", foto: "Fotos / Mängel", zaehler: "Zählerstand / Foto", zinsbescheinigung: "Zinsbescheinigung (Darlehen)", steuerbescheid: "Steuerbescheid", sonstiges: "Sonstiges" };
 const KI_DOC_KIND = { rechnung: "beleg", bescheid: "bescheid", abrechnung: "abrechnung", vertrag: "vertrag", zaehlerstand: "zaehler", kontoauszug: "sonstiges", sonstiges: "sonstiges" };
 
 async function addFiles(fileList, { scan = false, expenseId = null, meta = null } = {}) {
@@ -1714,7 +1964,7 @@ function buildContext() {
     nebenkostenabrechnungen: (state.nkStatements || []).map((st) => { const r = C.nkAbrechnung(state, st); return { objekt: byId("objects", st.objectId)?.name, zeitraum: `${st.from} bis ${st.to}`, frist: r.deadline, gesamtkosten: eur(r.total), positionen: st.items.map((i) => `${i.label}: ${eur(i.amount)} nach ${C.NK_KEYS[i.key]}`), ergebnisse: r.contracts.map((c) => ({ vertrag: contractLabel(byId("contracts", c.contractId)), kosten: eur(c.total), vorauszahlung: eur(c.prepaid), saldo: eur(c.saldo) })), leerstand_vermieter: eur(r.owner.total), warnungen: r.warnings }; }),
     ferienwohnung: fewo.length ? { kennzahlen_jahr: (() => { const k = C.fewoStats(state, fewo, `${y}-01-01`, `${y + 1}-01-01`); return { auslastung: `${Math.round(k.occupancy * 100)} %`, adr: eur(k.adr), revpar: eur(k.revpar), logis_umsatz: eur(k.lodging), buchungen: k.bookings, storno: `${Math.round(k.cancelRate * 100)} %`, direkt: `${Math.round(k.directShare * 100)} %` }; })(),
       naechste_buchungen: state.bookings.filter((b) => b.to >= today() && b.status !== "storniert").sort((a, b) => (a.from < b.from ? -1 : 1)).slice(0, 15).map((b) => ({ gast: b.guest, von: b.from, bis: b.to, personen: Number(b.adults || 0) + Number(b.children || 0), kanal: b.channel, preis: eur((b.total || 0) + (b.cleaning || 0)), status: b.status })) } : null,
-    offene_rechnungen: state.invoices.filter((i) => ["offen", "teilbezahlt"].includes(i.status)).map((i) => ({ nr: i.number, an: i.recipient?.name, betrag: eur(C.invoiceTotals(i).gross), bezahlt: eur(C.paidForInvoice(state, i.id)) })),
+    offene_rechnungen: state.invoices.filter((i) => ["offen", "teilbezahlt"].includes(i.status)).map((i) => ({ nr: i.number, an: C.recipientName(i.recipient), betrag: eur(C.invoiceTotals(i).gross), bezahlt: eur(C.paidForInvoice(state, i.id)) })),
     dokumente_im_eingang: state.documents.filter((x) => x.status === "neu").map((x) => x.name),
     offene_fragen_steuer: C.taxOpenPoints(state, y - 1),
   };
@@ -2197,7 +2447,7 @@ function searchAll(qRaw) {
   for (const n of state.notes || []) if (hit(`${n.title} ${n.text}`)) out.push({ icon: "📝", title: n.title, sub: `${d(n.date)} · ${byId("tenants", n.tenantId)?.name || ""}`, href: `#/mieter/${n.tenantId}`, folderTab: "vorgaenge" });
   for (const e of state.expenses) if (hit(`${e.vendor} ${e.note} ${e.belegNr}`)) out.push({ icon: "🧾", title: `${e.vendor} ${eur(e.amount)}`, sub: `${d(e.date)} · ${C.EXPENSE_CATEGORIES[e.category]?.label || ""}`, href: "#/ausgaben" });
   for (const b of state.bookings) if (hit(`${b.guest} ${b.email || ""}`)) out.push({ icon: "☀", title: b.guest, sub: `${d(b.from)}–${d(b.to)} · ${byId("units", b.unitId)?.name || ""}`, href: "#/ferien" });
-  for (const i of state.invoices) if (hit(`${i.number} ${i.recipient?.name}`)) out.push({ icon: "▤", title: `${i.number || "Entwurf"} ${i.recipient?.name || ""}`, sub: eur(C.invoiceTotals(i).gross), href: `#/rechnung/${i.id}` });
+  for (const i of state.invoices) if (hit(`${i.number} ${i.recipient?.name || ""} ${i.recipient?.company || ""}`)) out.push({ icon: "▤", title: `${i.number || "Entwurf"} ${C.recipientName(i.recipient)}`, sub: eur(C.invoiceTotals(i).gross), href: `#/rechnung/${i.id}` });
   for (const l of state.letters || []) if (hit(l.subject)) out.push({ icon: "✉", title: l.subject, sub: d(l.date), href: `#/brief/${l.id}` });
   return out.slice(0, 40);
 }
@@ -3522,7 +3772,9 @@ const actions = {
   nkFromExpenses: () => { const nk = nkDraft(); const add = C.nkItemsFromExpenses(state, nk.objectId, nk.from, nk.to); if (!add.length) return toast("Keine umlagefähigen Ausgaben im Zeitraum gefunden."); nk.items = [...nk.items.filter((x) => !add.some((a) => a.label === x.label)), ...add]; render(); },
   nkSave: () => { const nk = nkDraft(); if (!nk.items.length) return toast("Keine Kostenpositionen."); if (!confirmLegal(R.nkPeriodCheck(nk.from, nk.to))) return; nk.id = nk.id || C.uid("nk_"); state.nkStatements = [...(state.nkStatements || []).filter((x) => x.id !== nk.id), structuredClone(nk)]; commit("Abrechnung gespeichert – Anschreiben können jetzt gedruckt werden"); },
   nkLoad: (id) => { ui.nk = structuredClone(state.nkStatements.find((x) => x.id === id)); render(); },
-  newInvoice: () => editInvoice(), editInvoice, cancelInvoice, markPaid, smoobu: smoobuImport,
+  newInvoice: () => editInvoice(), editInvoice, cancelInvoice, markPaid,
+  invoiceRecipient: recipientDialog, invoicePdf: downloadInvoicePdf, emailInvoice, archiveInvoice: (id) => archiveInvoicePdf(id),
+  draftsForAll: () => { if (blockedWrite()) return; const list = bookingsWithoutInvoice().filter((b) => b.from <= today()); for (const b of list) createInvoiceDraft(b); commit(`${list.length} Rechnungsentwürfe angelegt – bitte prüfen und festschreiben`); }, smoobu: smoobuImport,
   datevPreset: (p) => {
     const y = ui.year;
     if (p === "y") { ui.datevFrom = `${y}-01-01`; ui.datevTo = `${y}-12-31`; }
@@ -3620,6 +3872,7 @@ document.addEventListener("change", async (e) => {
   if (k === "tenantSearch") { ui.tenantSearch = e.target.value; render(); return; }
   if (k === "adminSearch") { ui.adminSearch = e.target.value; render(); return; }
   if (k === "switchWs") { switchWorkspace(e.target.value); return; }
+  if (k === "autoInvoiceDrafts") { state.settings.autoInvoiceDrafts = e.target.checked; commit(e.target.checked ? "Neue Smoobu-Buchungen bekommen automatisch einen Rechnungsentwurf" : "Automatische Rechnungsentwürfe aus"); return; }
   if (k === "teamRole") { try { await Cloud.teamSetRole(e.target.dataset.id, e.target.value); toast("Rolle geändert"); loadTeam(); } catch (err) { alert(err.message); } return; }
   if (k === "attachExpense") { const id = e.target.dataset.id; if (!byId("expenses", id)) return toast("Bitte die Ausgabe zuerst speichern."); $("#modal").close(); await addFiles(e.target.files, { expenseId: id }); editExpense(id); return; }
   if (k === "kiKey") { K.setKey(e.target.value); toast(e.target.value ? "KI-Schlüssel gespeichert (nur auf diesem Gerät)" : "KI-Schlüssel entfernt"); render(); return; }

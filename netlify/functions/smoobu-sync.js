@@ -12,6 +12,36 @@ function heutePlus(tage) {
   return d.toISOString().slice(0, 10);
 }
 
+// Anschrift kommt je nach Kanal unterschiedlich – tolerant lesen
+function adresse(a) {
+  if (!a || typeof a !== "object") return null;
+  const street = a.street || a.streetAndNumber || a.address || "";
+  const postalCode = a.postalCode || a.postal_code || a.zip || "";
+  const location = a.location || a.city || "";
+  const country = a.country || a.countryCode || "";
+  return street || postalCode || location ? { street, postalCode, location, country } : null;
+}
+
+// Gästedaten (Firma, Anschrift) aus dem Gast-Profil – nur auf Anfrage (?gaeste=1), max. 40 Abrufe je Lauf
+async function gaesteErgaenzen(buchungen) {
+  const offen = buchungen.filter((b) => b.gast_id && (!b.adresse || !b.email)).slice(0, 40);
+  for (let i = 0; i < offen.length; i += 5) {
+    await Promise.all(offen.slice(i, i + 5).map(async (b) => {
+      try {
+        const g = await smoobuGet(`/api/guests/${encodeURIComponent(b.gast_id)}`, {});
+        const ga = adresse(g.address) || adresse(Array.isArray(g.addresses) ? g.addresses[0] : null);
+        if (ga && !b.adresse) b.adresse = ga;
+        const mail = g.email || (Array.isArray(g.emails) ? (g.emails[0]?.email || g.emails[0]) : "");
+        if (mail && !b.email) b.email = String(mail);
+        const tel = g.phone || (Array.isArray(g.telephoneNumbers) ? (g.telephoneNumbers[0]?.number || g.telephoneNumbers[0]) : "");
+        if (tel && !b.telefon) b.telefon = String(tel);
+        const firma = g.companyName || g.company || "";
+        if (firma && !b.firma) b.firma = String(firma);
+      } catch { /* Gast-Profil nicht verfügbar – Reservierungsdaten reichen */ }
+    }));
+  }
+}
+
 async function holeSeite(page, from, to) {
   return smoobuGet("/api/reservations", { pageSize: 100, page, from, to, showCancellation: "true" });
 }
@@ -61,11 +91,19 @@ exports.handler = async (event) => {
       kinder: b.children || 0,
       email: b.email || "",
       telefon: b.phone || "",
-      adresse: b.address || null,
+      adresse: adresse(b.address),
+      vorname: b.firstname || b.firstName || "",
+      nachname: b.lastname || b.lastName || "",
+      firma: b["company-name"] || b.companyName || b.company || "",
+      referenz: b["reference-id"] || b.referenceId || "",
+      gast_id: b.guestId || b["guest-id"] || null,
+      sprache: b.language || "",
       anzahlung: b.prepayment || 0,
       notiz: b.notice || "",
       einheit_id: b.apartment?.id || null
     }));
+
+    if ((event.queryStringParameters || {}).gaeste === "1") await gaesteErgaenzen(buchungen);
 
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, count: buchungen.length, buchungen, zeitraum: { from, to } }) };
   } catch (error) {
