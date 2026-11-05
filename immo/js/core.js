@@ -266,6 +266,49 @@ const DEBIT_KEYWORDS = [
   [/reinigung|waescherei|waesche|hausmeister|garten/, "reinigung"],
 ];
 
+// Ein Mieter zahlt mehrere Verträge (z. B. 2 Garagen à 70 €) mit einer Überweisung (140 €):
+// Verträge derselben Person (gleiche IBAN oder gleicher Name, auch wenn der Mieter doppelt angelegt ist) suchen,
+// deren Warmmieten zusammen genau den Betrag ergeben.
+function multiContractCandidate(tx, state, text, rule, key) {
+  const tenants = Object.fromEntries((state.tenants || []).map((t) => [t.id, t]));
+  const period = periodForPayment(tx.date, tx.purpose);
+  const mine = [];
+  for (const c of state.contracts || []) {
+    if (!contractActiveIn(c, period) && !contractActiveIn(c, key)) continue;
+    const ibans = (c.tenantIds || []).flatMap((id) => (tenants[id]?.ibans || []).map(normIban));
+    const ibanHit = !!tx.iban && ibans.includes(normIban(tx.iban));
+    let ns = 0;
+    for (const id of c.tenantIds || []) ns = Math.max(ns, nameScore(tenants[id]?.name, text));
+    const ruleHit = !!rule?.contractIds?.includes(c.id);
+    const soll = rentForMonth(c, period).total;
+    if ((ibanHit || ns >= 0.8 || ruleHit) && soll > 0) mine.push({ c, ibanHit, ns, ruleHit, soll });
+  }
+  if (mine.length < 2 || mine.length > 10) return null;
+  let best = null;
+  for (let mask = 1; mask < 1 << mine.length; mask++) {
+    const set = mine.filter((_, i) => mask & (1 << i));
+    if (set.length < 2 || set.reduce((a, x) => a + x.soll, 0) !== tx.amount) continue;
+    const ruleAll = !!rule?.contractIds && rule.contractIds.length === set.length && set.every((x) => x.ruleHit);
+    const identity = ruleAll ? 80 : set.some((x) => x.ibanHit) ? 60 : Math.round(35 * Math.max(...set.map((x) => x.ns)));
+    const score = Math.min(100, identity + 35 + (/miete|garage|stellplatz/.test(normalize(text)) ? 5 : 0));
+    if (!best || score > best.score || (score === best.score && set.length > best.splits.length)) {
+      best = { kind: "miete", period, contractId: set[0].c.id, splits: set.map((x) => ({ contractId: x.c.id, amount: x.soll })), score,
+        why: [ruleAll ? "gelernte Regel" : set.some((x) => x.ibanHit) ? "IBAN des Mieters" : "Mietername", `Betrag = Summe von ${set.length} Verträgen`] };
+    }
+  }
+  return best;
+}
+
+// Betrag auf mehrere Verträge verteilen: nach Warmmiete, Rest (Cent) auf den letzten
+export function splitAmount(amount, solls) {
+  const total = solls.reduce((a, b) => a + b, 0);
+  if (!solls.length) return [];
+  if (total === amount || total <= 0) return total === amount ? [...solls] : solls.map((_, i) => (i === solls.length - 1 ? amount - Math.floor(amount / solls.length) * (solls.length - 1) : Math.floor(amount / solls.length)));
+  const parts = solls.map((s) => Math.floor((amount * s) / total));
+  parts[parts.length - 1] += amount - parts.reduce((a, b) => a + b, 0);
+  return parts;
+}
+
 // Liefert den besten Zuordnungs-Vorschlag mit Score 0..100 und Begründung.
 export function suggestAssignment(tx, state) {
   const text = `${tx.name || ""} ${tx.purpose || ""}`;
@@ -308,6 +351,8 @@ export function suggestAssignment(tx, state) {
       if (/miete|nutzungsentgelt/.test(normalize(text))) { score += 5; }
       if (score >= 30) cands.push({ kind: "miete", contractId: c.id, period, score: Math.min(100, score), why });
     }
+    const multi = multiContractCandidate(tx, state, text, rule, key);
+    if (multi) cands.push(multi);
     if (rule && rule.kind !== "miete") cands.push({ ...rule, score: 85, why: ["gelernte Regel"] });
     if (/kaution/.test(normalize(text))) cands.push({ kind: "kaution", score: 40, why: ["Stichwort Kaution"] });
     cands.sort((a, b) => b.score - a.score);

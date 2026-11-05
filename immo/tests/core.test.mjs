@@ -324,3 +324,29 @@ test("Rechnungsempfänger: Firma statt Gast, Auslandsadresse, Altformat", () => 
   assert.equal(recipientHasAddress({ name: "X" }), false);
   assert.equal(channelNote(b), "Buchung über Booking.com (Buchungsnr. 4711).");
 });
+
+test("Sammelüberweisung: 2 Garagen à 70 € mit einer Zahlung über 140 € werden aufgeteilt", async () => {
+  const { splitAmount } = await import("../js/core.js");
+  const s = emptyState();
+  s.units = [{ id: "g1", name: "Garage 1", type: "garage" }, { id: "g2", name: "Garage 2", type: "garage" }, { id: "w1", name: "WE 1", type: "wohnung" }];
+  // Mieter wurde zweimal angelegt (je Garage ein Einzug) – Name gleich
+  s.tenants = [{ id: "t1", name: "Kate Mcintosch", ibans: [] }, { id: "t2", name: "Kate Mcintosch", ibans: [] }, { id: "t3", name: "Gülhanim Bacak", ibans: [] }];
+  const k = (id, unitId, t, kalt) => ({ id, unitId, tenantIds: [t], start: "2026-01-01", end: "", kalt, nk: 0, extra: 0, steps: [] });
+  s.contracts = [k("c1", "g1", "t1", 7000), k("c2", "g2", "t2", 7000), k("c3", "w1", "t3", 78800)];
+  const tx = { id: "x", date: "2026-11-03", amount: 14000, name: "KATE MCINTOSCH", purpose: "Miete Garagen November", iban: "DE001" };
+  const sug = suggestAssignment(tx, s);
+  assert.equal(sug.kind, "miete");
+  assert.deepEqual(sug.splits.map((x) => [x.contractId, x.amount]), [["c1", 7000], ["c2", 7000]]);
+  assert.ok(sug.score >= 60, `Score ${sug.score}`);
+  // Nur eine Garage bezahlt → normaler Einzel-Vorschlag
+  const one = suggestAssignment({ ...tx, amount: 7000 }, s);
+  assert.equal(one.splits, undefined);
+  // Gelernte Regel mit mehreren Verträgen greift auch ohne Namen
+  s.rules = { "iban:DE001": { kind: "miete", contractIds: ["c1", "c2"] } };
+  const byRule = suggestAssignment({ ...tx, name: "Firma XY", purpose: "" }, s);
+  assert.equal(byRule.splits.length, 2);
+  // Aufteilen nach Warmmiete, Cent-Rest auf den letzten Vertrag
+  assert.deepEqual(splitAmount(14000, [7000, 7000]), [7000, 7000]);
+  assert.deepEqual(splitAmount(10000, [7000, 7000]), [5000, 5000]);
+  assert.deepEqual(splitAmount(10001, [5000, 10000]), [3333, 6668]);
+});

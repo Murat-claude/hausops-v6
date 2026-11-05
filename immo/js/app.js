@@ -70,6 +70,7 @@ function linkLabel(tx) {
   if (tx.link.type === "payment") {
     const p = byId("payments", tx.link.id);
     if (!p) return "";
+    if (tx.link.ids?.length > 1) return `<span class="badge ok">Miete ${C.fmtMonth(p.period)} · aufgeteilt</span> <span class="small">${tx.link.ids.map((id) => byId("payments", id)).filter(Boolean).map((x) => `${esc(contractLabel(byId("contracts", x.contractId)))} ${eur(x.amount)}`).join(" + ")}</span>`;
     if (p.kind === "miete") return `<span class="badge ok">Miete ${C.fmtMonth(p.period)}</span> <span class="small">${esc(contractLabel(byId("contracts", p.contractId)))}</span>`;
     if (p.kind === "fewo") return `<span class="badge ok">Rechnung ${esc(byId("invoices", p.invoiceId)?.number || "")}</span>`;
     return `<span class="badge ok">${esc(C.INCOME_KINDS[p.kind])}</span> <span class="small">${esc(p.contractId ? contractLabel(byId("contracts", p.contractId)) : "")}</span>`;
@@ -81,6 +82,7 @@ function linkLabel(tx) {
 
 function suggestionLabel(s) {
   if (!s) return "";
+  if (s.kind === "miete" && (s.splits?.length > 1 || s.contractIds?.length > 1)) return `Miete ${C.fmtMonth(s.period)} · aufgeteilt: ${(s.splits || s.contractIds.map((contractId) => ({ contractId }))).map((x) => `${contractLabel(byId("contracts", x.contractId))}${x.amount ? ` ${eur(x.amount)}` : ""}`).join(" + ")}`;
   if (s.kind === "miete") return `Miete ${C.fmtMonth(s.period)} · ${contractLabel(byId("contracts", s.contractId))}`;
   if (s.kind === "fewo") return `Rechnung ${byId("invoices", s.invoiceId)?.number || ""}`;
   if (s.kind === "ausgabe") return `${C.EXPENSE_CATEGORIES[s.category]?.label}${s.objectId ? " · " + (byId("objects", s.objectId)?.name || "") : ""}`;
@@ -377,6 +379,11 @@ function applyAssignment(tx, a, learn) {
     const e = { id: C.uid("e_"), date: tx.date, amount: -tx.amount, category: a.category || "sonstiges", objectId: a.objectId || null, vendor: tx.name, note: tx.purpose, belegNr: "", txId: tx.id };
     state.expenses.push(e);
     tx.link = { type: "expense", id: e.id };
+  } else if (a.kind === "miete" && a.splits?.length > 1) {
+    const period = a.period || C.periodForPayment(tx.date, tx.purpose);
+    const ps = a.splits.map((x) => ({ id: C.uid("p_"), date: tx.date, amount: x.amount, kind: "miete", contractId: x.contractId, period, invoiceId: null, objectId: null, txId: tx.id, note: `${tx.name} (Teil einer Sammelüberweisung)` }));
+    state.payments.push(...ps);
+    tx.link = { type: "payment", id: ps[0].id, ids: ps.map((x) => x.id) };
   } else {
     const p = { id: C.uid("p_"), date: tx.date, amount: tx.amount, kind: a.kind, contractId: a.contractId || null, period: a.kind === "miete" ? a.period || C.periodForPayment(tx.date, tx.purpose) : null, invoiceId: a.invoiceId || null, objectId: a.objectId || null, txId: tx.id, note: tx.name };
     state.payments.push(p);
@@ -385,7 +392,8 @@ function applyAssignment(tx, a, learn) {
   }
   if (learn && a.kind !== "fewo") {
     const r = { kind: a.kind };
-    if (a.contractId) r.contractId = a.contractId;
+    if (a.splits?.length > 1) r.contractIds = a.splits.map((x) => x.contractId);
+    else if (a.contractId) r.contractId = a.contractId;
     if (a.category) r.category = a.category;
     if (a.objectId) r.objectId = a.objectId;
     state.rules[C.ruleKey(tx)] = r;
@@ -395,8 +403,8 @@ function applyAssignment(tx, a, learn) {
 function unlink(tx, silent) {
   if (!tx.link) return;
   if (tx.link.type === "payment") {
-    const p = byId("payments", tx.link.id);
-    state.payments = state.payments.filter((x) => x.id !== tx.link.id);
+    const p = byId("payments", tx.link.id), ids = tx.link.ids || [tx.link.id];
+    state.payments = state.payments.filter((x) => !ids.includes(x.id));
     if (p?.invoiceId) refreshInvoiceStatus(p.invoiceId);
   }
   if (tx.link.type === "expense") state.expenses = state.expenses.filter((x) => x.id !== tx.link.id);
@@ -436,6 +444,9 @@ function assignDialog(txId) {
     <div class="fgrid">
       <label class="f full"><span>Zuordnen als</span><select name="kind">${opt(kinds, kind)}</select></label>
       <label class="f full" data-for="miete nk_nachzahlung kaution"><span>Mietvertrag</span><select name="contractId">${opt([["", "–"], ...contractOpts()], sug.contractId)}</select></label>
+      <div class="f full" data-for="miete"><details ${sug.splits ? "open" : ""}><summary class="small" style="cursor:pointer">Auf mehrere Verträge aufteilen (z. B. 2 Garagen mit einer Überweisung)${sug.splits ? " – <b>vorgeschlagen</b>" : ""}</summary>
+        <div class="checks" style="flex-direction:column;align-items:flex-start;margin-top:6px">${state.contracts.filter((c) => C.contractActiveIn(c, sug.period || C.periodForPayment(tx.date, tx.purpose)) || C.contractActiveIn(c, C.monthKey(tx.date))).map((c) => `<label><input type="checkbox" name="split" value="${esc(c.id)}" ${sug.splits?.some((x) => x.contractId === c.id) ? "checked" : ""}> ${esc(contractLabel(c))} <span class="muted small">${eur(C.rentForMonth(c, sug.period || C.periodForPayment(tx.date, tx.purpose)).total)}</span></label>`).join("")}</div>
+        <p class="small muted">Ab 2 Häkchen wird der Betrag nach den Warmmieten auf die Verträge verteilt. Das Feld „Mietvertrag“ oben wird dann nicht verwendet.</p></details></div>
       <label class="f" data-for="miete"><span>Für Monat (Soll)</span><input type="month" name="period" value="${esc(sug.period || C.periodForPayment(tx.date, tx.purpose))}"></label>
       <label class="f full" data-for="fewo"><span>Rechnung</span><select name="invoiceId">${opt([["", "–"], ...invOpts], sug.invoiceId)}</select></label>
       <label class="f" data-for="ausgabe"><span>Kategorie</span><select name="category">${opt(Object.entries(C.EXPENSE_CATEGORIES).map(([k, v]) => [k, v.label]), sug.category || "sonstiges")}</select></label>
@@ -450,6 +461,12 @@ function assignDialog(txId) {
     },
     onSubmit: (form) => {
       const a = { kind: form.kind.value, contractId: form.contractId.value, period: form.period.value, invoiceId: form.invoiceId.value, category: form.category.value, objectId: form.objectId.value };
+      const split = [...form.querySelectorAll("input[name=split]:checked")].map((el) => el.value);
+      if (a.kind === "miete" && split.length > 1) {
+        const parts = C.splitAmount(tx.amount, split.map((id) => C.rentForMonth(byId("contracts", id), a.period).total));
+        a.splits = split.map((contractId, i) => ({ contractId, amount: parts[i] }));
+        a.contractId = split[0];
+      }
       if (["miete", "nk_nachzahlung"].includes(a.kind) && !a.contractId) { toast("Bitte Mietvertrag wählen."); return false; }
       if (a.kind === "fewo" && !a.invoiceId) { toast("Bitte Rechnung wählen."); return false; }
       applyAssignment(tx, a, form.learn.checked);
@@ -2144,7 +2161,7 @@ function viewDataReport(id) {
   const rd = (state.meterReadings || []).filter((r) => cIds.has(r.contractId));
   const docs = state.documents.filter((x) => cIds.has(x.contractId));
   const letters = (state.letters || []).filter((l) => cIds.has(l.contractId));
-  const txs = state.transactions.filter((tx) => tx.link?.type === "payment" && pays.some((p) => p.id === tx.link.id));
+  const txs = state.transactions.filter((tx) => tx.link?.type === "payment" && pays.some((p) => (tx.link.ids || [tx.link.id]).includes(p.id)));
   return `<div class="head noprint"><a href="#/mieter/${id}">← Mieterakte</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
   <div class="paper">
     <h1>Auskunft über gespeicherte personenbezogene Daten (Art. 15 DSGVO)</h1>
@@ -4687,7 +4704,7 @@ const actions = {
   acceptAll: () => { let n = 0; for (const tx of state.transactions.filter((t) => !t.link)) { const s = C.suggestAssignment(tx, state); if (s && s.score >= 60) { applyAssignment(tx, s, false); n++; } } commit(`${n} Umsätze zugeordnet`); },
   unlink: (id) => unlink(byId("transactions", id)),
   unlinkPayment: (pid) => {
-    const tx = state.transactions.find((t) => t.link?.type === "payment" && t.link.id === pid);
+    const tx = state.transactions.find((t) => t.link?.type === "payment" && (t.link.ids || [t.link.id]).includes(pid));
     if (!tx) return editPayment(pid);
     if (!confirm("Zuordnung lösen? Die Bank-Buchung bleibt erhalten und erscheint wieder unter „Konto & Zahlungen → Offen“, wo du sie neu zuordnen kannst.")) return;
     unlink(tx);

@@ -471,7 +471,7 @@ tbody tr:hover td { background: #f8faf9; }
 .note { border-radius: 12px; padding: 12px 14px; }
 
 /* Dialoge & Hinweise */
-dialog { border-radius: 20px; box-shadow: 0 30px 80px -20px rgba(10,25,30,.45); }
+dialog { margin: auto; border-radius: 20px; box-shadow: 0 30px 80px -20px rgba(10,25,30,.45); }
 dialog::backdrop { background: rgba(14,28,32,.42); backdrop-filter: blur(3px); }
 dialog .dh { padding: 18px 22px; font-size: 17px; letter-spacing: -.01em; }
 dialog .db { padding: 18px 22px; }
