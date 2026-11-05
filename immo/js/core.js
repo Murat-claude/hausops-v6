@@ -184,7 +184,10 @@ export function rentForMonth(contract, key) {
   let r = { kalt: contract.kalt || 0, nk: contract.nk || 0, extra: contract.extra || 0 };
   const steps = [...(contract.steps || [])].sort((a, b) => (a.from < b.from ? -1 : 1));
   for (const s of steps) if (s.from <= key) r = { kalt: s.kalt ?? r.kalt, nk: s.nk ?? r.nk, extra: s.extra ?? r.extra };
-  return { ...r, total: r.kalt + r.nk + r.extra };
+  // Gewerbliche Vermietung mit Umsatzsteuer: Beträge im Vertrag sind netto, die USt kommt obendrauf
+  const net = r.kalt + r.nk + r.extra, rate = Number(contract.ustRate) || 0;
+  const vat = rate ? Math.round((net * rate) / 100) : 0;
+  return { ...r, net, rate, vat, total: net + vat };
 }
 
 export function sollIst(state, fromKey, toKey) {

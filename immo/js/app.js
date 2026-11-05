@@ -231,6 +231,7 @@ const SPEC = {
     { k: "start", l: "Mietbeginn", t: "date", req: 1 }, { k: "end", l: "Mietende (leer = unbefristet)", t: "date" },
     { k: "kalt", l: "Kaltmiete (€/Monat)", t: "money" }, { k: "nk", l: "NK-/Heizkosten-Vorauszahlung (€/Monat)", t: "money" },
     { k: "extra", l: "Zuschläge (Stellplatz, Möblierung …)", t: "money" }, { k: "kaution", l: "Kaution (€)", t: "money" },
+    { k: "ustRate", l: "Umsatzsteuer", t: "select", opts: [["", "keine (Wohnraum / privater Mieter)"], ["19", "zzgl. 19 % USt (gewerblicher Mieter)"], ["7", "zzgl. 7 % USt"]], hint: "Bei USt: Miete und Nebenkosten oben netto eintragen – die App rechnet die USt obendrauf." },
     { k: "persons", l: "Personen im Haushalt (für Umlage nach Personen)", t: "number" },
     { k: "kleinRepCase", l: "Kleinreparaturen: Grenze je Fall (€)", t: "money", hint: "Nur wenn im Vertrag vereinbart – üblich bis ca. 100–120 €" },
     { k: "kleinRepYear", l: "Kleinreparaturen: Höchstbetrag pro Jahr (€)", t: "money", hint: "Pflicht für eine wirksame Klausel – üblich 6–8 % der Jahreskaltmiete" },
@@ -357,6 +358,8 @@ function contractLegal(c) {
   const u = byId("units", c.unitId);
   const list = [...R.depositCheck(u, c)];
   if (R.isParking(u)) { const v = R.vatFor(state, c); list.push({ level: "info", text: `Umsatzsteuer: ${v.reason}` }); }
+  if (Number(c.ustRate) && R.isWohnraum(u)) list.push({ level: "bad", text: "Wohnraum ist zwingend umsatzsteuerfrei (§ 4 Nr. 12 UStG) – Umsatzsteuer nur bei gewerblich genutzten Räumen (Laden, Büro, Praxis, Lager) und nur, wenn der Mieter selbst vorsteuerabzugsberechtigt ist (§ 9 UStG)." });
+  else if (Number(c.ustRate)) list.push({ level: "info", text: "Umsatzsteuer-Option (§ 9 UStG): nur zulässig, wenn der Mieter die Räume für sein umsatzsteuerpflichtiges Unternehmen nutzt. Die USt muss im Mietvertrag ausgewiesen sein (Vertrag gilt dann als Rechnung) und wird in der Umsatzsteuer-Voranmeldung abgeführt." });
   if (!R.isWohnraum(u) && u && u.type !== "ferienwohnung") list.push({ level: "info", text: "Kein Wohnraum: Kündigungsfristen und Mieterhöhung richten sich nach dem Vertrag (§ 580a BGB für Garagen/Stellplätze); Wohnraum-Schutzvorschriften gelten nicht." });
   return list;
 }
@@ -2188,6 +2191,7 @@ function moveWizard(unitId) {
         <label class="f"><span>NK-/Heizkostenvorauszahlung (€/Monat)</span><input name="nk" inputmode="decimal" value="${r ? C.fmtNum(r.nk) : ""}"></label>
         <label class="f"><span>Zuschläge (Stellplatz, Möblierung …)</span><input name="extra" inputmode="decimal" value="${r?.extra ? C.fmtNum(r.extra) : ""}"></label>
         <label class="f"><span>Kaution (€, Wohnraum max. 3 Nettokaltmieten)</span><input name="kaution" inputmode="decimal" value="${r ? C.fmtNum(r.kalt * 3) : ""}"></label>
+        <label class="f"><span>Umsatzsteuer</span><select name="ustRate">${opt([["", "keine (Wohnraum / privater Mieter)"], ["19", "zzgl. 19 % USt (gewerblicher Mieter)"], ["7", "zzgl. 7 % USt"]], c?.ustRate ? String(c.ustRate) : byId("units", uId)?.type === "gewerbe" ? "19" : "")}</select></label>
         <label class="f"><span>Mietart</span><select name="mietart">${opt([["standard", "Normale Miete"], ["staffel", "Staffelmiete"], ["index", "Indexmiete"]], "standard")}</select></label>
         ${meterFields("in", lr)}
         <label class="f"><span>Schlüssel übergeben (Anzahl)</span><input type="number" name="inKeys"></label>
@@ -2234,7 +2238,7 @@ function moveWizard(unitId) {
       const legal = [...R.depositCheck(unit, { kalt: C.parseAmount(v.kalt), kaution: C.parseAmount(v.kaution) }), ...R.rentBrakeCheck(obj, unit, C.parseAmount(v.kalt), old ? C.rentForMonth(old, C.monthKey(old.end || v.outDate || today())).kalt : 0, obj?.vergleichsmiete)];
       if (!confirmLegal(legal)) return false;
       const t = { id: C.uid("t_"), name: v.name.trim(), members: v.members, email: v.email, phone: v.phone, ibans: v.iban ? [C.normIban(v.iban)] : [], prevAddress: v.prevAddress, notes: "" };
-      const c = { id: C.uid("c_"), unitId, tenantIds: [t.id], start: v.inDate, end: v.inEnd || "", kalt: C.parseAmount(v.kalt), nk: C.parseAmount(v.nk), extra: C.parseAmount(v.extra), kaution: C.parseAmount(v.kaution), persons: Number(v.persons) || 1, mietart: v.mietart || "standard", steps: [], notes: "",
+      const c = { id: C.uid("c_"), unitId, tenantIds: [t.id], start: v.inDate, end: v.inEnd || "", kalt: C.parseAmount(v.kalt), nk: C.parseAmount(v.nk), extra: C.parseAmount(v.extra), kaution: C.parseAmount(v.kaution), persons: Number(v.persons) || 1, mietart: v.mietart || "standard", ustRate: v.ustRate || "", steps: [], notes: "",
         moveIn: { date: v.inDate, handover: v.inHandover || v.inDate, keys: v.inKeys, note: v.inNote } };
       state.tenants.push(t); state.contracts.push(c);
       state.meterReadings.push(...readings("in", v.inHandover || v.inDate, c.id, "einzug"));
@@ -2487,7 +2491,7 @@ function viewTenant(id) {
         ${fact("Einheit", u ? `${esc(unitLabel(u))} (${esc(C.UNIT_TYPES[u.type])}${u.area ? `, ${String(u.area).replace(".", ",")} m²` : ""})` : "")}
         ${fact("Adresse", u ? esc(addrOf(u)) : "")}
         ${fact("Mietzeit", active ? `${d(active.start)} – ${active.end ? d(active.end) : "unbefristet"}` : "")}
-        ${fact("Warmmiete", r ? `<b>${eur(r.total)}</b> <span class="small muted">(kalt ${eur(r.kalt)} + NK ${eur(r.nk)}${r.extra ? ` + ${eur(r.extra)}` : ""})</span>` : "")}
+        ${fact("Warmmiete", r ? `<b>${eur(r.total)}</b> <span class="small muted">(kalt ${eur(r.kalt)} + NK ${eur(r.nk)}${r.extra ? ` + ${eur(r.extra)}` : ""}${r.vat ? ` netto + ${r.rate} % USt ${eur(r.vat)}` : ""})</span>` : "")}
         ${fact("Kaution", active?.kaution ? `${eur(active.kaution)} · ${kautionPaid ? `${eur(kautionPaid)} erhalten` : "Eingang nicht erfasst"}` : "")}
         ${fact("Personen", active ? `${active.persons || 1}${t.members ? ` – ${esc(t.members)}` : ""}` : "")}
         ${fact("Telefon", t.phone ? `<a href="tel:${esc(t.phone)}">${esc(t.phone)}</a>` : "")}
@@ -4263,8 +4267,8 @@ function viewMonthReport(arg) {
       <p class="small muted" style="margin-bottom:10px">Enthält: Bericht als PDF, alle Einzelposten als Excel-Tabelle (CSV) und den DATEV-Buchungsstapel des Monats. ${s.taxAdvisorEmail ? `Empfänger: <b>${esc(s.taxAdvisorName || "")} ${esc(s.taxAdvisorEmail)}</b>` : 'E-Mail des Steuerberaters unter <a href="#/einstellungen">Einstellungen → DATEV</a> eintragen.'}</p>
       <div class="toolbar">${btn("monthSend", "📧 An Steuerberater senden", "primary", key)}${btn("monthPdf", "📄 PDF", "", key)}${btn("monthCsv", "📊 Excel (CSV)", "", key)}${btn("monthDatev", "DATEV-Datei", "", key)}</div></div>
     <div class="card"><h2>🏠 Mieteinnahmen ${monthTitle(key)}</h2>
-      ${table(["Objekt / Einheit", "Mieter", "Kalt €", "NK €", "Soll €", "Erhalten €", "Eingang"], r.rent.map((x) => `<tr><td>${esc(x.where)}</td><td>${esc(x.tenant)}</td><td class="num">${eurS(x.kalt + x.extra)}</td><td class="num">${eurS(x.nk)}</td><td class="num">${eurS(x.soll)}</td><td class="num ${x.diff < 0 ? "neg" : ""}">${eurS(x.ist)}</td><td class="small">${x.dates.map(d).join(", ") || '<span class="neg">fehlt</span>'}</td></tr>`),
-        `<td colspan="2"><b>Summe</b></td><td class="num">${eurS(t.kalt + t.extra)}</td><td class="num">${eurS(t.nk)}</td><td class="num">${eurS(t.rentSoll)}</td><td class="num"><b>${eurS(t.rentIst)}</b></td><td></td>`)}
+      ${table(["Objekt / Einheit", "Mieter", "Kalt €", "NK €", "USt €", "Soll €", "Erhalten €", "Eingang"], r.rent.map((x) => `<tr><td>${esc(x.where)}</td><td>${esc(x.tenant)}</td><td class="num">${eurS(x.kalt + x.extra)}</td><td class="num">${eurS(x.nk)}</td><td class="num">${x.vat ? eurS(x.vat) : ""}</td><td class="num">${eurS(x.soll)}</td><td class="num ${x.diff < 0 ? "neg" : ""}">${eurS(x.ist)}</td><td class="small">${x.dates.map(d).join(", ") || '<span class="neg">fehlt</span>'}</td></tr>`),
+        `<td colspan="2"><b>Summe</b></td><td class="num">${eurS(t.kalt + t.extra)}</td><td class="num">${eurS(t.nk)}</td><td class="num">${eurS(t.rentVat)}</td><td class="num">${eurS(t.rentSoll)}</td><td class="num"><b>${eurS(t.rentIst)}</b></td><td></td>`)}
       ${r.inflows.length ? `<h3 style="margin-top:12px">Alle Zahlungseingänge im Monat (Zufluss)</h3>${table(["Datum", "Objekt / Einheit", "Art", "Betrag €"], r.inflows.map((p) => `<tr><td>${d(p.date)}</td><td>${esc(p.where)}</td><td class="small">${esc(C.INCOME_KINDS[p.kind] || p.kind)}${p.period && p.period !== key ? ` für ${C.fmtMonth(p.period)}` : ""}</td><td class="num">${eurS(p.amount)}</td></tr>`), `<td colspan="3"><b>Summe</b></td><td class="num"><b>${eurS(t.inflows)}</b></td>`)}` : ""}
       ${t.deposits ? `<p class="small muted">Kautionen ${eurS(t.deposits)} sind durchlaufend und keine Einnahme.</p>` : ""}</div>
     <div class="card"><h2>🏖️ Ferienwohnung ${monthTitle(key)}</h2>
@@ -4283,12 +4287,12 @@ function monthPdfModel(key) {
     title: `Monatsbericht ${monthTitle(key)} – Vermietung & Ferienwohnung`,
     subtitle: `${s.ownerName || ""}${s.taxNumber ? ` · St.-Nr. ${s.taxNumber}` : ""}${s.taxAdvisorName ? ` · für ${s.taxAdvisorName}` : ""} · erstellt am ${d(today())}`,
     author: s.ownerName,
-    summary: [["Mieten Soll", n(t.rentSoll)], ["Mieten erhalten", n(t.rentIst), true], ["davon Kaltmiete + Zuschläge (Soll)", n(t.kalt + t.extra)], ["davon NK-Vorauszahlungen (Soll)", n(t.nk)], ["Alle Zahlungseingänge Miete (Zufluss)", n(t.inflows)],
+    summary: [["Mieten Soll", n(t.rentSoll)], ["Mieten erhalten", n(t.rentIst), true], ["davon Kaltmiete + Zuschläge (Soll)", n(t.kalt + t.extra)], ["davon NK-Vorauszahlungen (Soll)", n(t.nk)], ...(t.rentVat ? [["davon Umsatzsteuer (gewerbliche Mieter)", n(t.rentVat)]] : []), ["Alle Zahlungseingänge Miete (Zufluss)", n(t.inflows)],
       ["FeWo Rechnungen brutto", n(t.fewoGross), true], ["FeWo netto 7 % / USt 7 %", `${n(t.fewoNet7)} / ${n(t.fewoVat7)}`], ["FeWo netto 19 % / USt 19 %", `${n(t.fewoNet19)} / ${n(t.fewoVat19)}`], ["Kurtaxe (durchlaufend)", n(t.kurtaxe)], ["FeWo Zahlungseingänge", n(t.fewoPaid)]],
     sections: [
-      { heading: "1. Mieteinnahmen (Soll / Ist)", cols: [{ label: "Objekt / Einheit", w: 5 }, { label: "Mieter", w: 4 }, { label: "Kalt", w: 2, align: "right" }, { label: "NK", w: 2, align: "right" }, { label: "Soll", w: 2, align: "right" }, { label: "Erhalten", w: 2, align: "right" }, { label: "Eingang", w: 3 }],
-        rows: r.rent.map((x) => [x.where, x.tenant, n(x.kalt + x.extra), n(x.nk), n(x.soll), n(x.ist), x.dates.map(d).join(", ") || "fehlt"]),
-        total: ["Summe", "", n(t.kalt + t.extra), n(t.nk), n(t.rentSoll), n(t.rentIst), ""] },
+      { heading: "1. Mieteinnahmen (Soll / Ist)", cols: [{ label: "Objekt / Einheit", w: 5 }, { label: "Mieter", w: 4 }, { label: "Kalt", w: 2, align: "right" }, { label: "NK", w: 2, align: "right" }, { label: "USt", w: 2, align: "right" }, { label: "Soll", w: 2, align: "right" }, { label: "Erhalten", w: 2, align: "right" }, { label: "Eingang", w: 3 }],
+        rows: r.rent.map((x) => [x.where, x.tenant, n(x.kalt + x.extra), n(x.nk), x.vat ? n(x.vat) : "", n(x.soll), n(x.ist), x.dates.map(d).join(", ") || "fehlt"]),
+        total: ["Summe", "", n(t.kalt + t.extra), n(t.nk), n(t.rentVat), n(t.rentSoll), n(t.rentIst), ""] },
       { heading: "2. Zahlungseingänge Miete im Monat (Zuflussprinzip)", note: t.deposits ? `Kautionen ${n(t.deposits)} sind durchlaufend und nicht enthalten.` : "", cols: [{ label: "Datum", w: 2 }, { label: "Objekt / Einheit", w: 6 }, { label: "Art", w: 6 }, { label: "Betrag", w: 2, align: "right" }],
         rows: r.inflows.map((p) => [d(p.date), p.where, `${C.INCOME_KINDS[p.kind] || p.kind}${p.period && p.period !== key ? ` für ${C.fmtMonth(p.period)}` : ""}`, n(p.amount)]), total: ["Summe", "", "", n(t.inflows)] },
       { heading: "3. Ferienwohnung – Rechnungen des Monats", cols: [{ label: "Nr.", w: 3 }, { label: "Datum", w: 2 }, { label: "Empfänger", w: 4 }, { label: "Netto 7 %", w: 2, align: "right" }, { label: "USt 7 %", w: 2, align: "right" }, { label: "Netto 19 %", w: 2, align: "right" }, { label: "USt 19 %", w: 2, align: "right" }, { label: "Kurtaxe", w: 2, align: "right" }, { label: "Brutto", w: 2, align: "right" }, { label: "Bezahlt", w: 2, align: "right" }],

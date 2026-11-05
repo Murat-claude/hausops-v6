@@ -361,3 +361,19 @@ test("Ablage: Dateien nach Thema sortieren", async () => {
   assert.equal(guessFolder("Brief an Vermieter.pdf"), "sonstiges");
   assert.equal(guessFolder("IMG_2034.jpg", "Haus/Versicherung/IMG_2034.jpg"), "versicherung");
 });
+
+test("Gewerblicher Mieter: Miete netto zzgl. 19 % USt", async () => {
+  const { rentForMonth, sollIst } = await import("../js/core.js");
+  const { vatFor } = await import("../js/recht.js");
+  const c = { id: "c1", unitId: "u1", tenantIds: ["t1"], start: "2026-01-01", kalt: 100000, nk: 20000, extra: 0, ustRate: "19", steps: [] };
+  const r = rentForMonth(c, "2026-11");
+  assert.deepEqual([r.net, r.vat, r.total], [120000, 22800, 142800]);
+  const s = emptyState(); s.units = [{ id: "u1", objectId: "o1", type: "gewerbe", name: "Laden" }]; s.contracts = [c]; s.tenants = [{ id: "t1", name: "Firma Müller GmbH", ibans: [] }];
+  assert.equal(vatFor(s, c).vat, 19);
+  assert.equal(sollIst(s, "2026-11", "2026-11")[0].soll, 142800);
+  // Bank erkennt den Bruttobetrag
+  const sug = suggestAssignment({ id: "x", date: "2026-11-02", amount: 142800, name: "Firma Müller GmbH", purpose: "Miete November", iban: "" }, s);
+  assert.equal(sug.contractId, "c1");
+  // ohne USt unverändert
+  assert.equal(rentForMonth({ ...c, ustRate: "" }, "2026-11").total, 120000);
+});

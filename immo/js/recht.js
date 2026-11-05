@@ -24,6 +24,7 @@ export function nkParticipates(u) {
 export function vatFor(state, contract) {
   const u = (state.units || []).find((x) => x.id === contract?.unitId);
   if (!u) return { vat: 0, reason: "" };
+  if (Number(contract?.ustRate)) return { vat: Number(contract.ustRate), reason: `Gewerblicher Mieter: Option zur Umsatzsteuer (§ 9 UStG) – Miete netto zzgl. ${contract.ustRate} % USt` };
   if (state.settings?.kleinunternehmer && !u.vat) return { vat: 0, reason: "Kleinunternehmer (§ 19 UStG)" };
   if (!isParking(u)) return { vat: Number(u.vat) || 0, reason: Number(u.vat) ? "Option zur Umsatzsteuer (§ 9 UStG)" : "steuerfrei (§ 4 Nr. 12 UStG)" };
   // Nebenleistung: derselbe Mieter mietet im selben Objekt Wohnraum beim selben Vermieter

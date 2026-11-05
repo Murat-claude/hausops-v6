@@ -20,7 +20,7 @@ export function monthReport(state, key) {
     rent.push({
       contractId: c.id, unitId: c.unitId, objectId: units.get(c.unitId)?.objectId || "", where: unitLabel(c.unitId),
       tenant: (c.tenantIds || []).map((id) => tenants.get(id)?.name).filter(Boolean).join(", "),
-      kalt: soll.kalt, nk: soll.nk, extra: soll.extra || 0, soll: soll.total, ist, diff: ist - soll.total,
+      kalt: soll.kalt, nk: soll.nk, extra: soll.extra || 0, vat: soll.vat || 0, soll: soll.total, ist, diff: ist - soll.total,
       dates: paid.map((p) => p.date).sort(),
     });
   }
@@ -56,7 +56,7 @@ export function monthReport(state, key) {
 
   const sum = (arr, f) => arr.reduce((s, x) => s + (f(x) || 0), 0);
   const totals = {
-    rentSoll: sum(rent, (r) => r.soll), rentIst: sum(rent, (r) => r.ist), kalt: sum(rent, (r) => r.kalt), nk: sum(rent, (r) => r.nk), extra: sum(rent, (r) => r.extra),
+    rentSoll: sum(rent, (r) => r.soll), rentIst: sum(rent, (r) => r.ist), kalt: sum(rent, (r) => r.kalt), nk: sum(rent, (r) => r.nk), extra: sum(rent, (r) => r.extra), rentVat: sum(rent, (r) => r.vat),
     inflows: sum(inflows, (p) => p.amount), deposits,
     fewoNet7: sum(invRows, (i) => i.net7), fewoVat7: sum(invRows, (i) => i.vat7), fewoNet19: sum(invRows, (i) => i.net19), fewoVat19: sum(invRows, (i) => i.vat19), fewoNet0: sum(invRows, (i) => i.net0),
     kurtaxe: sum(invRows, (i) => i.kurtaxe), fewoGross: sum(invRows, (i) => i.gross), fewoPaid: sum(fewoPayments, (p) => p.amount),
@@ -78,7 +78,7 @@ export function monthCsv(r, labels = {}) {
   const q = (s) => `"${String(s ?? "").replace(/"/g, '""')}"`;
   const L = [];
   L.push(["Bereich", "Datum", "Objekt / Einheit", "Mieter / Gast / Empfänger", "Beschreibung", "Netto", "USt", "Brutto / Betrag", "Hinweis"].join(";"));
-  for (const x of r.rent) L.push(["Miete Soll/Ist", r.key, q(x.where), q(x.tenant), q(`Soll ${n(x.soll)} (kalt ${n(x.kalt)}, NK ${n(x.nk)}${x.extra ? `, Zuschlag ${n(x.extra)}` : ""})`), "", "", n(x.ist), q(x.diff ? `Differenz ${n(x.diff)}` : "vollständig")].join(";"));
+  for (const x of r.rent) L.push(["Miete Soll/Ist", r.key, q(x.where), q(x.tenant), q(`Soll ${n(x.soll)} (kalt ${n(x.kalt)}, NK ${n(x.nk)}${x.extra ? `, Zuschlag ${n(x.extra)}` : ""}${x.vat ? `, zzgl. USt ${n(x.vat)}` : ""})`), "", "", n(x.ist), q(x.diff ? `Differenz ${n(x.diff)}` : "vollständig")].join(";"));
   for (const p of r.inflows) L.push(["Zahlungseingang Miete", p.date, q(p.where), "", q(`${labels[p.kind] || p.kind}${p.period ? ` für ${p.period}` : ""}`), "", "", n(p.amount), q(p.note)].join(";"));
   for (const i of r.invoices) L.push([i.type === "storno" ? "FeWo Stornorechnung" : "FeWo Rechnung", i.date, q(i.where), q(i.recipient), q(`${i.number}${i.period ? ` · ${i.period.replace("|", " – ")}` : ""}`), n(i.net7 + i.net19 + i.net0), n(i.vat7 + i.vat19), n(i.gross), q(i.kurtaxe ? `darin Kurtaxe ${n(i.kurtaxe)} (durchlaufend)` : "")].join(";"));
   for (const b of r.bookings) L.push(["FeWo Buchung", b.from, q(b.where), q(b.guest), q(`${b.nights} Nächte · ${b.channel}${b.ref ? ` Nr. ${b.ref}` : ""}`), "", "", n(b.total), q(b.status === "storniert" ? "storniert" : b.invoice ? `Rechnung ${b.invoice}` : "noch keine Rechnung")].join(";"));
