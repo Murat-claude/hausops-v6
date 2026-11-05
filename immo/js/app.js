@@ -800,9 +800,13 @@ function markPaid(id) {
 async function smoobuImport({ silent = false } = {}) {
   try {
     if (!silent) toast("Hole Buchungen von Smoobu …");
-    const res = await fetch("/.netlify/functions/smoobu-sync?gaeste=1");
-    const data = await res.json().catch(() => ({ success: false, error: `Smoobu-Funktion nicht erreichbar (${res.status})` }));
-    if (!data.success) throw new Error(data.error || "Unbekannter Fehler");
+    let data;
+    if (isCloud()) data = await callFn("immo-smoobu", { owner: wsId() });
+    else {
+      const res = await fetch("/.netlify/functions/smoobu-sync?gaeste=1");
+      data = await res.json().catch(() => ({ success: false, error: `Smoobu-Funktion nicht erreichbar (${res.status})` }));
+      if (!data.success) throw new Error(data.error || "Unbekannter Fehler");
+    }
     let added = 0, updated = 0, drafts = 0, unknown = new Set();
     for (const sb of data.buchungen) {
       const unit = fewoUnits().find((u) => C.normalize(u.smoobuName || u.name) === C.normalize(sb.einheit_name));
@@ -819,12 +823,73 @@ async function smoobuImport({ silent = false } = {}) {
         if (state.settings.autoInvoiceDrafts && nb.status !== "storniert") { createInvoiceDraft(nb); drafts++; }
       }
     }
+    ui.smoobuUnknown = [...unknown];
     if (silent) return { added, updated, drafts, unknown: [...unknown] };
-    commit(`Smoobu: ${added} neu, ${updated} aktualisiert${drafts ? `, ${drafts} Rechnungsentwürfe` : ""}${unknown.size ? ` · nicht zugeordnet: ${[...unknown].join(", ")} (Smoobu-Namen bei der Einheit eintragen)` : ""}`);
+    commit(`Smoobu: ${added} neu, ${updated} aktualisiert${drafts ? `, ${drafts} Rechnungsentwürfe` : ""}`);
+    if (unknown.size) smoobuMapDialog([...unknown]);
   } catch (e) {
     if (silent) throw e;
-    alert(`Smoobu-Import fehlgeschlagen: ${e.message}\n\nDer Import funktioniert, wenn die App über Netlify läuft und SMOOBU_API_KEY + SMOOBU_API_SECRET gesetzt sind.`);
+    if (isCloud()) { if (/nicht verbunden/.test(e.message)) smoobuConnect(); else alert(`Smoobu-Abruf fehlgeschlagen: ${e.message}`); }
+    else alert(`Smoobu-Import fehlgeschlagen: ${e.message}\n\nIm lokalen Modus funktioniert der Import nur mit SMOOBU_API_KEY + SMOOBU_API_SECRET in Netlify. Mit Konto (Anmeldung) trägst du den Smoobu-Zugang einfach in der App ein.`);
   }
+}
+
+// Smoobu-Wohnungen, die es in Homevio noch nicht gibt: zuordnen oder als Ferienwohnung anlegen
+function smoobuMapDialog(names) {
+  if (!state.objects.length) return alert(`Smoobu meldet die Wohnung(en) ${names.join(", ")}. Lege zuerst unter „Häuser & Wohnungen“ das Objekt an, danach kannst du sie zuordnen.`);
+  const choices = [["", "– nicht übernehmen –"], ...fewoUnits().map((u) => [`u:${u.id}`, `ist: ${unitLabel(u)}`]), ...state.objects.map((o) => [`o:${o.id}`, `neu als Ferienwohnung in „${o.name}“`])];
+  dialog({
+    title: "Smoobu-Wohnungen zuordnen", submit: "Übernehmen und Buchungen holen",
+    body: `<p class="muted" style="margin-bottom:10px">Diese Wohnungen kommen aus Smoobu und sind in Homevio noch nicht bekannt. Einmal zuordnen – danach geht es automatisch.</p>
+      ${names.map((n, i) => `<label class="f"><span>🏖 ${esc(n)}</span><select name="m${i}">${opt(choices, fewoUnits().length ? "" : `o:${state.objects[0].id}`)}</select></label>`).join("")}`,
+    onSubmit: (form) => {
+      let n = 0;
+      names.forEach((name, i) => {
+        const v = form[`m${i}`].value;
+        if (v.startsWith("u:")) { const u = byId("units", v.slice(2)); if (u) { u.smoobuName = name; n++; } }
+        else if (v.startsWith("o:")) { state.units.push({ id: C.uid("u_"), objectId: v.slice(2), type: "ferienwohnung", name, smoobuName: name, vat: 7 }); n++; }
+      });
+      commit(`${n} Wohnung(en) zugeordnet`);
+      if (n) setTimeout(() => smoobuImport(), 50);
+    },
+  });
+}
+
+// Smoobu verbinden: API-Key und API-Secret einmal eintragen (gilt für diesen Bestand, bleibt auf dem Server)
+function smoobuConnect() {
+  if (!isCloud()) return alert("Smoobu verbinden geht im Konto-Modus (mit Anmeldung).");
+  if (!isOwnWs()) return alert("Smoobu kann nur der Inhaber des Bestands verbinden.");
+  dialog({
+    title: "Smoobu verbinden", submit: "Verbinden & testen",
+    body: `<ol class="steps small" style="margin-bottom:12px">
+        <li>In Smoobu anmelden → <b>Einstellungen</b> → <b>Erweitert</b> bzw. <b>Entwickler</b> → <b>API-Schlüssel</b>.</li>
+        <li><b>API-Key</b> und <b>API-Secret</b> kopieren (bei neuen Schlüsseln zeigt Smoobu das Secret nur einmal an).</li>
+        <li>Hier einfügen und auf „Verbinden & testen“ klicken.</li></ol>
+      <label class="f"><span>API-Key</span><input name="key" autocomplete="off" required></label>
+      <label class="f"><span>API-Secret</span><input name="secret" type="password" autocomplete="new-password"></label>
+      <p class="small muted">Der Zugang wird verschlüsselt übertragen und nur auf dem Server gespeichert – die App selbst und Team-Mitglieder können ihn nicht auslesen. Jeder Homevio-Nutzer verbindet sein eigenes Smoobu-Konto.</p>`,
+    onSubmit: (form) => {
+      const key = form.key.value.trim(), secret = form.secret.value.trim();
+      (async () => {
+        try {
+          await Cloud.smoobuSet(key, secret);
+          const t = await callFn("immo-smoobu", { owner: wsId(), action: "test" });
+          ui.smoobu = await Cloud.smoobuStatus(wsId()).catch(() => null);
+          state.settings.smoobuAuto = true; commit(`✓ Smoobu verbunden – ${t.count} Buchungen in den letzten/nächsten 30 Tagen gefunden`);
+          await smoobuImport();
+        } catch (e) { alert(`Smoobu-Verbindung fehlgeschlagen: ${e.message}`); ui.smoobu = await Cloud.smoobuStatus(wsId()).catch(() => null); render(); }
+      })();
+    },
+  });
+}
+
+function smoobuBox() {
+  if (!isCloud()) return "";
+  if (ui.smoobu === undefined) { ui.smoobu = null; Cloud.smoobuStatus(wsId()).then((s) => { ui.smoobu = s || false; render(); }, () => { ui.smoobu = false; }); }
+  const s = ui.smoobu;
+  return s?.connected
+    ? `<div class="kv"><span>🏖 <b>Smoobu verbunden</b> <span class="small muted">Schlüssel …${esc(s.hint || "")}</span></span><span class="toolbar">${btn("smoobu", "Jetzt abrufen", "sm primary")}${isOwnWs() ? btn("smoobuConnect", "ändern", "sm link") + btn("smoobuDisconnect", "trennen", "sm link") : ""}</span></div>`
+    : `<div class="note"><b>Smoobu verbinden</b> – holt alle Buchungen aus Airbnb, Booking.com & Co. mit Gastname, Anschrift, Firma, E-Mail und Preis. Daraus erstellst du mit einem Klick die Rechnung. ${isOwnWs() ? btn("smoobuConnect", "🔗 Smoobu verbinden", "sm primary") : '<span class="small muted">(kann nur der Inhaber des Bestands)</span>'}</div>`;
 }
 
 // ---------------------------------------------------------------- Exporte
@@ -1074,7 +1139,7 @@ function editExpense(id) {
 
 function viewFewo() {
   const units = fewoUnits();
-  if (!units.length) return head("Ferienwohnung") + `<div class="card empty"><div class="big">☀️</div><p>Lege unter „Objekte & Einheiten“ eine Einheit vom Typ <b>Ferienwohnung</b> an, um Buchungen, Belegungskalender und Gäste-Rechnungen zu nutzen.</p><br>${btn("newUnit", "+ Einheit anlegen", "primary")}</div>`;
+  if (!units.length) return head("Ferienwohnung") + `<div class="card empty"><div class="big">☀️</div><p>Lege unter „Objekte & Einheiten“ eine Einheit vom Typ <b>Ferienwohnung</b> an, um Buchungen, Belegungskalender und Gäste-Rechnungen zu nutzen.${isCloud() ? " Oder verbinde Smoobu – die Ferienwohnungen werden dann übernommen." : ""}</p><br>${btn("newUnit", "+ Einheit anlegen", "primary")}</div>${isCloud() ? `<div class="card">${smoobuBox()}</div>` : ""}`;
   const key = ui.month, days = C.daysInMonth(key);
   const from = `${key}-01`, to = `${C.addMonths(key, 1)}-01`;
   const ids = units.map((u) => u.id);
@@ -1658,6 +1723,7 @@ function viewSettings() {
   const accLabels = { bank: "Bank", kasse: "Kasse", steuerfrei: "Mieterlöse steuerfrei (§ 4 Nr. 12)", kleinunternehmer: "Erlöse Kleinunternehmer (§ 19)", erl7: "Erlöse 7 % (Ferienwohnung)", erl19: "Erlöse 19 %", durchlaufend: "Durchlaufende Posten (Kurtaxe)", sonstErtrag: "Sonstige Erträge" };
   const rules = Object.entries(state.rules || {});
   return head("Einstellungen") + `
+    ${isCloud() ? `<div class="card"><h2>🔗 Verbindungen</h2>${smoobuBox()}<p class="small muted" style="margin-top:6px">Bank verbinden: unter „Konto & Zahlungen“.</p></div>` : ""}
     <form class="card" data-form="owner"><h2>Vermieter / Rechnungssteller</h2><div class="fgrid">
       ${[["ownerName", "Name / Firma"], ["ownerStreet", "Straße"], ["ownerZip", "PLZ"], ["ownerCity", "Ort"], ["ownerEmail", "E-Mail"], ["ownerPhone", "Telefon"], ["taxNumber", "Steuernummer"], ["vatId", "USt-IdNr. (falls vorhanden)"], ["invoiceBank", "Bank (für Rechnungen)"], ["invoiceIban", "IBAN (für Rechnungen)"], ["invoiceBic", "BIC"]].map(([k, l]) => `<label class="f"><span>${l}</span><input name="${k}" value="${esc(s[k] || "")}"></label>`).join("")}
     </div><button class="btn primary">Speichern</button></form>
@@ -2911,6 +2977,7 @@ function channelsCard() {
   const units = fewoUnits();
   const feedUrl = (u, x) => isCloud() && u.icalToken ? `${location.origin}/.netlify/functions/immo-ical-feed?u=${wsId()}&unit=${u.id}&t=${u.icalToken}${x ? `&x=${encodeURIComponent(x)}` : ""}` : "";
   return `<div class="card noprint"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">🔄 Kanäle: Airbnb, Booking.com & Co.</h2><div class="toolbar">${btn("syncNow", ui.syncing ? "⏳ synchronisiert …" : "Jetzt synchronisieren", "")}</div></div>
+    ${smoobuBox()}
     <label class="f inline small"><input type="checkbox" data-change="smoobuAuto" ${state.settings.smoobuAuto ? "checked" : ""}> <b>Smoobu automatisch abrufen</b> (empfohlen: alle Portale mit Gastnamen, Preisen und Kontaktdaten) ${st.smoobu ? `<span class="muted">· zuletzt ${new Date(st.smoobu.at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}${st.smoobu.ok ? "" : ` · <span class="neg">${esc(st.smoobu.error)}</span>`}</span>` : ""}</label>
     ${units.map((u) => `<div class="channel"><b>${esc(u.name)}</b>
       ${(u.icalFeeds || []).map((f) => { const s = st.ical[f.id]; return `<div class="kv small"><span>📥 ${esc(f.channel)}-Kalender <span class="muted">${esc(f.url.slice(0, 48))}…</span></span><span>${s ? (s.ok ? `<span class="badge ok">ok</span> ${new Date(s.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}` : `<span class="badge bad" title="${esc(s.error)}">Fehler</span>`) : ""} ${btn("delFeed", "✕", "sm link", `${u.id}|${f.id}`)}</span></div>`; }).join("")}
@@ -4884,7 +4951,8 @@ const actions = {
   nkLoad: (id) => { ui.nk = structuredClone(state.nkStatements.find((x) => x.id === id)); render(); },
   newInvoice: () => editInvoice(), editInvoice, cancelInvoice, markPaid,
   invoiceRecipient: recipientDialog, invoicePdf: downloadInvoicePdf, emailInvoice, archiveInvoice: (id) => archiveInvoicePdf(id),
-  draftsForAll: () => { if (blockedWrite()) return; const list = bookingsWithoutInvoice().filter((b) => b.from <= today()); for (const b of list) createInvoiceDraft(b); commit(`${list.length} Rechnungsentwürfe angelegt – bitte prüfen und festschreiben`); }, smoobu: smoobuImport,
+  draftsForAll: () => { if (blockedWrite()) return; const list = bookingsWithoutInvoice().filter((b) => b.from <= today()); for (const b of list) createInvoiceDraft(b); commit(`${list.length} Rechnungsentwürfe angelegt – bitte prüfen und festschreiben`); }, smoobu: smoobuImport, smoobuConnect,
+  smoobuDisconnect: async () => { if (!confirm("Smoobu-Verbindung trennen? Bereits übernommene Buchungen bleiben erhalten.")) return; try { await Cloud.smoobuSet("", ""); state.settings.smoobuAuto = false; ui.smoobu = false; commit("Smoobu getrennt"); } catch (e) { alert(e.message); } },
   datevPreset: (p) => {
     const y = ui.year;
     if (p === "y") { ui.datevFrom = `${y}-01-01`; ui.datevTo = `${y}-12-31`; }

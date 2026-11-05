@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/core.test.mjs tests/recht.test.mjs tests/steuer.test.mjs tests/billing.test.cjs tests/sync.test.cjs tests/team.test.mjs tests/mail.test.cjs tests/pdf.test.mjs tests/instand.test.mjs tests/monat.test.mjs",
-    "test:db": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f supabase/tests/supabase_stub.sql -f supabase/migrations/20261105000000_hausops_immo.sql -f supabase/migrations/20261106000000_billing.sql -f supabase/migrations/20261107000000_legal.sql -f supabase/migrations/20261108000000_team.sql -f supabase/migrations/20261109000000_admin_groups.sql -f supabase/migrations/20261110000000_portal.sql -f supabase/migrations/20261111000000_brand.sql -f supabase/tests/rls_test.sql -f supabase/tests/billing_test.sql -f supabase/tests/legal_test.sql -f supabase/tests/team_test.sql -f supabase/tests/admin_groups_test.sql -f supabase/tests/portal_test.sql",
+    "test": "node --test tests/core.test.mjs tests/recht.test.mjs tests/steuer.test.mjs tests/billing.test.cjs tests/sync.test.cjs tests/team.test.mjs tests/mail.test.cjs tests/pdf.test.mjs tests/instand.test.mjs tests/monat.test.mjs tests/smoobu.test.cjs",
+    "test:db": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f supabase/tests/supabase_stub.sql -f supabase/migrations/20261105000000_hausops_immo.sql -f supabase/migrations/20261106000000_billing.sql -f supabase/migrations/20261107000000_legal.sql -f supabase/migrations/20261108000000_team.sql -f supabase/migrations/20261109000000_admin_groups.sql -f supabase/migrations/20261110000000_portal.sql -f supabase/migrations/20261111000000_brand.sql -f supabase/migrations/20261112000000_smoobu.sql -f supabase/tests/rls_test.sql -f supabase/tests/billing_test.sql -f supabase/tests/legal_test.sql -f supabase/tests/team_test.sql -f supabase/tests/admin_groups_test.sql -f supabase/tests/portal_test.sql -f supabase/tests/smoobu_test.sql",
     "test:e2e": "bash tests/e2e/run.sh"
   }
 }

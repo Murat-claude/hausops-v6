@@ -115,6 +115,9 @@ export const myWorkspaces = () => rpc("my_workspaces");
 export const myInvites = () => rpc("my_invites");
 export const stateInfo = async (owner) => ((await rpc("state_info", { p_owner: owner })) || [])[0] || null;
 export const team = () => rpc("team");
+// Smoobu-Zugang je Bestand (Geheimnis bleibt auf dem Server)
+export const smoobuSet = (key, secret) => rpc("smoobu_set", { p_key: key || "", p_secret: secret || "" });
+export const smoobuStatus = (owner) => rpc("smoobu_status", { p_owner: owner });
 export async function createInvite(email, role) {
   try { return await rpc("create_invite", { p_email: email, p_role: role }); }
   catch (e) { const m = e.message || ""; if (m.includes("member_limit")) throw Object.assign(new Error(m), { code: "member_limit", limit: Number(m.split(":")[1]) }); throw e; }

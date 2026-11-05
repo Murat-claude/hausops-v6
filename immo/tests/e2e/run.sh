@@ -14,7 +14,7 @@ node tests/e2e/server.cjs & SRV=$!
 trap 'kill $SRV 2>/dev/null' EXIT
 sleep 1
 fail=0
-for t in konto-team admin-gruppen mieterportal rechnungen-lokal reparaturen-lokal rundgang-lokal; do
+for t in konto-team admin-gruppen mieterportal smoobu rechnungen-lokal reparaturen-lokal rundgang-lokal; do
   echo; echo "══ $t"; node "tests/e2e/$t.cjs" || fail=1
 done
 echo; echo "Screenshots & PDFs: $OUT"
