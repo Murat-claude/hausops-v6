@@ -514,3 +514,7 @@ dialog[open] { animation: pop .22s var(--ease); }
 /* Ablage */
 .qtile small { font-weight: 500; font-size: 12px; }
 .qtile.on { border-color: var(--brand); background: var(--soft); box-shadow: 0 0 0 2px rgba(29,76,92,.15); }
+.scanbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--soft); border: 1px dashed #b9cdd2; border-radius: 12px; padding: 10px 12px; margin-bottom: 12px; }
+.scanbar #addrScanMsg { flex-basis: 100%; }
+.scanbar #addrScanMsg:empty { display: none; }
+input.filled { background: #f3faf6; border-color: #9fd0b2; }

@@ -608,19 +608,49 @@ function recipientFieldsHtml(r0 = {}) {
     const m = (lines[lines.length - 1] || "").match(/^(\d{4,5})\s+(.+)$/);
     if (m) { r.zip = m[1]; r.city = m[2]; r.street = lines.slice(0, -1).join(", "); } else r.street = lines.join(", ");
   }
-  return `<div class="fgrid">
+  return `<div class="scanbar" data-addrscan="1">
+      <label class="btn sm primary">📷 Rechnungsadresse aus Foto / Screenshot<input type="file" accept="image/*,application/pdf" data-change="addrScan" hidden></label>
+      <button type="button" class="btn sm" data-act="addrText">📋 Text einfügen</button>
+      <span class="small muted">oder Screenshot hier mit <b>Strg+V</b> / <b>⌘+V</b> einfügen – die KI füllt alles aus</span>
+      <div class="small" id="addrScanMsg"></div></div>
+    <div class="fgrid">
       <label class="f"><span>Firma <small class="muted">(leer lassen bei Privatgast)</small></span><input name="rcompany" value="${esc(r.company || "")}" placeholder="z. B. Muster GmbH"></label>
       <label class="f"><span>Name (Gast bzw. Ansprechpartner) *</span><input name="rname" value="${esc(r.name || "")}"></label>
       <label class="f"><span>Straße & Hausnummer</span><input name="rstreet" value="${esc(r.street || "")}"></label>
-      <label class="f"><span>PLZ / Ort</span><span class="inline"><input name="rzip" value="${esc(r.zip || "")}" style="max-width:90px"><input name="rcity" value="${esc(r.city || "")}"></span></label>
+      <label class="f"><span>PLZ / Ort</span><span style="display:grid;grid-template-columns:100px minmax(0,1fr);gap:8px"><input name="rzip" value="${esc(r.zip || "")}"><input name="rcity" value="${esc(r.city || "")}"></span></label>
       <label class="f"><span>Land <small class="muted">(leer = Deutschland)</small></span><input name="rcountry" value="${esc(r.country || "")}" placeholder="z. B. AT, NL"></label>
-      <label class="f"><span>USt-IdNr. der Firma (optional)</span><input name="rvat" value="${esc(r.vatId || "")}"></label>
+      <label class="f"><span>USt-IdNr. / VAT-Nr. der Firma (optional)</span><input name="rvat" value="${esc(r.vatId || "")}" placeholder="z. B. NL123456789B01"></label>
+      <label class="f"><span>Steuernummer (optional)</span><input name="rtaxno" value="${esc(r.taxNumber || "")}"></label>
+      <label class="f"><span>Ihre Referenz / Bestellnr. (optional)</span><input name="rref" value="${esc(r.reference || "")}" placeholder="z. B. PO 4500123, Kostenstelle"></label>
       <label class="f full"><span>E-Mail für den Rechnungsversand</span><input name="remail" type="email" value="${esc(r.email || "")}" placeholder="z. B. buchhaltung@firma.de"></label>
     </div>`;
 }
+// Rechnungsadresse per KI aus Foto/Screenshot/PDF/Text lesen und ins Formular eintragen
+async function addrScanFill(form, { blob, text }) {
+  const msg = $("#addrScanMsg", form);
+  if (!K.hasKey()) { msg.innerHTML = `<span class="neg">Für das Auslesen bitte unter <a href="#/einstellungen">Einstellungen → KI</a> den Schlüssel eintragen.</span>`; return; }
+  msg.textContent = "✨ Lese Rechnungsadresse …";
+  try {
+    let base64 = null, mediaType = null;
+    if (blob) {
+      if (blob.type === "application/pdf") { base64 = await F.blobToBase64(blob); mediaType = "application/pdf"; }
+      else { const r = await F.prepareImage(blob, false); base64 = await F.blobToBase64(r.blob); mediaType = "image/jpeg"; }
+    }
+    const a = await K.readAddress({ base64, mediaType, text });
+    const set = (n, v) => { if (v && form[n]) { form[n].value = v; form[n].classList.add("filled"); } };
+    set("rcompany", a.company);
+    if (a.name || !a.company) set("rname", a.name); // Gast/Mitarbeiter bleibt als „z. Hd.“, wenn die Vorlage keine Person nennt
+    set("rstreet", a.street); set("rzip", a.zip); set("rcity", a.city);
+    if (form.rcountry) form.rcountry.value = a.country && a.country.toUpperCase() !== "DE" ? a.country.toUpperCase() : "";
+    set("rvat", C.normVatId(a.vat_id)); set("rtaxno", a.tax_number); set("remail", a.email); set("rref", a.reference);
+    const vat = C.vatIdFormatOk(a.vat_id);
+    msg.innerHTML = `✓ Übernommen (Sicherheit ${esc(a.confidence)}) – bitte kurz prüfen.${vat === false ? ` <span class="neg">Die USt-IdNr. ${esc(a.vat_id)} hat ein ungewöhnliches Format.</span>` : ""}${a.note ? ` <span class="muted">${esc(a.note)}</span>` : ""}`;
+  } catch (e) { msg.innerHTML = `<span class="neg">Konnte nicht gelesen werden: ${esc(K.friendlyError(e))}</span>`; }
+}
+
 function readRecipient(form) {
   const v = (k) => (form[k]?.value || "").trim();
-  return { name: v("rname"), company: v("rcompany"), attn: "", street: v("rstreet"), zip: v("rzip"), city: v("rcity"), country: v("rcountry"), vatId: v("rvat"), email: v("remail"), business: !!v("rcompany") };
+  return { name: v("rname"), company: v("rcompany"), attn: "", street: v("rstreet"), zip: v("rzip"), city: v("rcity"), country: v("rcountry"), vatId: C.normVatId(v("rvat")), taxNumber: v("rtaxno"), reference: v("rref"), email: v("remail"), business: !!v("rcompany") };
 }
 
 function recipientDialog(id) {
@@ -875,8 +905,14 @@ function smoobuConnect() {
           await Cloud.smoobuSet(key, secret);
           const t = await callFn("immo-smoobu", { owner: wsId(), action: "test" });
           ui.smoobu = await Cloud.smoobuStatus(wsId()).catch(() => null);
-          state.settings.smoobuAuto = true; commit(`✓ Smoobu verbunden – ${t.count} Buchungen in den letzten/nächsten 30 Tagen gefunden`);
+          state.settings.smoobuAuto = true; state.settings.autoInvoiceDrafts = true;
+          commit(`✓ Smoobu verbunden – ${t.count} Buchungen in den letzten/nächsten 30 Tagen gefunden`);
           await smoobuImport();
+          const open = bookingsWithoutInvoice();
+          if (open.length && confirm(`${open.length} Buchung(en) haben noch keine Rechnung. Jetzt für alle einen Rechnungsentwurf mit den Gastdaten anlegen?\n\nNeue Buchungen bekommen ab sofort automatisch einen Entwurf.`)) {
+            for (const bk of open) createInvoiceDraft(bk);
+            commit(`${open.length} Rechnungsentwürfe angelegt – unter „Gäste-Rechnungen“ prüfen, ggf. Firma eintragen und festschreiben`);
+          }
         } catch (e) { alert(`Smoobu-Verbindung fehlgeschlagen: ${e.message}`); ui.smoobu = await Cloud.smoobuStatus(wsId()).catch(() => null); render(); }
       })();
     },
@@ -1321,9 +1357,9 @@ function invoiceModel(inv) {
   return {
     draft, title, author: s.ownerName,
     senderLine: sender.join(" · "),
-    recipient: [...C.recipientLines(inv.recipient), ...(inv.recipient?.vatId ? [`USt-IdNr. ${inv.recipient.vatId}`] : [])],
+    recipient: [...C.recipientLines(inv.recipient), ...(inv.recipient?.vatId ? [`USt-IdNr. ${inv.recipient.vatId}`] : []), ...(inv.recipient?.taxNumber ? [`Steuernr. ${inv.recipient.taxNumber}`] : [])],
     info: [s.ownerName, ...sender.slice(1), s.ownerPhone && `Tel. ${s.ownerPhone}`, s.ownerEmail].filter(Boolean),
-    meta: [["Rechnungsnr.", inv.number || "–"], ["Datum", d(inv.date)], inv.serviceFrom && ["Leistungszeitraum", `${d(inv.serviceFrom)} – ${d(inv.serviceTo || inv.serviceFrom)}`],
+    meta: [["Rechnungsnr.", inv.number || "–"], ["Datum", d(inv.date)], inv.serviceFrom && ["Leistungszeitraum", `${d(inv.serviceFrom)} – ${d(inv.serviceTo || inv.serviceFrom)}`], inv.recipient?.reference && ["Ihre Referenz", inv.recipient.reference],
       s.taxNumber && ["Steuernummer", s.taxNumber], s.vatId && ["USt-IdNr.", s.vatId]].filter(Boolean),
     intro: [unit && `Unterkunft: ${unit.name}${obj ? `, ${[obj.street, [obj.zip, obj.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}` : ""}${unit.registrationNo ? ` · Registrierungsnr. ${unit.registrationNo}` : ""}`,
       inv.guestName && inv.recipient?.company && `Gast: ${inv.guestName}`].filter(Boolean),
@@ -4890,6 +4926,12 @@ const actions = {
   },
   openDoc, editDoc, bookDoc, kiDoc: (id) => kiReadDoc(id),
   docFilter: (f) => { ui.docFilter = f; render(); },
+  addrText: () => {
+    const zone = $("#modal [data-addrscan]"); if (!zone) return;
+    if (!$("#addrTextBox", zone)) zone.insertAdjacentHTML("beforeend", `<div id="addrTextBox" style="flex-basis:100%;margin-top:6px"><textarea id="addrTextIn" rows="4" placeholder="Rechnungsadresse aus der E-Mail hier hineinkopieren …"></textarea><button type="button" class="btn sm primary" data-act="addrTextRead" style="margin-top:4px">✨ Auslesen</button></div>`);
+    $("#addrTextIn", zone).focus();
+  },
+  addrTextRead: () => { const zone = $("#modal [data-addrscan]"); const t = $("#addrTextIn", zone)?.value.trim(); if (t) addrScanFill(zone.closest("form"), { text: t }); },
   ablageFolder: (k) => { ui.ablageFolder = ui.ablageFolder === k ? null : k || null; render(); },
   letterReset: () => { ui.letter.body = ""; render(); },
   letterKi: async () => {
@@ -5035,6 +5077,8 @@ document.addEventListener("change", async (e) => {
   if (!k) return;
   if (k === "docUpload" || k === "docScan") { await addFiles(e.target.files, { scan: k === "docScan" }); e.target.value = ""; return; }
   if (k === "autoKi") { ui.autoKi = e.target.checked; return; }
+  if (k === "addrScanText") return;
+  if (k === "addrScan") { const f = e.target.files[0]; e.target.value = ""; if (f) await addrScanFill(e.target.closest("form"), { blob: f }); return; }
   if (k === "ablageUpload") { const fl = [...e.target.files]; e.target.value = ""; await bulkImport(fl, ui.ablageObj); return; }
   if (k === "ablageObj") { ui.ablageObj = e.target.value; ui.ablageFolder = null; location.hash = `#/ablage/${e.target.value}`; return; }
   if (k === "kiPseudo") { state.settings.kiPseudo = e.target.checked; commit(e.target.checked ? "Datensparsamer KI-Modus an" : "Datensparsamer KI-Modus aus"); return; }
@@ -5137,6 +5181,14 @@ document.addEventListener("input", (e) => {
 // Drag & Drop von Dateien auf die Belege-Seite
 document.addEventListener("dragover", (e) => { if (e.target.closest?.("[data-drop]")) { e.preventDefault(); e.target.closest("[data-drop]").classList.add("over"); } });
 document.addEventListener("dragleave", (e) => { e.target.closest?.("[data-drop]")?.classList.remove("over"); });
+// Screenshot aus der Zwischenablage (Strg+V) im Empfänger-Formular → Rechnungsadresse auslesen
+document.addEventListener("paste", (e) => {
+  const zone = $("#modal[open] [data-addrscan]"); if (!zone) return;
+  const img = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith("image/"));
+  if (!img) return;
+  e.preventDefault();
+  addrScanFill(zone.closest("form"), { blob: img.getAsFile() });
+});
 document.addEventListener("drop", async (e) => {
   const z = e.target.closest?.("[data-drop]"); if (!z) return;
   e.preventDefault(); z.classList.remove("over");

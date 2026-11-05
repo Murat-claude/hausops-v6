@@ -1114,7 +1114,7 @@ export function recipientLines(r = {}) {
     if (r.street) out.push(r.street);
     const place = [r.zip, r.city].filter(Boolean).join(" ");
     if (place) out.push(place);
-    if (r.country && !COUNTRY_DE.test(String(r.country).trim())) out.push(String(r.country).toUpperCase().length === 2 ? String(r.country).toUpperCase() : r.country);
+    if (r.country && !COUNTRY_DE.test(String(r.country).trim())) { const cc = String(r.country).trim().toUpperCase(); out.push(COUNTRY_NAMES[cc] || (cc.length === 2 ? cc : String(r.country).trim())); }
   } else if (r.address) out.push(...String(r.address).split(/\n/).map((x) => x.trim()).filter(Boolean));
   return out;
 }
@@ -1189,4 +1189,15 @@ export function backfillPayments(state, { from, to, contractIds, day = 3, batch 
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------- Ausländische Rechnungsempfänger
+export const COUNTRY_NAMES = { AT: "ÖSTERREICH", CH: "SCHWEIZ", NL: "NIEDERLANDE", BE: "BELGIEN", LU: "LUXEMBURG", FR: "FRANKREICH", IT: "ITALIEN", ES: "SPANIEN", PT: "PORTUGAL", PL: "POLEN", CZ: "TSCHECHIEN", SK: "SLOWAKEI", HU: "UNGARN", SI: "SLOWENIEN", HR: "KROATIEN", RO: "RUMÄNIEN", BG: "BULGARIEN", GR: "GRIECHENLAND", DK: "DÄNEMARK", SE: "SCHWEDEN", FI: "FINNLAND", NO: "NORWEGEN", IE: "IRLAND", GB: "VEREINIGTES KÖNIGREICH", UK: "VEREINIGTES KÖNIGREICH", LT: "LITAUEN", LV: "LETTLAND", EE: "ESTLAND", TR: "TÜRKEI", US: "USA", UA: "UKRAINE" };
+const VAT_RE = { AT: /^ATU\d{8}$/, BE: /^BE[01]\d{9}$/, BG: /^BG\d{9,10}$/, CY: /^CY\d{8}[A-Z]$/, CZ: /^CZ\d{8,10}$/, DE: /^DE\d{9}$/, DK: /^DK\d{8}$/, EE: /^EE\d{9}$/, EL: /^EL\d{9}$/, ES: /^ES[0-9A-Z]\d{7}[0-9A-Z]$/, FI: /^FI\d{8}$/, FR: /^FR[0-9A-Z]{2}\d{9}$/, HR: /^HR\d{11}$/, HU: /^HU\d{8}$/, IE: /^IE\d[0-9A-Z+*]\d{5}[A-Z]{1,2}$/, IT: /^IT\d{11}$/, LT: /^LT(\d{9}|\d{12})$/, LU: /^LU\d{8}$/, LV: /^LV\d{11}$/, MT: /^MT\d{8}$/, NL: /^NL\d{9}B\d{2}$/, PL: /^PL\d{10}$/, PT: /^PT\d{9}$/, RO: /^RO\d{2,10}$/, SE: /^SE\d{12}$/, SI: /^SI\d{8}$/, SK: /^SK\d{10}$/, XI: /^XI\d{9}$/, CHE: /^CHE\d{9}(MWST|TVA|IVA)?$/ };
+export function normVatId(v) { return String(v || "").toUpperCase().replace(/[\s.\-]/g, ""); }
+// true = Format passt, false = Format falsch, null = Land ohne Prüfregel
+export function vatIdFormatOk(v) {
+  const n = normVatId(v); if (!n) return null;
+  const re = VAT_RE[n.slice(0, 3)] || VAT_RE[n.slice(0, 2)];
+  return re ? re.test(n) : null;
 }

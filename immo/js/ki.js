@@ -222,3 +222,39 @@ export async function readLease({ base64, mediaType }) {
     messages: [{ role: "user", content: [fileBlock, { type: "text", text: "Lies diesen Mietvertrag aus." }] }],
   });
 }
+
+// ---------------------------------------------------------------- Rechnungsadresse aus Foto / Screenshot / PDF lesen
+
+const ADDRESS_SCHEMA = {
+  type: "object", additionalProperties: false,
+  required: ["company", "name", "street", "zip", "city", "country", "vat_id", "tax_number", "email", "phone", "reference", "note", "confidence"],
+  properties: {
+    company: { type: "string", description: "Firmenname exakt wie geschrieben inkl. Rechtsform (GmbH, B.V., Sp. z o.o., S.r.l. …), leer bei Privatperson" },
+    name: { type: "string", description: "Ansprechpartner/Person, falls angegeben (z. Hd.), sonst leer" },
+    street: { type: "string", description: "Straße und Hausnummer (ggf. mit Zusatz wie Postfach, Gebäude, Etage)" },
+    zip: { type: "string", description: "Postleitzahl genau wie angegeben (z. B. 1010, 2511 CV, 00-950, SW1A 1AA)" },
+    city: { type: "string" },
+    country: { type: "string", description: "ISO-3166-Alpha-2-Code (DE, AT, NL, PL …); DE wenn eindeutig Deutschland oder nichts angegeben ist" },
+    vat_id: { type: "string", description: "USt-IdNr./VAT number/BTW/NIP/TVA mit Länderpräfix, ohne Leerzeichen (z. B. NL123456789B01, ATU12345678, PL1234567890); leer wenn keine" },
+    tax_number: { type: "string", description: "Nationale Steuernummer, falls zusätzlich angegeben, sonst leer" },
+    email: { type: "string", description: "E-Mail für Rechnungen (invoice@, buchhaltung@, accounts payable …), sonst leer" },
+    phone: { type: "string" },
+    reference: { type: "string", description: "Bestellnummer/PO/Kostenstelle/Referenz, die auf die Rechnung soll, sonst leer" },
+    note: { type: "string", description: "Kurzer Hinweis auf Deutsch, falls etwas unklar oder unvollständig ist, sonst leer" },
+    confidence: { type: "string", enum: ["hoch", "mittel", "niedrig"] },
+  },
+};
+
+export async function readAddress({ base64, mediaType, text }) {
+  const content = [];
+  if (base64) content.push(mediaType === "application/pdf"
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+    : { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } });
+  content.push({ type: "text", text: text ? `Rechnungsanschrift aus diesem Text:\n${text}` : "Lies die Rechnungsanschrift aus diesem Bild (z. B. Screenshot einer E-Mail oder Buchungsbestätigung)." });
+  return call({
+    effort: "low",
+    format: ADDRESS_SCHEMA,
+    system: `Du liest Rechnungsanschriften für eine Ferienwohnungs-Rechnung aus (oft Firmen, die Mitarbeiter unterbringen, auch aus dem Ausland). Übernimm Namen, Sonderzeichen und Diakritika exakt (ł, ø, ş, é, ß …), erfinde nichts. Wenn mehrere Adressen vorkommen, nimm die ausdrücklich als Rechnungsadresse/billing/invoice address bezeichnete, nicht die Absender- oder Lieferadresse und nicht die Adresse der Ferienwohnung. USt-IdNr. immer mit Länderpräfix und ohne Leerzeichen/Punkte.`,
+    messages: [{ role: "user", content }],
+  });
+}

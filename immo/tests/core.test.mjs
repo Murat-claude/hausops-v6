@@ -316,7 +316,7 @@ import { recipientLines, recipientFromBooking, channelNote, recipientName, recip
 test("Rechnungsempfänger: Firma statt Gast, Auslandsadresse, Altformat", () => {
   const b = { guest: "Anna Gast", guestStreet: "Hauptstr. 1", guestZip: "1010", guestCity: "Wien", guestCountry: "AT", email: "anna@example.at", channel: "Booking.com", channelRef: "4711" };
   const r = recipientFromBooking(b);
-  assert.deepEqual(recipientLines(r), ["Anna Gast", "Hauptstr. 1", "1010 Wien", "AT"]);
+  assert.deepEqual(recipientLines(r), ["Anna Gast", "Hauptstr. 1", "1010 Wien", "ÖSTERREICH"]);
   const firma = { ...r, company: "Muster GmbH", street: "Industriestr. 5", zip: "20095", city: "Hamburg", country: "DE" };
   assert.deepEqual(recipientLines(firma), ["Muster GmbH", "z. Hd. Anna Gast", "Industriestr. 5", "20095 Hamburg"]);
   assert.equal(recipientName(firma), "Muster GmbH");
@@ -387,4 +387,14 @@ test("Vergangene Monate nachtragen: nur fehlende Beträge", async () => {
   // August: vor Mietbeginn → nichts; September: volle Miete (Datum = Mietbeginn); Oktober: Rest 400 €
   assert.deepEqual(ps.map((p) => [p.period, p.amount, p.date]), [["2026-09", 60000, "2026-09-15"], ["2026-10", 40000, "2026-10-03"]]);
   assert.equal(backfillPayments(s, { from: "2026-10", to: "2026-09", contractIds: ["c1"] }).length, 0);
+});
+
+test("USt-IdNr. ausländischer Firmen: Format prüfen", async () => {
+  const { vatIdFormatOk, normVatId } = await import("../js/core.js");
+  assert.equal(normVatId("nl 1234.56789 b01"), "NL123456789B01");
+  assert.equal(vatIdFormatOk("NL123456789B01"), true);
+  assert.equal(vatIdFormatOk("ATU12345678"), true);
+  assert.equal(vatIdFormatOk("PL 123-456-78-90"), true);
+  assert.equal(vatIdFormatOk("DE12345"), false);
+  assert.equal(vatIdFormatOk("GB123456789"), null);
 });
