@@ -2,6 +2,13 @@
   publish = "."
   functions = "netlify/functions"
 
+# Homevio: Startseite direkt zur Immobilien-App (nur dieser Branch / die Netlify-Seite homevio)
+[[redirects]]
+  from = "/"
+  to = "/immo/"
+  status = 302
+  force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
