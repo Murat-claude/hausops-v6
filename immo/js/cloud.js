@@ -131,6 +131,61 @@ export const adminRemoveMember = (owner, member) => rpc("admin_remove_member", {
 export const adminRevokeInvite = (token) => rpc("admin_revoke_invite", { p_token: token });
 export const teamRevokeInvite = (token) => rpc("team_revoke_invite", { p_token: token });
 
+// ---------------------------------------------------------------- Mieterportal
+
+export const myPortals = () => rpc("my_portals");
+export const myPortalInvites = () => rpc("my_portal_invites");
+export const acceptPortalInvite = (token) => rpc("accept_portal_invite", { p_token: token });
+export const portalMarkRead = (owner, tenantKey) => rpc("portal_mark_read", { p_owner: owner, p_tenant_key: tenantKey });
+export async function portalInviteInfo(token) {
+  const { data, error } = await sb.rpc("portal_invite_info", { p_token: token });
+  fail(error);
+  return (data || [])[0] || null;
+}
+export async function portalTenants(owner) {
+  const { data, error } = await sb.from("portal_tenants").select("*").eq("owner_id", owner);
+  fail(error); return data || [];
+}
+export async function portalSaveTenant(row) {
+  const { data, error } = await sb.from("portal_tenants").upsert(row, { onConflict: "owner_id,tenant_key" }).select().single();
+  fail(error); return data;
+}
+export async function portalUpdateTenant(id, patch) {
+  const { error } = await sb.from("portal_tenants").update(patch).eq("id", id);
+  fail(error);
+}
+export async function portalItems(owner, tenantKey = null, limit = 300) {
+  let q = sb.from("portal_items").select("*").eq("owner_id", owner).order("created_at", { ascending: false }).limit(limit);
+  if (tenantKey) q = q.eq("tenant_key", tenantKey);
+  const { data, error } = await q;
+  fail(error); return data || [];
+}
+export async function portalUnread(owner) {
+  const { count, error } = await sb.from("portal_items").select("id", { count: "exact", head: true }).eq("owner_id", owner).eq("direction", "mieter").is("read_by_owner_at", null);
+  fail(error); return count || 0;
+}
+export async function portalPost(item) {
+  const { data, error } = await sb.from("portal_items").insert(item).select().single();
+  fail(error); return data;
+}
+export async function portalUpdateItem(id, patch) {
+  const { error } = await sb.from("portal_items").update(patch).eq("id", id);
+  fail(error);
+}
+export async function portalMarkOwnerRead(owner) {
+  const { error } = await sb.from("portal_items").update({ read_by_owner_at: new Date().toISOString() }).eq("owner_id", owner).eq("direction", "mieter").is("read_by_owner_at", null);
+  fail(error);
+}
+export async function uploadPath(path, blob) {
+  const { error } = await sb.storage.from("belege").upload(path, blob, { upsert: true, contentType: blob.type || "application/octet-stream" });
+  fail(error);
+}
+export async function downloadPath(path) {
+  const { data, error } = await sb.storage.from("belege").download(path);
+  fail(error); return data;
+}
+export const adminAccountTypes = () => rpc("admin_account_types");
+
 // ---------------------------------------------------------------- Belege (Storage)
 
 const bucket = () => sb.storage.from("belege");

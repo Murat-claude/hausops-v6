@@ -324,3 +324,16 @@ dialog.sheet .menu-sheet .navgroup { font-size: 12px; text-transform: uppercase;
   .todoitem .rc { margin-left: 42px; text-align: left; }
 }
 @media (max-width: 900px) { .bigstats.four > div:first-child { grid-column: auto; } }
+
+/* Mieterportal */
+body.portalscreen .side, body.portalscreen #tabbar { display: none !important; }
+body.portalscreen main { max-width: 900px; margin: 0 auto; padding: 16px; }
+.tp-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.tp-top .logo { font-weight: 700; font-size: 18px; color: var(--brand, #1f4e5f); }
+.tp-hello h1 { margin: 6px 0 2px; }
+.tp-hello p { margin-bottom: 14px; }
+.tp-tiles { grid-template-columns: repeat(4, 1fr); margin-bottom: 14px; }
+.tp .timeline.from-owner { border-left-color: #2e7d6b; background: #f2f8f6; }
+img.pphoto { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; background: #f3f3f3; }
+.pitem.unread { border-left: 4px solid #d9a400; }
+@media (max-width: 900px) { .tp-tiles { grid-template-columns: 1fr 1fr; } body.portalscreen main { padding: 12px; } }

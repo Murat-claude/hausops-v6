@@ -2321,10 +2321,10 @@ function viewTenant(id) {
   const upload = (kind) => `<label class="btn sm">📷 Foto/Scan<input type="file" accept="image/*" capture="environment" data-change="folderUpload" data-kind="${kind}" data-scan="1" hidden></label><label class="btn sm">📄 PDF/Datei<input type="file" accept="image/*,application/pdf" multiple data-change="folderUpload" data-kind="${kind}" hidden></label>`;
   const docRow = (x) => `<div class="docline"><span class="att" data-act="openDoc" data-id="${x.id}">${x.thumb ? `<img src="${x.thumb}">` : "📄"} ${esc(x.name)}</span>
     <span class="small muted">${esc(DOC_KINDS[x.kind] || "")} · ${d(x.created.slice(0, 10))}</span>
-    ${x.kind === "vertrag" ? btn("leaseRead", ui.kiBusy?.[x.id] ? "⏳ liest …" : "✨ Vertrag auslesen", "sm", `${x.id}|${x.contractId}`) : ""}${btn("editDoc", "✎", "sm link", x.id)}</div>`;
+    ${x.kind === "vertrag" ? btn("leaseRead", ui.kiBusy?.[x.id] ? "⏳ liest …" : "✨ Vertrag auslesen", "sm", `${x.id}|${x.contractId}`) : ""}${isCloud() && portalRowFor(id) && !portalRowFor(id).revoked_at ? ((x.sharedWith || []).includes(id) ? '<span class="small muted">🔑 geteilt</span>' : btn("portalShareDoc", "🔑 Teilen", "sm", `${x.id}|${id}`)) : ""}${btn("editDoc", "✎", "sm link", x.id)}</div>`;
 
   const body = {
-    ueberblick: `<div class="grid g2">
+    ueberblick: `<div class="grid g2">${portalCard(id)}
       <div class="card"><h2>Steckbrief</h2><div class="facts">
         ${fact("Einheit", u ? `${esc(unitLabel(u))} (${esc(C.UNIT_TYPES[u.type])}${u.area ? `, ${String(u.area).replace(".", ",")} m²` : ""})` : "")}
         ${fact("Adresse", u ? esc(addrOf(u)) : "")}
@@ -2836,7 +2836,7 @@ function navGroups() {
   const hasFewo = fewoUnits().length > 0 || state.bookings.length > 0;
   return [
     [null, [["", "🏠", "Start"]]],
-    ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["instand", "🔧", "Reparaturen"], ["briefe", "✉️", "Briefe"]]],
+    ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["instand", "🔧", "Reparaturen"], ...(isCloud() ? [["portal", "🔑", `Mieterportal${portalUnread() ? ` (${portalUnread()})` : ""}`]] : []), ["briefe", "✉️", "Briefe"]]],
     ["Geld & Belege", [["bank", "🏦", "Konto & Zahlungen"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📷", "Belege & Dokumente"]]],
     ...(hasFewo ? [["Ferienwohnung", [["ferien", "🏖️", "Belegung & Buchungen"], ["rechnungen", "🧾", "Gäste-Rechnungen"]]]] : []),
     ["Steuer", [["erklaerung", "🧮", "Steuererklärung"], ["steuer", "📊", "Anlage V & DATEV"]]],
@@ -2918,6 +2918,7 @@ function buildTodos() {
   const newRep = (state.repairs || []).filter((x) => x.status === "gemeldet" && x.priority === "normal").length;
   if (newRep) t.push({ ic: "🔧", text: `${newRep} gemeldete Reparatur${newRep > 1 ? "en" : ""} noch nicht beauftragt`, btn: `<a class="btn sm" href="#/instand">Ansehen</a>` });
   for (const m of I.maintenanceDue(state, today()).slice(0, 3)) t.push({ ic: "🛠", text: `Wartung ${m.overdue ? "überfällig" : "fällig"}: ${esc(m.title)} – ${esc(byId("objects", m.objectId)?.name || "")} (${d(m.due)})`, btn: btnRaw("maintDone", "✓ Erledigt", m.id) });
+  if (isCloud() && portalUnread()) t.push({ ic: "🔑", text: `${portalUnread()} neue Meldung${portalUnread() > 1 ? "en" : ""} im Mieterportal`, btn: `<a class="btn sm primary" href="#/portal">Ansehen</a>` });
   const inbox = state.documents.filter((x) => x.status === "neu").length;
   if (inbox) t.push({ ic: "📷", text: `${inbox} Beleg${inbox > 1 ? "e" : ""} im Eingang – buchen`, btn: `<a class="btn sm primary" href="#/dokumente">Buchen</a>` });
   const drafts = state.invoices.filter((i) => i.status === "entwurf").length;
@@ -3185,7 +3186,8 @@ async function syncNow() {
 
 function wsFoot() {
   const w = curWs();
-  const sel = auth.workspaces.length > 1 ? `<select id="wssel" data-change="switchWs" title="Bestand wechseln" style="margin:4px 0;width:100%">${auth.workspaces.map((x) => `<option value="${esc(x.owner_id)}" ${x.owner_id === wsId() ? "selected" : ""}>${x.role === "owner" ? "🏠 Mein Bestand" : `👥 ${esc(x.owner_name)}`}</option>`).join("")}</select><br>` : "";
+  const portals = auth.portals || [];
+  const sel = auth.workspaces.length > 1 || portals.length ? `<select id="wssel" data-change="switchWs" title="Bestand wechseln" style="margin:4px 0;width:100%">${auth.workspaces.map((x) => `<option value="${esc(x.owner_id)}" ${x.owner_id === wsId() ? "selected" : ""}>${x.role === "owner" ? "🏠 Mein Bestand" : `👥 ${esc(x.owner_name)}`}</option>`).join("")}${portals.map((x) => `<option value="portal:${esc(x.id)}">🔑 Mieterportal: ${esc(x.owner_name)}</option>`).join("")}</select><br>` : "";
   const role = !isOwnWs() ? `<span class="badge ${auth.role === "viewer" ? "grey" : "ok"}">${auth.role === "viewer" ? "👁 nur lesen" : "✎ bearbeiten"}</span><br>` : "";
   return sel + role + (isOwnWs() ? `${esc(planOf()?.name || "")}<br>` : `<span class="small muted">Bestand von ${esc(w?.owner_name || "")}</span><br>`);
 }
@@ -3228,7 +3230,12 @@ async function pullRemote({ force = false } = {}) {
 function startTeamPull() {
   if (ui.teamPullStarted) return;
   ui.teamPullStarted = true;
-  setInterval(() => { if (document.visibilityState === "visible") pullRemote(); }, 30 * 1000);
+  setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    pullRemote();
+    const before = portalUnread();
+    loadPortal().then(() => { if (portalUnread() !== before) { const a = document.activeElement; if (!$("#modal").open && !(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) render(); } });
+  }, 30 * 1000);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pullRemote(); });
 }
 
@@ -3262,8 +3269,8 @@ async function switchWorkspace(ownerId) {
   if (auth.pending) return alert("Deine letzten Änderungen konnten noch nicht gespeichert werden. Bitte Internetverbindung prüfen und erneut versuchen.");
   useWorkspace(w);
   try { await loadWsState(); } catch (e) { alert("Bestand konnte nicht geladen werden: " + e.message); }
-  Object.assign(ui, { nk: null, letter: null, chat: [], folderTenant: null });
-  location.hash = "#/"; render();
+  Object.assign(ui, { nk: null, letter: null, chat: [], folderTenant: null, portal: null });
+  location.hash = "#/"; render(); loadPortal();
   toast(`Bestand gewechselt: ${w.owner_name}${w.role === "viewer" ? " (nur lesen)" : ""}`);
 }
 
@@ -3293,6 +3300,12 @@ async function handleInvites() {
 }
 
 async function boot() {
+  const pinv = location.hash.match(/^#\/mieterportal\/([0-9a-fA-F-]{36})/);
+  if (pinv) {
+    try { sessionStorage.setItem(PORTAL_INVITE_KEY, pinv[1]); } catch {}
+    history.replaceState(null, "", location.pathname + location.search + "#/");
+    ui.portalInvite = { token: pinv[1], info: null };
+  }
   const inv = location.hash.match(/^#\/einladung\/([0-9a-fA-F-]{36})/);
   if (inv) {
     try { sessionStorage.setItem(INVITE_KEY, inv[1]); } catch {}
@@ -3304,9 +3317,10 @@ async function boot() {
   auth.mode = "cloud";
   auth.settings = await Cloud.appSettings().catch(() => null);
   auth.plans = await Cloud.plans().catch(() => []);
+  if (ui.portalInvite) ui.portalInvite.info = await Cloud.portalInviteInfo(ui.portalInvite.token).catch(() => null);
   Cloud.onAuth(async (event, s) => {
     if (event === "PASSWORD_RECOVERY") { ui.authTab = "newpw"; render(); }
-    if (event === "SIGNED_OUT") { ui.authTab = "login"; ui.authMsg = ""; Object.assign(ui, { adminUsers: null, chat: [], letter: null, nk: null, team: null }); auth.user = null; auth.profile = null; Object.assign(auth, { ws: null, role: "owner", workspaces: [], lastChange: null }); S.useUser(null); state = S.emptyState(); render(); }
+    if (event === "SIGNED_OUT") { ui.authTab = "login"; ui.authMsg = ""; Object.assign(ui, { adminUsers: null, chat: [], letter: null, nk: null, team: null }); auth.user = null; auth.profile = null; Object.assign(auth, { ws: null, role: "owner", workspaces: [], lastChange: null, portals: [], portalView: null }); ui.portal = null; ui.tp = null; S.useUser(null); state = S.emptyState(); render(); }
   });
   const s = await Cloud.session().catch(() => null);
   if (s) await enterAccount(s.user); else render();
@@ -3335,6 +3349,12 @@ async function enterAccount(user) {
   try {
     auth.profile = await Cloud.profile(user.id);
     if (auth.profile.status !== "active") { render(); return; }
+    await handlePortalInvites().catch(() => {});
+    if (auth.profile.account_type === "mieter") {
+      auth.portalView = auth.portals[0]?.id || "none";
+      Cloud.touch(); location.hash = "#/"; render(); startPortalPoll();
+      return;
+    }
     await loadWorkspaces();
     let saved = null; try { saved = localStorage.getItem(wsKey()); } catch {}
     useWorkspace(auth.workspaces.find((w) => w.owner_id === saved) || auth.workspaces.find((w) => w.role === "owner"));
@@ -3353,7 +3373,7 @@ async function enterAccount(user) {
   }
   if (!location.hash || location.hash === "#/") location.hash = "#/";
   render();
-  if (auth.profile?.status === "active") { afterStart(); startTeamPull(); }
+  if (auth.profile?.status === "active") { afterStart(); startTeamPull(); loadPortal().then(() => { if (portalUnread()) render(); }); }
 }
 
 function legalLink(k, label) { return `<button class="btn link small" data-act="legal" data-id="${k}">${label}</button>`; }
@@ -3551,6 +3571,10 @@ function editRepair(id, preset = {}) {
       const note = (state.notes || []).find((n) => n.repairId === r.id);
       if (note && v.status === "erledigt" && !note.done) { note.done = true; note.doneAt = today(); }
       commit(isNew ? "Reparatur angelegt" : "Gespeichert");
+      if (r.portalItemId && isCloud() && before !== v.status) {
+        Cloud.portalUpdateItem(r.portalItemId, { status: v.status === "erledigt" || v.status === "abgelehnt" ? "erledigt" : "in_bearbeitung" }).catch(() => {});
+        if (v.status === "erledigt" && r.tenantId && confirm("Mieter im Portal informieren, dass die Reparatur erledigt ist?")) Cloud.portalPost({ owner_id: wsId(), tenant_key: r.tenantId, direction: "vermieter", kind: "nachricht", title: `Erledigt: ${v.title}`, body: "Die gemeldete Reparatur ist erledigt. Bitte melden Sie sich, falls noch etwas nicht in Ordnung ist.", created_by: auth.user.id }).catch(() => {});
+      }
       if (isNew) setTimeout(() => editRepair(r.id), 50);
     },
   });
@@ -3690,6 +3714,372 @@ function maintTemplates() {
   });
 }
 
+// ---------------------------------------------------------------- Mieterportal – Vermieter-Seite
+
+const PORTAL_INVITE_KEY = "hausops-immo-portal-invite";
+const portalLink = (token) => `${location.origin}${location.pathname}#/mieterportal/${token}`;
+const PKIND = { nachricht: "✉️ Nachricht", mangel: "🔧 Schadensmeldung", zaehler: "📟 Zählerstand", dokument: "📄 Dokument" };
+const PSTATUS = { neu: "neu", gesehen: "gesehen", in_bearbeitung: "in Bearbeitung", erledigt: "erledigt" };
+const ROOMS = ["Küche", "Bad", "WC", "Wohnzimmer", "Schlafzimmer", "Kinderzimmer", "Flur", "Balkon / Terrasse", "Keller", "Treppenhaus", "Außenbereich", "Sonstiges"];
+const portalData = () => (ui.portal && ui.portal.ws === wsId() ? ui.portal : null);
+const portalUnread = () => (portalData()?.items || []).filter((i) => i.direction === "mieter" && !i.read_by_owner_at).length;
+const portalRowFor = (tid) => portalData()?.tenants.find((t) => t.tenant_key === tid);
+const fmtAt = (iso) => new Date(iso).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
+
+async function loadPortal() {
+  if (!isCloud() || auth.portalView || ui.portalBusy) return;
+  ui.portalBusy = true;
+  const ws = wsId();
+  try {
+    const [tenants, items] = await Promise.all([Cloud.portalTenants(ws), Cloud.portalItems(ws)]);
+    ui.portal = { tenants, items, ws, at: Date.now() };
+  } catch { ui.portal = { tenants: [], items: [], ws, unavailable: true }; }
+  ui.portalBusy = false;
+}
+
+// Was der Mieter im Portal sieht – nur seine eigenen Vertragsdaten
+function portalInfo(tid) {
+  const t = byId("tenants", tid), s = state.settings;
+  const cs = state.contracts.filter((c) => c.tenantIds.includes(tid)).sort((a, b) => (a.start < b.start ? 1 : -1));
+  const c = cs.find((x) => x.start <= today() && (!x.end || x.end >= today())) || cs[0];
+  const u = c && byId("units", c.unitId), o = u && byId("objects", u.objectId);
+  const r = c ? C.rentForMonth(c, C.monthKey(today())) : null;
+  return {
+    name: t?.name || "", unit: u?.name || "", address: o ? [o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "",
+    start: c?.start || "", end: c?.end || "", kaution: c?.kaution || 0,
+    rent: r ? { kalt: r.kalt, nk: r.nk, extra: r.extra, total: r.total } : null,
+    landlord: { name: s.ownerName || "", phone: s.ownerPhone || "", email: s.ownerEmail || "", address: [s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean).join(", ") },
+    bank: s.invoiceIban ? { iban: s.invoiceIban, bank: s.invoiceBank || "", purpose: `Miete ${u?.name || ""} ${t?.name || ""}`.trim() } : null,
+    emergency: s.portalEmergency || "",
+    meterTypes: [...new Set((state.meterReadings || []).filter((m) => m.unitId === u?.id).map((m) => m.type))],
+    updated: today(),
+  };
+}
+
+function portalCard(tid) {
+  if (!isCloud()) return `<div class="card"><h2>🔑 Mieterportal</h2><p class="small muted">Mieter melden Schäden mit Foto, schicken Zählerstände und sehen ihre Dokumente – im Konto-Modus (mit Anmeldung) verfügbar.</p></div>`;
+  const pd = portalData();
+  if (!pd) { loadPortal().then(() => location.hash.startsWith("#/mieter/") && render()); return `<div class="card"><h2>🔑 Mieterportal</h2><p class="muted small">Lade …</p></div>`; }
+  if (pd.unavailable) return `<div class="card"><h2>🔑 Mieterportal</h2><div class="note small">Das Mieterportal ist auf dem Server noch nicht eingerichtet (Datenbank-Update „portal“ fehlt – siehe README).</div></div>`;
+  const row = portalRowFor(tid);
+  const items = pd.items.filter((i) => i.tenant_key === tid);
+  if (row && !row.revoked_at && (row.info?.updated || "") !== today() && canWrite()) { row.info = portalInfo(tid); Cloud.portalUpdateTenant(row.id, { info: row.info }).catch(() => {}); } // Infos aktuell halten
+  const status = !row || row.revoked_at ? '<span class="badge grey">nicht eingeladen</span>' : row.accepted_at ? '<span class="badge ok">aktiv</span>' : '<span class="badge warn">eingeladen</span>';
+  return `<div class="card"><h2>🔑 Mieterportal ${status}</h2>
+    ${row && !row.revoked_at ? `<p class="small muted" style="margin-bottom:8px">${row.accepted_at ? `Aktiv seit ${d(row.accepted_at.slice(0, 10))}` : `Eingeladen am ${d(row.invited_at.slice(0, 10))} (${esc(row.email)})`} · ${items.length} Einträge${items.some((i) => i.direction === "mieter" && !i.read_by_owner_at) ? " · <b>neue Nachricht</b>" : ""}</p>` : '<p class="small muted" style="margin-bottom:8px">Der Mieter kann Schäden mit Foto melden, Zählerstände schicken, Nachrichten schreiben und freigegebene Dokumente ansehen – er sieht nur seine eigenen Daten.</p>'}
+    <div class="toolbar">${!row || row.revoked_at ? btn("portalInvite", "🔑 Zum Portal einladen", "primary", tid) : `${!row.accepted_at ? btn("portalInvite", "Einladung erneut senden", "", tid) : ""}${btn("portalWrite", "✉️ Nachricht", "", tid)}<a class="btn" href="#/portal">Postfach</a>${btn("portalRevoke", "Zugang entziehen", "danger", tid)}`}</div></div>`;
+}
+
+function portalInvite(tid) {
+  if (!isCloud()) return alert("Das Mieterportal gibt es im Konto-Modus (mit Anmeldung, Daten online).");
+  if (!canWrite()) return blockedWrite();
+  const t = byId("tenants", tid), row = portalRowFor(tid);
+  dialog({
+    title: `${t.name} zum Mieterportal einladen`, submit: "Einladung erstellen",
+    body: `<label class="f"><span>E-Mail-Adresse des Mieters *</span><input name="email" type="email" required value="${esc(row?.email || t.email || "")}"></label>
+      <label class="f"><span>Notfall-Kontakte für alle Mieter (optional)</span><textarea name="emergency" placeholder="z. B. Wasserrohrbruch / Heizungsausfall: Hausmeister Müller 0171 …">${esc(state.settings.portalEmergency || "")}</textarea></label>
+      <div class="note small">Der Mieter sieht nur: Wohnung & Anschrift, Miete und Kaution laut Vertrag, Bankverbindung für die Miete, deine Kontaktdaten, Notfall-Kontakte, freigegebene Dokumente und eure Nachrichten. Rechtlich bist du Verantwortlicher (Art. 4 Nr. 7 DSGVO); der Mieter muss seinen Zugang selbst anlegen und den Datenschutzhinweisen zustimmen.</div>`,
+    onSubmit: (form) => {
+      const email = form.email.value.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast("Bitte eine gültige E-Mail-Adresse eingeben."); return false; }
+      if (form.emergency.value.trim() !== (state.settings.portalEmergency || "")) { state.settings.portalEmergency = form.emergency.value.trim(); persist(); }
+      if (!t.email) { t.email = email; persist(); }
+      (async () => {
+        try {
+          const changed = !row || row.email !== email || row.revoked_at;
+          const saved = await Cloud.portalSaveTenant({ owner_id: wsId(), tenant_key: tid, email, info: portalInfo(tid), revoked_at: null,
+            expires_at: new Date(Date.now() + 30 * 864e5).toISOString(), invited_at: new Date().toISOString(),
+            ...(changed ? { token: crypto.randomUUID(), user_id: null, accepted_at: null } : {}) });
+          if (!row) await Cloud.portalPost({ owner_id: wsId(), tenant_key: tid, direction: "vermieter", kind: "nachricht", title: "Willkommen im Mieterportal", body: `Hier können Sie Schäden mit Foto melden, Zählerstände schicken und mir schreiben. Ihre Unterlagen finden Sie unter „Dokumente“.\n\nViele Grüße\n${state.settings.ownerName || ""}`, created_by: auth.user.id }).catch(() => {});
+          await loadPortal(); render();
+          const text = `Guten Tag ${t.name},\n\nfür Ihre Wohnung gibt es ab sofort ein Mieterportal. Dort können Sie Schäden mit Foto melden, Zählerstände übermitteln, mir Nachrichten schreiben und Ihre Unterlagen abrufen.\n\nBitte öffnen Sie diesen Link und legen Sie mit ${email} einen Zugang an:\n${portalLink(saved.token)}\n\nDer Link ist 30 Tage gültig.\n\nViele Grüße\n${state.settings.ownerName || ""}`;
+          textShareDialog("Einladung zum Mieterportal verschicken", text, email, "Ihr Zugang zum Mieterportal", null);
+        } catch (e) { alert("Einladung fehlgeschlagen: " + e.message); }
+      })();
+    },
+  });
+}
+
+async function portalRevoke(tid) {
+  const row = portalRowFor(tid), t = byId("tenants", tid);
+  if (!row || !confirm(`${t?.name || "Mieter"} den Zugang zum Mieterportal entziehen? Nachrichten und Meldungen bleiben bei dir gespeichert.`)) return;
+  try { await Cloud.portalUpdateTenant(row.id, { revoked_at: new Date().toISOString() }); await loadPortal(); toast("Zugang entzogen"); render(); } catch (e) { alert(e.message); }
+}
+
+function portalWrite(tid, replyTo = null) {
+  const t = byId("tenants", tid), it = replyTo && portalData()?.items.find((x) => x.id === Number(replyTo));
+  dialog({
+    title: `Nachricht an ${t?.name || "Mieter"}`, submit: "Senden",
+    body: `<label class="f"><span>Betreff</span><input name="title" value="${esc(it ? `Re: ${it.title}` : "")}" required></label>
+      <label class="f"><span>Nachricht</span><textarea name="body" style="min-height:140px" required></textarea></label>
+      <p class="small muted">Erscheint sofort im Mieterportal${t?.email ? `; der Mieter sieht sie beim nächsten Öffnen` : ""}.</p>`,
+    onSubmit: (form) => {
+      if (!form.title.value.trim() || !form.body.value.trim()) { toast("Bitte Betreff und Text eingeben."); return false; }
+      Cloud.portalPost({ owner_id: wsId(), tenant_key: tid, direction: "vermieter", kind: "nachricht", title: form.title.value.trim(), body: form.body.value.trim(), data: it ? { replyTo: it.id } : {}, created_by: auth.user.id })
+        .then(async () => { if (it && it.status === "neu") await Cloud.portalUpdateItem(it.id, { status: "gesehen" }).catch(() => {}); await loadPortal(); toast("Nachricht gesendet"); render(); }, (e) => alert(e.message));
+    },
+  });
+}
+
+async function portalShareDoc(docId, tid) {
+  if (!isCloud()) return alert("Dokumente teilen geht im Konto-Modus mit Mieterportal.");
+  const doc = byId("documents", docId), row = portalRowFor(tid);
+  if (!row || row.revoked_at) return alert("Bitte den Mieter zuerst zum Mieterportal einladen.");
+  if (!confirm(`„${doc.name}“ im Mieterportal für ${byId("tenants", tid)?.name} freigeben?`)) return;
+  try {
+    const blob = await getDocBlob(docId);
+    if (!blob) throw new Error("Datei nicht gefunden");
+    const path = `${wsId()}/portal/${tid}/${docId}-${doc.name.replace(/[^\w.äöüÄÖÜß -]+/g, "_").slice(0, 60)}`;
+    await Cloud.uploadPath(path, blob);
+    await Cloud.portalPost({ owner_id: wsId(), tenant_key: tid, direction: "vermieter", kind: "dokument", title: doc.name, body: DOC_KINDS[doc.kind] || "", data: { path, type: doc.type, docId }, created_by: auth.user.id });
+    doc.sharedWith = [...new Set([...(doc.sharedWith || []), tid])]; commit("Im Mieterportal freigegeben");
+    await loadPortal();
+  } catch (e) { alert("Teilen fehlgeschlagen: " + e.message); }
+}
+
+// Schadensmeldung → Reparaturauftrag (Fotos werden in die eigene Ablage übernommen)
+async function portalToRepair(itemId) {
+  const it = portalData().items.find((x) => x.id === Number(itemId));
+  if (!canWrite()) return blockedWrite();
+  const tid = it.tenant_key, c = state.contracts.find((x) => x.tenantIds.includes(tid) && x.start <= today() && (!x.end || x.end >= today())) || state.contracts.find((x) => x.tenantIds.includes(tid));
+  const u = byId("units", c?.unitId), rid = C.uid("r_"), docIds = [];
+  toast("Übernehme Meldung und Fotos …");
+  for (const path of it.data?.photos || []) {
+    try {
+      const blob = await Cloud.downloadPath(path);
+      const id = C.uid("d_");
+      await putDocBlob(id, blob);
+      let thumb = ""; try { thumb = (await F.prepareImage(new File([blob], "foto.jpg", { type: blob.type || "image/jpeg" }), false)).thumb; } catch {}
+      state.documents.push({ id, name: `Foto Mieter – ${it.title}`.slice(0, 80), type: blob.type || "image/jpeg", size: blob.size, thumb, created: new Date().toISOString(), kind: "foto", objectId: u?.objectId || "", contractId: c?.id || "", status: "verarbeitet", note: "aus Mieterportal", repairId: rid, ki: null });
+      docIds.push(id);
+    } catch {}
+  }
+  state.repairs = state.repairs || [];
+  state.repairs.push({ id: rid, title: it.title, description: [it.data?.room && `Raum: ${it.data.room}`, it.body].filter(Boolean).join("\n"), objectId: u?.objectId || state.objects[0]?.id, unitId: u?.id || "", kind: "reparatur",
+    priority: it.data?.urgent ? "dringend" : "normal", status: "gemeldet", reportedAt: it.created_at.slice(0, 10), reportedBy: "mieter", tenantId: tid, payer: "vermieter", expenseIds: [], docIds, portalItemId: it.id,
+    log: [{ at: new Date().toISOString(), text: "aus Mieterportal übernommen" }] });
+  commit("Reparaturauftrag angelegt");
+  await Cloud.portalUpdateItem(it.id, { status: "in_bearbeitung", data: { ...(it.data || {}), repairId: rid } }).catch(() => {});
+  await loadPortal();
+  editRepair(rid);
+}
+
+async function portalToMeter(itemId) {
+  const it = portalData().items.find((x) => x.id === Number(itemId));
+  if (!canWrite()) return blockedWrite();
+  const tid = it.tenant_key, c = state.contracts.find((x) => x.tenantIds.includes(tid) && x.start <= today() && (!x.end || x.end >= today()));
+  if (!c) return alert("Kein aktiver Mietvertrag für diesen Mieter gefunden.");
+  const v = Number(String(it.data?.value ?? "").replace(",", "."));
+  if (!Number.isFinite(v)) return alert("Der gemeldete Zählerstand ist keine Zahl.");
+  state.meterReadings.push({ id: C.uid("m_"), unitId: c.unitId, contractId: c.id, type: it.data?.type || "sonstiges", number: it.data?.number || "", date: it.data?.date || it.created_at.slice(0, 10), value: v, reason: "mieter" });
+  commit("Zählerstand übernommen");
+  await Cloud.portalUpdateItem(it.id, { status: "erledigt" }).catch(() => {});
+  await loadPortal(); render();
+}
+
+function viewPortalInbox() {
+  if (!isCloud()) return head("Mieterportal") + `<div class="card empty"><div class="big">🔑</div><p>Mit dem Mieterportal melden deine Mieter Schäden mit Foto, schicken Zählerstände, schreiben dir Nachrichten und sehen ihre Unterlagen – ohne Zettelwirtschaft.</p><p class="muted">Verfügbar im Konto-Modus (Anmeldung, Daten sicher online).</p></div>`;
+  const pd = portalData();
+  if (!pd) { loadPortal().then(render); return head("Mieterportal") + '<div class="card muted">Lade …</div>'; }
+  if (pd.unavailable) return head("Mieterportal") + '<div class="card"><div class="note">Das Mieterportal ist auf dem Server noch nicht eingerichtet (Datenbank-Update „portal“ in Supabase ausführen – siehe README).</div></div>';
+  const unread = pd.items.filter((i) => i.direction === "mieter" && !i.read_by_owner_at);
+  if (unread.length && !ui.portalMarking && canWrite()) { ui.portalMarking = true; Cloud.portalMarkOwnerRead(wsId()).then(() => { for (const i of unread) i.read_by_owner_at = new Date().toISOString(); }, () => {}).finally(() => { ui.portalMarking = false; }); }
+  const f = ui.portalFilter || "offen";
+  const tName = (k) => byId("tenants", k)?.name || "Mieter";
+  const list = pd.items.filter((i) => i.direction === "mieter" && (f === "alle" || i.status !== "erledigt"));
+  const active = state.contracts.filter((c) => c.start <= today() && (!c.end || c.end >= today()));
+  const tenants = [...new Set(active.flatMap((c) => c.tenantIds))].map((id) => byId("tenants", id)).filter(Boolean);
+  const card = (i) => `<div class="card pitem ${!i.read_by_owner_at ? "unread" : ""}">
+      <div class="head" style="margin-bottom:4px"><div><b>${PKIND[i.kind]}</b> · ${esc(tName(i.tenant_key))} <span class="small muted">· ${fmtAt(i.created_at)}</span>${!i.read_by_owner_at ? ' <span class="badge warn">neu</span>' : ""}${i.data?.urgent ? ' <span class="badge bad">dringend</span>' : ""}</div>
+        <select data-change="portalStatus" data-id="${i.id}" style="width:auto">${opt(Object.entries(PSTATUS), i.status)}</select></div>
+      <div><b>${esc(i.title)}</b>${i.kind === "zaehler" ? `: <b>${esc(String(i.data?.value ?? "").replace(".", ","))}</b>${i.data?.number ? ` (Zähler ${esc(i.data.number)})` : ""}, abgelesen ${d(i.data?.date || i.created_at.slice(0, 10))}` : ""}${i.data?.room ? ` <span class="small muted">· ${esc(i.data.room)}</span>` : ""}</div>
+      ${i.body ? `<div class="small" style="white-space:pre-wrap;margin-top:4px">${esc(i.body)}</div>` : ""}
+      ${(i.data?.photos || []).length ? `<div class="inline" style="margin-top:6px">${i.data.photos.map((p) => `<img class="pphoto" data-ppath="${esc(p)}" alt="Foto">`).join("")}</div>` : ""}
+      <div class="toolbar" style="margin-top:8px">${btn("portalReply", "↩ Antworten", "sm", `${i.tenant_key}|${i.id}`)}${i.kind === "mangel" ? (i.data?.repairId && (state.repairs || []).some((r) => r.id === i.data.repairId) ? btn("editRepair", "🔧 Zum Auftrag", "sm", i.data.repairId) : btn("portalToRepair", "🔧 Als Reparatur übernehmen", "sm primary", i.id)) : ""}${i.kind === "zaehler" && i.status !== "erledigt" ? btn("portalToMeter", "📟 Zählerstand übernehmen", "sm primary", i.id) : ""}</div></div>`;
+  return head("Mieterportal", "Meldungen und Nachrichten deiner Mieter", `<div class="tabs" style="margin:0">${[["offen", "Offen"], ["alle", "Alle"]].map(([k, l]) => `<button data-act="portalFilter" data-id="${k}" class="${f === k ? "active" : ""}">${l}</button>`).join("")}</div>`) + `
+    ${list.length ? list.map(card).join("") : '<div class="card muted">Keine offenen Meldungen. 👍</div>'}
+    <div class="card"><h2>Mieter & Zugänge</h2><div class="table-wrap"><table><tbody>${tenants.map((t) => { const row = portalRowFor(t.id); return `<tr><td><a href="#/mieter/${t.id}">${esc(t.name)}</a></td><td>${!row || row.revoked_at ? '<span class="badge grey">nicht eingeladen</span>' : row.accepted_at ? '<span class="badge ok">aktiv</span>' : '<span class="badge warn">eingeladen</span>'}</td><td class="nowrap">${!row || row.revoked_at ? btn("portalInvite", "Einladen", "sm", t.id) : btn("portalWrite", "✉️ Nachricht", "sm", t.id)}</td></tr>`; }).join("") || '<tr><td class="muted">Keine aktiven Mietverhältnisse.</td></tr>'}</tbody></table></div>
+      <label class="f" style="margin-top:10px"><span>Notfall-Kontakte (für alle Mieter sichtbar)</span><textarea data-change="portalEmergency" placeholder="z. B. Wasserrohrbruch / Heizungsausfall: Hausmeister Müller 0171 …">${esc(state.settings.portalEmergency || "")}</textarea></label></div>`;
+}
+
+// Fotos aus dem Portal nachladen
+async function hydratePortalImages() {
+  ui.pimg = ui.pimg || {};
+  for (const img of document.querySelectorAll("img[data-ppath]:not([src])")) {
+    const p = img.dataset.ppath;
+    try {
+      if (!ui.pimg[p]) ui.pimg[p] = URL.createObjectURL(await Cloud.downloadPath(p));
+      img.src = ui.pimg[p];
+      img.onclick = () => window.open(ui.pimg[p], "_blank");
+    } catch { img.alt = "Foto nicht verfügbar"; }
+  }
+}
+
+// ---------------------------------------------------------------- Mieterportal – Mieter-Seite
+
+const curPortal = () => (auth.portals || []).find((x) => x.id === auth.portalView);
+
+async function loadTenantItems() {
+  const p = curPortal(); if (!p) return;
+  try {
+    const items = await Cloud.portalItems(p.owner_id, p.tenant_key);
+    const changed = JSON.stringify(items.map((i) => [i.id, i.status])) !== JSON.stringify((ui.tp?.items || []).map((i) => [i.id, i.status]));
+    ui.tp = { id: p.id, items };
+    if (changed) render();
+    if (items.some((i) => i.direction === "vermieter" && !i.read_by_tenant_at)) Cloud.portalMarkRead(p.owner_id, p.tenant_key).catch(() => {});
+  } catch (e) { ui.tp = { id: p.id, items: [], error: e.message }; render(); }
+}
+
+function startPortalPoll() {
+  if (ui.portalPoll) return;
+  ui.portalPoll = setInterval(() => { if (document.visibilityState === "visible" && auth.portalView) loadTenantItems(); }, 45 * 1000);
+}
+
+const pfact = (l, v) => (v ? `<div><span class="muted small">${l}</span><br>${v}</div>` : "");
+function viewTenantPortal() {
+  const p = curPortal();
+  const isLandlord = auth.profile?.account_type !== "mieter";
+  const top = `<div class="tp-top"><div class="logo">🔑 Mieterportal</div><div class="toolbar">${isLandlord ? btn("portalLeave", "← Zu meinem Bestand", "sm") : ""}${btn("logout", "Abmelden", "sm")}</div></div>`;
+  if (!p) return `<div class="tp">${top}<div class="card"><h2>Noch kein Zugang freigeschaltet</h2><p>Ihr Konto ist angelegt. Sobald Ihr Vermieter Sie einlädt (Einladung an <b>${esc(auth.user.email)}</b>), erscheint hier Ihr Portal. Bitte melden Sie sich dann erneut an.</p></div></div>`;
+  if (!ui.tp || ui.tp.id !== p.id) { ui.tp = { id: p.id, items: null }; loadTenantItems(); }
+  const info = p.info || {}, items = ui.tp.items, r = info.rent;
+  const docs = (items || []).filter((i) => i.kind === "dokument");
+  const timeline = (items || []).filter((i) => i.kind !== "dokument");
+  const first = (info.name || auth.profile?.full_name || "").split(/\s+/)[0];
+  const tile = (ic, label, act) => `<button class="qtile" data-act="${act}"><span>${ic}</span>${label}</button>`;
+  return `<div class="tp">${top}
+    <div class="tp-hello"><h1>Hallo ${esc(first)} 👋</h1><p class="muted">${esc([info.unit, info.address].filter(Boolean).join(" · "))}${p.owner_name ? ` · Vermieter: ${esc(p.owner_name)}` : ""}</p></div>
+    <div class="qgrid tp-tiles">${tile("🔧", "Schaden melden", "tpReport")}${tile("📟", "Zählerstand melden", "tpMeter")}${tile("✉️", "Nachricht schreiben", "tpMessage")}${tile("📄", `Dokumente${docs.length ? ` (${docs.length})` : ""}`, "tpDocs")}</div>
+    ${info.emergency ? `<div class="note warn"><b>🚨 Notfall</b> (z. B. Wasserrohrbruch, Heizungsausfall, Gasgeruch – bei Gasgeruch zuerst 112):<br>${esc(info.emergency).replace(/\n/g, "<br>")}</div>` : ""}
+    <div class="grid g2">
+      <div class="card"><h2>Ihre Miete</h2>${r ? `<div class="facts">${pfact("Kaltmiete", eur(r.kalt))}${pfact("Nebenkosten-Vorauszahlung", eur(r.nk))}${r.extra ? pfact("Zuschläge", eur(r.extra)) : ""}${pfact("Monatlich gesamt", `<b>${eur(r.total)}</b>`)}${info.kaution ? pfact("Kaution", eur(info.kaution)) : ""}${info.start ? pfact("Mietbeginn", d(info.start)) : ""}</div>` : '<p class="muted small">Keine Angaben.</p>'}
+        ${info.bank ? `<p class="small" style="margin-top:8px">Überweisung an: <b>${esc(info.bank.iban)}</b>${info.bank.bank ? ` (${esc(info.bank.bank)})` : ""}<br>Verwendungszweck: ${esc(info.bank.purpose)}</p>` : ""}</div>
+      <div class="card"><h2>Ihr Vermieter</h2><div class="facts">${pfact("Name", esc(info.landlord?.name || p.owner_name || ""))}${info.landlord?.phone ? pfact("Telefon", `<a href="tel:${esc(info.landlord.phone)}">${esc(info.landlord.phone)}</a>`) : ""}${info.landlord?.email ? pfact("E-Mail", `<a href="mailto:${esc(info.landlord.email)}">${esc(info.landlord.email)}</a>`) : ""}${info.landlord?.address ? pfact("Anschrift", esc(info.landlord.address)) : ""}</div></div>
+    </div>
+    <div class="card" id="tpdocs"><h2>📄 Dokumente</h2>${docs.length ? docs.map((x) => `<div class="docline"><span>📄 <b>${esc(x.title)}</b> <span class="small muted">${esc(x.body || "")} · ${d(x.created_at.slice(0, 10))}</span></span>${btn("tpOpenDoc", "Öffnen", "sm", x.id)}</div>`).join("") : '<p class="muted small">Noch keine Dokumente freigegeben.</p>'}</div>
+    <div class="card"><h2>Verlauf</h2>${items === null ? '<p class="muted">Lade …</p>' : timeline.length ? timeline.map((i) => `<div class="timeline ${i.direction === "vermieter" ? "from-owner" : ""}"><div class="small muted">${fmtAt(i.created_at)} · ${i.direction === "vermieter" ? `von ${esc(p.owner_name || "Vermieter")}` : "von Ihnen"} · ${PKIND[i.kind]}${i.direction === "mieter" ? ` · <span class="badge ${i.status === "erledigt" ? "ok" : i.status === "neu" ? "warn" : ""}">${PSTATUS[i.status]}</span>` : ""}</div>
+      <b>${esc(i.title)}</b>${i.kind === "zaehler" ? `: ${esc(String(i.data?.value ?? "").replace(".", ","))}` : ""}${i.body ? `<div class="small" style="white-space:pre-wrap">${esc(i.body)}</div>` : ""}
+      ${(i.data?.photos || []).length ? `<div class="inline" style="margin-top:4px">${i.data.photos.map((ph) => `<img class="pphoto" data-ppath="${esc(ph)}" alt="Foto">`).join("")}</div>` : ""}</div>`).join("") : '<p class="muted small">Noch keine Nachrichten.</p>'}</div>
+    <p class="small muted" style="text-align:center;margin:16px 0">Verantwortlich für Ihre Daten ist Ihr Vermieter. ${legalLink("datenschutz", "Datenschutz")} · ${legalLink("impressum", "Impressum")}</p>
+  </div>`;
+}
+
+// Fotos verkleinern und in den eigenen Mieterordner hochladen
+async function tpUploadPhotos(files) {
+  const p = curPortal(), paths = [];
+  for (const file of [...(files || [])].slice(0, 6)) {
+    if (!file.type.startsWith("image/")) continue;
+    const { blob } = await F.prepareImage(file, false);
+    const path = `${p.owner_id}/portal/${p.tenant_key}/mieter/${C.uid("f_")}.jpg`;
+    await Cloud.uploadPath(path, blob);
+    paths.push(path);
+  }
+  return paths;
+}
+
+async function tpPost(kind, title, body, data, files) {
+  const p = curPortal();
+  toast("Wird gesendet …");
+  try {
+    const photos = files?.length ? await tpUploadPhotos(files) : [];
+    await Cloud.portalPost({ owner_id: p.owner_id, tenant_key: p.tenant_key, direction: "mieter", kind, title, body, data: { ...data, ...(photos.length ? { photos } : {}) }, created_by: auth.user.id });
+    toast("✅ Gesendet – Ihr Vermieter wurde benachrichtigt");
+    await loadTenantItems(); render();
+  } catch (e) { alert("Senden fehlgeschlagen: " + e.message); }
+}
+
+function tpReport() {
+  dialog({
+    title: "🔧 Schaden melden", submit: "Meldung senden",
+    body: `<label class="f"><span>Was ist kaputt? *</span><input name="title" required placeholder="z. B. Heizung im Bad wird nicht warm"></label>
+      <label class="f"><span>Wo?</span><select name="room">${opt([["", "– bitte wählen –"], ...ROOMS.map((r) => [r, r])], "")}</select></label>
+      <label class="f"><span>Beschreibung</span><textarea name="body" placeholder="Seit wann? Was genau passiert? Wann sind Sie zu Hause (für den Handwerker)?"></textarea></label>
+      <label class="f"><span>Fotos (bis zu 6)</span><input type="file" name="photos" accept="image/*" multiple></label>
+      <label class="f inline"><input type="checkbox" name="urgent"> Dringend (z. B. Wasser läuft aus, keine Heizung im Winter)</label>
+      <p class="small muted">Bei Gefahr (Gasgeruch, Brand) bitte sofort 112 anrufen. ${curPortal()?.info?.emergency ? "Notfall-Kontakte stehen auf der Startseite des Portals." : ""}</p>`,
+    onSubmit: (form) => {
+      if (!form.title.value.trim()) { toast("Bitte kurz beschreiben, was kaputt ist."); return false; }
+      tpPost("mangel", form.title.value.trim(), form.body.value.trim(), { room: form.room.value, urgent: form.urgent.checked }, form.photos.files);
+    },
+  });
+}
+
+function tpMeter() {
+  const types = curPortal()?.info?.meterTypes?.length ? curPortal().info.meterTypes : Object.keys(C.METER_TYPES);
+  dialog({
+    title: "📟 Zählerstand melden", submit: "Senden",
+    body: `<label class="f"><span>Zähler</span><select name="type">${opt(types.map((k) => [k, C.METER_TYPES[k] || k]), types[0])}</select></label>
+      <label class="f"><span>Zählerstand *</span><input name="value" inputmode="decimal" required placeholder="z. B. 123,45"></label>
+      <label class="f"><span>Zählernummer (optional)</span><input name="number"></label>
+      <label class="f"><span>Abgelesen am</span><input type="date" name="date" value="${today()}"></label>
+      <label class="f"><span>Foto vom Zähler (empfohlen)</span><input type="file" name="photos" accept="image/*" capture="environment"></label>`,
+    onSubmit: (form) => {
+      const v = String(form.value.value).trim().replace(/\s/g, "");
+      if (!/^\d+([.,]\d+)?$/.test(v)) { toast("Bitte nur die Zahl eingeben, z. B. 123,45"); return false; }
+      tpPost("zaehler", C.METER_TYPES[form.type.value] || form.type.value, "", { type: form.type.value, value: Number(v.replace(",", ".")), number: form.number.value.trim(), date: form.date.value }, form.photos.files);
+    },
+  });
+}
+
+function tpMessage() {
+  dialog({
+    title: "✉️ Nachricht an Ihren Vermieter", submit: "Senden",
+    body: `<label class="f"><span>Betreff *</span><input name="title" required></label><label class="f"><span>Nachricht *</span><textarea name="body" style="min-height:150px" required></textarea></label>`,
+    onSubmit: (form) => {
+      if (!form.title.value.trim() || !form.body.value.trim()) { toast("Bitte Betreff und Nachricht eingeben."); return false; }
+      tpPost("nachricht", form.title.value.trim(), form.body.value.trim(), {}, null);
+    },
+  });
+}
+
+async function tpOpenDoc(id) {
+  const it = (ui.tp?.items || []).find((x) => x.id === Number(id));
+  try {
+    const blob = await Cloud.downloadPath(it.data.path);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener";
+    if (!/^image\/|pdf/.test(blob.type)) a.download = it.title;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { alert("Dokument konnte nicht geladen werden: " + e.message); }
+}
+
+// Einladungs-Seite (vor der Anmeldung)
+function viewTenantAuth() {
+  const pi = ui.portalInvite, info = pi.info, st = auth.settings || {};
+  const tab = ui.authTab === "login" ? "login" : "mieter";
+  return `<div class="auth"><div class="auth-box card" style="margin:24px auto;max-width:460px">
+    <h1 style="margin-bottom:6px">🔑 Mieterportal</h1>
+    <p style="margin-bottom:12px">${info ? `<b>${esc(info.owner_name)}</b> lädt Sie zum Mieterportal ein.` : "Sie wurden zum Mieterportal eingeladen."} Hier melden Sie Schäden mit Foto, schicken Zählerstände und finden Ihre Unterlagen.</p>
+    ${info && !info.valid ? '<div class="note warn">Diese Einladung ist nicht mehr gültig. Bitte bitten Sie Ihren Vermieter um eine neue.</div>' : ""}
+    ${info?.email_hint ? `<p class="small muted" style="margin-bottom:8px">Bitte verwenden Sie die E-Mail-Adresse, an die die Einladung ging (${esc(info.email_hint)}).</p>` : ""}
+    <div class="tabs"><button data-act="authTab" data-id="mieter" class="${tab === "mieter" ? "active" : ""}">Zugang anlegen</button><button data-act="authTab" data-id="login" class="${tab === "login" ? "active" : ""}">Ich habe schon einen Zugang</button></div>
+    ${ui.authMsg ? `<div class="note">${esc(ui.authMsg)}</div>` : ""}
+    ${tab === "mieter" ? `<form data-form="tenantRegister">
+      <label class="f"><span>Ihr Name</span><input name="fullName" required autocomplete="name"></label>
+      <label class="f"><span>E-Mail</span><input name="email" type="email" required autocomplete="email"></label>
+      <label class="f"><span>Passwort (mind. 8 Zeichen)</span><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+      <label class="f inline small"><input type="checkbox" name="privacy" required> Ich habe die ${legalLink("datenschutz", "Datenschutzhinweise")} gelesen. Verantwortlich für meine Daten im Portal ist mein Vermieter.</label>
+      <button class="btn primary" style="width:100%;justify-content:center">Zugang anlegen</button></form>`
+    : `<form data-form="login"><label class="f"><span>E-Mail</span><input name="email" type="email" autocomplete="email" required></label>
+      <label class="f"><span>Passwort</span><input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" style="width:100%;justify-content:center">Anmelden</button>
+      <p class="small" style="margin-top:10px"><button type="button" class="btn link" data-act="authTab" data-id="reset">Passwort vergessen?</button></p></form>`}
+    <p class="small muted" style="margin-top:12px">${legalLink("impressum", "Impressum")} · ${legalLink("datenschutz", "Datenschutz")}${st.product_name ? ` · ${esc(st.product_name)}` : ""}</p></div></div>`;
+}
+
+async function handlePortalInvites() {
+  let token = null;
+  try { token = sessionStorage.getItem(PORTAL_INVITE_KEY); sessionStorage.removeItem(PORTAL_INVITE_KEY); } catch {}
+  if (token) { try { await Cloud.acceptPortalInvite(token); toast("Willkommen im Mieterportal!"); } catch (e) { alert(e.message); } }
+  ui.portalInvite = null;
+  const open = await Cloud.myPortalInvites().catch(() => []);
+  for (const i of open || []) {
+    if (confirm(`${i.owner_name} lädt Sie zum Mieterportal ein. Einladung annehmen?`)) await Cloud.acceptPortalInvite(i.token).catch((e) => alert(e.message));
+  }
+  auth.portals = (await Cloud.myPortals().catch(() => [])) || [];
+}
+
 // ---------------------------------------------------------------- Team & Zugriff
 
 async function loadTeam() {
@@ -3761,6 +4151,8 @@ async function loadAdmin() {
   ui.adminBusy = true; render();
   try {
     const [users, log, plans, settings, canc, members] = await Promise.all([Cloud.adminUsers(), Cloud.adminLog(), Cloud.plans(), Cloud.appSettings(), Cloud.adminCancellations().catch(() => []), Cloud.adminMemberships().catch(() => [])]);
+    const types = await Cloud.adminAccountTypes().catch(() => []);
+    for (const u of users) u.account_type = types.find((x) => x.id === u.id)?.account_type || "vermieter";
     for (const u of users) {
       u.members = members.filter((m) => m.owner_id === u.id);
       u.teamSize = u.members.length;
@@ -3775,7 +4167,9 @@ async function loadAdmin() {
 function viewAdmin() {
   if (!isAdmin()) return head("Kein Zugriff");
   if (!ui.adminUsers && !ui.adminBusy) { loadAdmin(); return head("Admin") + '<div class="card muted">Lade …</div>'; }
-  const users = ui.adminUsers || [];
+  const allUsers = ui.adminUsers || [];
+  const tenantsCount = allUsers.filter((u) => u.account_type === "mieter").length;
+  const users = ui.adminShowTenants ? allUsers : allUsers.filter((u) => u.account_type !== "mieter");
   const tab = ui.adminTab || "uebersicht";
   const now = Date.now(), days = (iso) => (iso ? (now - new Date(iso)) / 86400000 : Infinity);
   const planById = Object.fromEntries(auth.plans.map((p) => [p.id, p]));
@@ -3788,6 +4182,7 @@ function viewAdmin() {
   const st = auth.settings || {};
   const body = {
     uebersicht: `<div class="kpis">
+        <div class="kpi"><div class="l">Vermieter-Konten</div><div class="v">${users.filter((u) => u.account_type !== "mieter").length}</div><div class="s">+ ${tenantsCount} Mieter im Portal (kostenlos)</div></div>
         <div class="kpi"><div class="l">Nutzer gesamt</div><div class="v">${users.length}</div><div class="s">${users.filter((u) => days(u.created_at) <= 30).length} neu in 30 Tagen</div></div>
         <div class="kpi"><div class="l">Aktiv (30 Tage)</div><div class="v">${users.filter((u) => days(u.last_seen_at) <= 30).length}</div></div>
         <div class="kpi"><div class="l">Zahlende Kunden</div><div class="v">${paying.length}</div><div class="s">${users.filter((u) => u.plan === "trial").length} in Testphase</div></div>
@@ -3796,9 +4191,9 @@ function viewAdmin() {
       </div>
       <div class="card"><h2>Nach Tarif</h2><table>${auth.plans.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${users.filter((u) => u.plan === p.id).length} Nutzer</td><td class="num">${eur(sum(users.filter((u) => u.plan === p.id && u.status === "active"), () => p.price_month_cents))} / Monat</td></tr>`).join("")}</table></div>
       <div class="card"><h2>Testphasen, die bald enden</h2>${users.filter((u) => u.plan === "trial" && u.trial_ends_at && days(u.trial_ends_at) > -30 && days(u.trial_ends_at) < 7).map((u) => `<div>${esc(u.email)} – ${d(u.trial_ends_at.slice(0, 10))}</div>`).join("") || '<p class="muted">Keine.</p>'}</div>`,
-    nutzer: `<div class="inline" style="margin-bottom:10px"><input placeholder="Suchen (E-Mail, Name, Firma) …" value="${esc(ui.adminSearch || "")}" data-change="adminSearch" style="max-width:320px">${btn("adminReload", "⟳ Aktualisieren", "sm")}</div>
+    nutzer: `<div class="inline" style="margin-bottom:10px"><input placeholder="Suchen (E-Mail, Name, Firma) …" value="${esc(ui.adminSearch || "")}" data-change="adminSearch" style="max-width:320px">${btn("adminReload", "⟳ Aktualisieren", "sm")}<label class="small"><input type="checkbox" data-change="adminShowTenants" ${ui.adminShowTenants ? "checked" : ""}> Mieter-Zugänge zeigen (${tenantsCount})</label></div>
       <div class="table-wrap"><table><thead><tr><th>Nutzer</th><th>Tarif</th><th>Status</th><th class="num">Objekte / Einh.</th><th class="num">Dokumente</th><th>Registriert</th><th>Zuletzt aktiv</th></tr></thead><tbody>
-      ${list.map((u) => `<tr class="click" data-act="adminUser" data-id="${u.id}"><td><b>${esc(u.full_name || u.email)}</b>${u.role === "admin" ? ' <span class="badge">Admin</span>' : ""}${u.teamSize ? ` <span class="badge grey" title="Weitere Personen in der Gruppe">👥 +${u.teamSize}</span>` : ""}<div class="small muted">${esc(u.email)}${u.company ? " · " + esc(u.company) : ""}</div>${(u.memberOf || []).map((m) => `<div class="small muted">↳ Mitglied bei ${esc(adminUserName(m.owner_id))} (${ROLE_LABEL[m.role]})</div>`).join("")}</td>
+      ${list.map((u) => `<tr class="click" data-act="adminUser" data-id="${u.id}"><td><b>${esc(u.full_name || u.email)}</b>${u.role === "admin" ? ' <span class="badge">Admin</span>' : ""}${u.account_type === "mieter" ? ' <span class="badge grey">Mieter</span>' : ""}${u.teamSize ? ` <span class="badge grey" title="Weitere Personen in der Gruppe">👥 +${u.teamSize}</span>` : ""}<div class="small muted">${esc(u.email)}${u.company ? " · " + esc(u.company) : ""}</div>${(u.memberOf || []).map((m) => `<div class="small muted">↳ Mitglied bei ${esc(adminUserName(m.owner_id))} (${ROLE_LABEL[m.role]})</div>`).join("")}</td>
         <td>${esc(planById[u.plan]?.name || u.plan)}${u.subscription_status ? ` <span class="badge ${u.subscription_status === "active" ? "ok" : u.subscription_status === "past_due" ? "bad" : "grey"}">${esc(u.subscription_status === "active" ? (u.cancel_at_period_end ? "gekündigt" : "Abo") : u.subscription_status)}</span>` : ""}${u.plan === "trial" && u.trial_ends_at ? `<div class="small ${days(u.trial_ends_at) > 0 ? "neg" : "muted"}">bis ${d(u.trial_ends_at.slice(0, 10))}</div>` : ""}</td>
         <td>${u.status === "active" ? '<span class="badge ok">aktiv</span>' : '<span class="badge bad">gesperrt</span>'}</td>
         <td class="num">${u.stats?.objects ?? 0} / ${u.stats?.units ?? 0}</td><td class="num">${u.stats?.documents ?? 0}<div class="small muted">${fmtBytes(Number(u.storage_bytes))}</div></td>
@@ -3932,7 +4327,13 @@ function render() {
   const gate = auth.mode === "cloud" && route !== "kuendigen" && (!auth.user || ui.authTab === "newpw" || auth.profile?.status === "blocked");
   if (route === "kuendigen" && !auth.user) { document.body.classList.add("authscreen"); $("#view").innerHTML = `<div style="padding:24px 16px">${viewCancelForm()}</div>`; return; }
   document.body.classList.toggle("authscreen", gate);
-  if (gate) { $("#view").innerHTML = auth.user && auth.profile?.status === "blocked" && ui.authTab !== "newpw" ? viewBlocked() : viewAuth(); return; }
+  if (gate) { $("#view").innerHTML = auth.user && auth.profile?.status === "blocked" && ui.authTab !== "newpw" ? viewBlocked() : ui.portalInvite && !auth.user && ui.authTab !== "reset" ? viewTenantAuth() : viewAuth(); return; }
+  document.body.classList.toggle("portalscreen", isCloud() && !!auth.portalView);
+  if (isCloud() && auth.portalView) {
+    $("#view").innerHTML = viewTenantPortal();
+    setTimeout(hydratePortalImages, 0);
+    return;
+  }
   $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${wsFoot()}<span id="sync">${syncLabel()}</span><br><span id="lastchange">${lastChangeLabel()}</span><span id="livesync"></span>` : `Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.<br><span id="livesync"></span>`;
   setTimeout(setSyncBadge, 0);
   if (!$("#gsearch")) $("#nav").insertAdjacentHTML("beforebegin", `<input id="gsearch" type="search" placeholder="🔎 Suchen … ( / )" autocomplete="off">`);
@@ -3940,10 +4341,11 @@ function render() {
   $("#nav").innerHTML = navHtml(route);
   if (!$("#tabbar")) document.body.insertAdjacentHTML("beforeend", '<nav id="tabbar" class="noprint"></nav>');
   $("#tabbar").innerHTML = tabbarHtml(route);
-  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
+  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, portal: viewPortalInbox, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
     $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
+    if (document.querySelector("img[data-ppath]")) hydratePortalImages();
   } catch (e) {
     console.error(e);
     $("#view").innerHTML = `<div class="card"><h2>Fehler in dieser Ansicht</h2><pre class="small">${esc(e.stack || e)}</pre></div>`;
@@ -4011,6 +4413,12 @@ const actions = {
     n.repairId = rid;
     editRepair(null, { id: rid, title: n.title, description: n.text || "", objectId: u?.objectId || state.objects[0]?.id, unitId: u?.id || "", reportedAt: n.date, reportedBy: "mieter", tenantId: n.tenantId, payer: c && (c.kleinRepCase || c.kleinreparatur) ? "vermieter" : "vermieter" });
   },
+  portalInvite, portalRevoke, portalWrite: (tid) => portalWrite(tid),
+  portalReply: (v) => { const [tid, id] = v.split("|"); portalWrite(tid, id); },
+  portalShareDoc: (v) => { const [docId, tid] = v.split("|"); portalShareDoc(docId, tid); },
+  portalToRepair, portalToMeter, portalFilter: (f) => { ui.portalFilter = f; render(); },
+  portalLeave: () => { auth.portalView = null; render(); },
+  tpReport, tpMeter, tpMessage, tpOpenDoc, tpDocs: () => document.getElementById("tpdocs")?.scrollIntoView({ behavior: "smooth" }),
   teamInvite: () => inviteDialog(),
   teamShareInvite: (v) => { const [token, email] = v.split("|"); shareInvite(token, email); },
   teamRevoke: async (token) => { if (!confirm("Einladung zurückziehen? Der Link funktioniert danach nicht mehr.")) return; try { await Cloud.teamRevokeInvite(token); toast("Einladung zurückgezogen"); loadTeam(); } catch (e) { alert(e.message); } },
@@ -4190,8 +4598,11 @@ document.addEventListener("change", async (e) => {
     e.target.value = ""; return;
   }
   if (k === "tenantSearch") { ui.tenantSearch = e.target.value; render(); return; }
+  if (k === "adminShowTenants") { ui.adminShowTenants = e.target.checked; render(); return; }
   if (k === "adminSearch") { ui.adminSearch = e.target.value; render(); return; }
-  if (k === "switchWs") { switchWorkspace(e.target.value); return; }
+  if (k === "switchWs") { if (e.target.value.startsWith("portal:")) { auth.portalView = e.target.value.slice(7); ui.tp = null; render(); startPortalPoll(); } else switchWorkspace(e.target.value); return; }
+  if (k === "portalStatus") { try { await Cloud.portalUpdateItem(Number(e.target.dataset.id), { status: e.target.value }); const it = portalData()?.items.find((x) => x.id === Number(e.target.dataset.id)); if (it) it.status = e.target.value; toast("Status geändert – der Mieter sieht ihn im Portal"); } catch (err) { alert(err.message); } return; }
+  if (k === "portalEmergency") { state.settings.portalEmergency = e.target.value.trim(); commit("Notfall-Kontakte gespeichert"); for (const row of portalData()?.tenants || []) if (!row.revoked_at) Cloud.portalUpdateTenant(row.id, { info: portalInfo(row.tenant_key) }).catch(() => {}); return; }
   if (k === "instObj") { ui.instObj = e.target.value; render(); return; }
   if (k === "repairUpload") {
     const r = state.repairs.find((x) => x.id === e.target.dataset.id);
@@ -4233,6 +4644,13 @@ async function handleAccountForm(f, form) {
   if (btnEl) btnEl.disabled = true;
   try {
     if (f === "login") { await Cloud.signIn(v.email.trim(), v.password); const s = await Cloud.session(); ui.authMsg = ""; await enterAccount(s.user); }
+    if (f === "tenantRegister") {
+      if (v.password.length < 8) throw new Error("Das Passwort muss mindestens 8 Zeichen haben.");
+      if (!form.privacy.checked) throw new Error("Bitte die Datenschutzhinweise bestätigen.");
+      const r = await Cloud.signUp({ email: v.email.trim(), password: v.password, fullName: v.fullName.trim(), company: "", consent: { account_type: "mieter", terms_accepted: true, consent_at: new Date().toISOString() } });
+      if (r.session) await enterAccount(r.session.user);
+      else { ui.authTab = "login"; ui.authMsg = "Fast geschafft! Bitte bestätigen Sie Ihre E-Mail-Adresse über den Link in der Mail und melden Sie sich dann hier an."; render(); }
+    }
     if (f === "register") {
       if (v.password.length < 8) throw new Error("Das Passwort muss mindestens 8 Zeichen haben.");
       const r = await Cloud.signUp({ email: v.email.trim(), password: v.password, fullName: v.fullName.trim(), company: (v.company || "").trim(), consent: { terms_accepted: true, avv_accepted: true, consent_at: new Date().toISOString() } });
@@ -4284,7 +4702,7 @@ document.addEventListener("submit", (e) => {
     for (const id of Object.keys(w.items)) if (!B.relevantItems(w.answers).some((c) => c.id === id) && !(id.startsWith("s_") && w.sonstige.includes(id.slice(2)))) delete w.items[id];
     render(); window.scrollTo(0, 0); return;
   }
-  if (["login", "register", "reset", "newpw", "profile", "password", "appsettings"].includes(f)) { handleAccountForm(f, e.target); return; }
+  if (["login", "register", "tenantRegister", "reset", "newpw", "profile", "password", "appsettings"].includes(f)) { handleAccountForm(f, e.target); return; }
   if (f === "cancel") {
     const v = Object.fromEntries(new FormData(e.target));
     if (v.kind === "ausserordentlich" && !v.reason.trim()) return alert("Bitte bei einer außerordentlichen Kündigung den Grund angeben.");
