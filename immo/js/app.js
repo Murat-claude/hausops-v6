@@ -452,7 +452,7 @@ function assignDialog(txId) {
 async function importFile(file, accountId) {
   const buf = await file.arrayBuffer();
   let text = new TextDecoder("utf-8").decode(buf);
-  if (text.includes("�")) text = new TextDecoder("windows-1252").decode(buf); // viele Banken liefern ANSI
+  if (text.includes("\uFFFD")) text = new TextDecoder("windows-1252").decode(buf); // viele Banken liefern ANSI
   if (/<(\w+:)?Document[\s>]/.test(text) && /Ntry/.test(text)) return finishImport(C.parseCamt(text, accountId));
   const rows = C.parseCsv(text);
   if (rows.length < 2) return toast("Datei enthält keine Umsätze.");
