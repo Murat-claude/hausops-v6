@@ -350,3 +350,14 @@ test("Sammelüberweisung: 2 Garagen à 70 € mit einer Zahlung über 140 € we
   assert.deepEqual(splitAmount(10000, [7000, 7000]), [5000, 5000]);
   assert.deepEqual(splitAmount(10001, [5000, 10000]), [3333, 6668]);
 });
+
+test("Ablage: Dateien nach Thema sortieren", async () => {
+  const { guessFolder } = await import("../js/core.js");
+  assert.equal(guessFolder("Schornsteinfeger Rechnung 2024.pdf"), "schornsteinfeger");
+  assert.equal(guessFolder("Gasrechnung_Stadtwerke_Hamm.pdf"), "gas_heizung");
+  assert.equal(guessFolder("Stromabrechnung 2023.pdf"), "strom");
+  assert.equal(guessFolder("Grundsteuerbescheid.pdf"), "grundsteuer");
+  assert.equal(guessFolder("Mietvertrag Bacak.pdf"), "mieter");
+  assert.equal(guessFolder("Brief an Vermieter.pdf"), "sonstiges");
+  assert.equal(guessFolder("IMG_2034.jpg", "Haus/Versicherung/IMG_2034.jpg"), "versicherung");
+});

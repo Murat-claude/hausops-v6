@@ -50,9 +50,10 @@ export function friendlyError(e) {
 const RECEIPT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["doc_type", "vendor", "date", "amount", "invoice_number", "category", "betrkv", "umlagefaehig", "umlage_betrag", "positions", "hinweis_vermieter", "meter_readings", "period_from", "period_to", "object_hint", "summary", "consumption", "confidence"],
+  required: ["doc_type", "ordner", "vendor", "date", "amount", "invoice_number", "category", "betrkv", "umlagefaehig", "umlage_betrag", "positions", "hinweis_vermieter", "meter_readings", "period_from", "period_to", "object_hint", "summary", "consumption", "confidence"],
   properties: {
     doc_type: { type: "string", enum: ["rechnung", "bescheid", "abrechnung", "vertrag", "zaehlerstand", "kontoauszug", "sonstiges"] },
+    ordner: { type: "string", enum: ["schornsteinfeger", "gas_heizung", "strom", "wasser", "muell", "grundsteuer", "versicherung", "hausmeister", "wartung", "handwerker", "hausgeld", "bank", "steuer", "mieter", "nebenkosten", "kauf", "fewo", "sonstiges"], description: "Themen-Ordner für die Ablage: Schornsteinfeger, Gas/Heizung/Öl, Strom, Wasser/Abwasser, Müll, Grundsteuer/Abgaben, Versicherung, Hausmeister/Reinigung/Garten, Wartung/Prüfungen, Handwerker/Reparaturen, Hausgeld/WEG, Bank/Darlehen, Steuer/Finanzamt, Mietverträge/Mieter, Nebenkostenabrechnungen, Kauf/Notar/Grundbuch, Ferienwohnung, sonst sonstiges" },
     vendor: { type: "string", description: "Aussteller / Firma / Behörde" },
     date: { type: "string", description: "Rechnungs- bzw. Bescheiddatum als YYYY-MM-DD, leer wenn unbekannt" },
     amount: { type: "number", description: "Zu zahlender Gesamtbetrag brutto in Euro (Gutschrift negativ), 0 wenn keiner" },
@@ -94,7 +95,7 @@ export async function readReceipt({ base64, mediaType, objects }) {
   return call({
     effort: "medium",
     format: RECEIPT_SCHEMA,
-    system: `Du liest Belege für die Buchhaltung eines privaten Vermieters in Deutschland aus (Rechnungen, Grundsteuer-/Abgabenbescheide, Versorger- und Versicherungsabrechnungen, Handwerker-, Hausmeister- und Wartungsrechnungen, Zählerfotos). Übernimm Beträge und Daten exakt vom Beleg; was nicht draufsteht, bleibt leer.
+    system: `Du liest Belege und Unterlagen eines privaten Vermieters in Deutschland aus und ordnest sie einem Themen-Ordner zu (Rechnungen, Grundsteuer-/Abgabenbescheide, Versorger- und Versicherungsabrechnungen, Handwerker-, Hausmeister- und Wartungsrechnungen, Zählerfotos). Übernimm Beträge und Daten exakt vom Beleg; was nicht draufsteht, bleibt leer.
 Prüfe vermieterfreundlich, aber rechtssicher nach § 2 BetrKV, was auf Mieter umlegbar ist:
 - Zerlege gemischte Rechnungen in Positionen: z. B. Hausmeister (Pflege/Reinigung/Winterdienst umlagefähig, Reparatur/Verwaltung/Notdienstpauschale nicht), Heizungsfirma (Wartung, Reinigung, Immissionsmessung umlagefähig, Reparatur/Ersatzteile nicht), Aufzug-Vollwartung (Reparaturanteil abziehen), Versicherung (Gebäude, Elementar, Glas, Haftpflicht umlagefähig; Rechtsschutz, Mietausfall nicht).
 - Typisch umlagefähig und oft übersehen: Legionellenprüfung, Wartung Rauchwarnmelder (nicht deren Miete), Zählermiete/Eichung, Ablesedienst, Dachrinnenreinigung, E-Check, Feuerlöscherprüfung (die letzten nur, wenn im Mietvertrag als sonstige Betriebskosten benannt – dann im Hinweis erwähnen).

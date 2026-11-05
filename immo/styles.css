@@ -511,3 +511,6 @@ dialog[open] { animation: pop .22s var(--ease); }
   .bigstats b, .bigstats > div b { font-size: 22px; overflow-wrap: anywhere; }
   .unit-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* Ablage */
+.qtile small { font-weight: 500; font-size: 12px; }
+.qtile.on { border-color: var(--brand); background: var(--soft); box-shadow: 0 0 0 2px rgba(29,76,92,.15); }

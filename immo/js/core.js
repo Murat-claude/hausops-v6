@@ -1133,3 +1133,34 @@ export function channelNote(b = {}) {
   if (!b.channel || b.channel === "Direkt") return "";
   return `Buchung über ${b.channel}${b.channelRef ? ` (Buchungsnr. ${b.channelRef})` : ""}.`;
 }
+
+// ---------------------------------------------------------------- Ablage: Dokumente eines Objekts nach Themen sortieren
+// [Bezeichnung, Symbol, Suchwörter (Dateiname / Aussteller / Text)]
+export const DOC_FOLDERS = {
+  schornsteinfeger: ["Schornsteinfeger", "🧹", /schornstein|kaminkehr|kaminfeger|feuerstaett|feuerstätt|immissionsmess|bezirksschornstein/],
+  nebenkosten: ["Nebenkostenabrechnungen", "🧾", /nebenkostenabrechnung|betriebskostenabrechnung|nk-?abrechnung|heizkostenabrechnung/],
+  gas_heizung: ["Gas / Heizung / Öl", "🔥", /\bgas\b|erdgas|gasrechnung|heizoel|heizöl|heizung|fernwaerme|fernwärme|pellet|brenner|therme|heizkosten|ista|techem|brunata|minol/],
+  strom: ["Strom", "⚡", /strom|elektrizit|eon\b|e\.on|vattenfall|enbw|rwe|stadtwerk.*strom|allgemeinstrom|zaehlerstand strom/],
+  wasser: ["Wasser / Abwasser", "💧", /wasser|abwasser|kanal|niederschlag|entwaesser|entwässer/],
+  muell: ["Müll / Straßenreinigung", "🗑", /muell|müll|abfall|entsorgung|strassenreinigung|straßenreinigung|winterdienst|awg|wbo/],
+  grundsteuer: ["Grundsteuer / Abgaben", "🏛", /grundsteuer|grundbesitzabgab|abgabenbescheid|stadtkasse|gemeindekasse/],
+  versicherung: ["Versicherungen", "🛡", /versicherung|police|allianz|huk|ergo|axa|gothaer|provinzial|wgv|generali|r\+v|signal iduna|beitragsrechnung/],
+  hausmeister: ["Hausmeister / Reinigung / Garten", "🧽", /hausmeister|reinigung|treppenhaus|garten|baumpflege|rasen|hauswart/],
+  wartung: ["Wartung / Prüfungen", "🔍", /wartung|rauchmelder|rauchwarn|legionell|e-?check|feuerloesch|feuerlösch|aufzug|tuev|tüv|pruefung|prüfung/],
+  handwerker: ["Handwerker / Reparaturen", "🔧", /handwerk|reparatur|sanitaer|sanitär|installateur|elektriker|maler|dachdecker|tischler|schlosser|fliesen|glaser|rohrreinigung|notdienst|kostenvoranschlag|angebot/],
+  hausgeld: ["Hausgeld / WEG", "🏢", /hausgeld|weg\b|eigentuemerversammlung|eigentümerversammlung|wirtschaftsplan|hausverwaltung|jahresabrechnung weg/],
+  bank: ["Bank / Darlehen", "🏦", /darlehen|kredit|zinsbescheinigung|tilgung|bausparen|bauspar|kontoauszug|sparkasse|volksbank|bank/],
+  steuer: ["Steuer / Finanzamt", "🧮", /finanzamt|steuerbescheid|einkommensteuer|umsatzsteuer|steuerberater|elster|anlage v/],
+  mieter: ["Mietverträge / Mieter", "👥", /mietvertrag|\bmieter|uebergabe|übergabe|kaution|kuendigung|kündigung|selbstauskunft|wohnungsgeber|mieterhoehung|mieterhöhung/],
+  kauf: ["Kauf / Notar / Grundbuch", "📜", /notar|kaufvertrag|grundbuch|teilungserklaerung|teilungserklärung|energieausweis|baugenehmigung|grundriss|flurkarte|expose|exposé/],
+  fewo: ["Ferienwohnung", "🏖", /airbnb|booking|smoobu|kurtaxe|gaeste|gäste|ferienwohnung|fewo/],
+  sonstiges: ["Sonstiges", "📁", null],
+};
+
+// Thema aus beliebigem Text (Dateiname, Aussteller, KI-Zusammenfassung) erraten
+export function guessFolder(...texts) {
+  const t = texts.filter(Boolean).join(" ").toLowerCase().replace(/[_\-.]+/g, " ");
+  if (!t.trim()) return "sonstiges";
+  for (const [k, [, , re]] of Object.entries(DOC_FOLDERS)) if (re && re.test(t)) return k;
+  return "sonstiges";
+}

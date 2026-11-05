@@ -909,7 +909,7 @@ function viewObjects() {
         <div class="head" style="margin-bottom:10px"><div><h2 style="margin:0">${esc(o.name)} ${o.short ? `<span class="badge grey">${esc(o.short)}</span>` : ""}</h2>
           <div class="muted">${esc([o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))} · ${esc(C.OBJECT_TYPES[o.type] || "")}${o.year ? ` · Baujahr ${o.year}` : ""}</div>
           <div class="small muted">Soll-Miete/Monat ${eur(monthly)} · Fläche ${sum(units, (u) => Number(u.area))} m² · AfA ${C.afaForYear(o, ui.year) ? eur(C.afaForYear(o, ui.year)) + " (" + ui.year + ")" : "–"}</div></div>
-          <div class="toolbar">${btn("editObject", "Bearbeiten", "sm", o.id)}${btn("newUnit", "+ Einheit", "sm", o.id)}</div></div>
+          <div class="toolbar"><a class="btn sm" href="#/ablage/${o.id}">📂 Ablage (${state.documents.filter((x) => x.objectId === o.id).length})</a>${btn("editObject", "Bearbeiten", "sm", o.id)}${btn("newUnit", "+ Einheit", "sm", o.id)}</div></div>
         ${units.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit</th><th>Art</th><th>Lage</th><th class="num">m²</th><th class="num">Zi.</th><th>Mieter / Status</th><th class="num">Miete warm</th></tr></thead><tbody>
           ${units.map((u) => {
             const c = activeContract(u.id, key);
@@ -1656,7 +1656,7 @@ function viewSettings() {
 const DOC_KINDS = { beleg: "Rechnung / Beleg", ausgangsrechnung: "Ausgangsrechnung (an Gäste/Firmen)", bescheid: "Bescheid (Grundsteuer, Abgaben)", abrechnung: "Versorger-/Jahresabrechnung", vertrag: "Mietvertrag", nachtrag: "Nachtrag / Mieterhöhung / Vereinbarung", protokoll: "Übergabeprotokoll", kaution: "Kaution (Nachweis, Kautionskonto)", selbstauskunft: "Mieterselbstauskunft / Bonität", wohnungsgeber: "Wohnungsgeberbestätigung", kuendigung: "Kündigung", korrespondenz: "Schriftverkehr", foto: "Fotos / Mängel", zaehler: "Zählerstand / Foto", zinsbescheinigung: "Zinsbescheinigung (Darlehen)", steuerbescheid: "Steuerbescheid", sonstiges: "Sonstiges" };
 const KI_DOC_KIND = { rechnung: "beleg", bescheid: "bescheid", abrechnung: "abrechnung", vertrag: "vertrag", zaehlerstand: "zaehler", kontoauszug: "sonstiges", sonstiges: "sonstiges" };
 
-async function addFiles(fileList, { scan = false, expenseId = null, meta = null } = {}) {
+async function addFiles(fileList, { scan = false, expenseId = null, meta = null, objectId = "", quiet = false } = {}) {
   if (isCloud() && !canWrite()) { paywall(); return []; }
   const files = [...fileList];
   if (!files.length) return [];
@@ -1670,12 +1670,13 @@ async function addFiles(fileList, { scan = false, expenseId = null, meta = null 
       let blob = file, thumb = "", type = isPdf ? "application/pdf" : file.type;
       if (!isPdf) { const r = await F.prepareImage(file, scan); blob = r.blob; thumb = r.thumb; type = "image/jpeg"; }
       await putDocBlob(id, blob);
-      const doc = { id, name: file.name || `Scan ${d(today())}`, type, size: blob.size, thumb, created: new Date().toISOString(), kind: "beleg", objectId: "", contractId: "", expenseId, status: expenseId ? "verarbeitet" : "neu", note: "", ki: null };
+      const doc = { id, name: file.name || `Scan ${d(today())}`, type, size: blob.size, thumb, created: new Date().toISOString(), kind: "beleg", objectId: objectId || "", contractId: "", expenseId, status: expenseId ? "verarbeitet" : "neu", note: "", ki: null,
+        ordner: C.guessFolder(file.name, file.webkitRelativePath, file.relPath), source: file.webkitRelativePath || file.relPath || "" };
       if (meta) { Object.assign(doc, meta, { status: "verarbeitet" }); if (!file.name || /^image\.|^IMG_|^scan/i.test(file.name)) doc.name = `${DOC_KINDS[meta.kind] || "Dokument"} ${d(today())}`; }
       state.documents.push(doc);
       if (expenseId) { const e = byId("expenses", expenseId); if (e) e.fileIds = [...(e.fileIds || []), id]; }
       added.push(doc);
-    } catch (err) { alert(`${file.name}: ${err.message}`); }
+    } catch (err) { if (quiet) console.warn(file.name, err); else alert(`${file.name}: ${err.message}`); }
   }
   commit(`${added.length} Datei(en) gespeichert`);
   if (!expenseId && !meta && ui.autoKi && K.hasKey()) for (const doc of added) await kiReadDoc(doc.id);
@@ -1711,7 +1712,7 @@ function guessObject(hint) {
   return best;
 }
 
-async function kiReadDoc(id) {
+async function kiReadDoc(id, quiet = false) {
   const doc = byId("documents", id);
   if (!K.hasKey()) { toast("Für die KI-Erkennung zuerst unter Einstellungen den API-Schlüssel eintragen."); location.hash = "#/einstellungen"; return; }
   const blob = await getDocBlob(id);
@@ -1722,10 +1723,13 @@ async function kiReadDoc(id) {
     doc.ki = r;
     doc.kind = KI_DOC_KIND[r.doc_type] || doc.kind;
     doc.objectId = doc.objectId || guessObject(r.object_hint);
+    doc.ordner = C.DOC_FOLDERS[r.ordner] && r.ordner !== "sonstiges" ? r.ordner : C.guessFolder(r.vendor, r.summary, doc.name);
     if (r.vendor) doc.name = `${r.vendor}${r.date ? " " + d(r.date) : ""}`;
     persist();
-    toast(`Ausgelesen: ${r.vendor} · ${eur(Math.round(r.amount * 100))} (Sicherheit ${r.confidence})`);
+    if (!quiet) toast(`Ausgelesen: ${r.vendor} · ${eur(Math.round(r.amount * 100))} (Sicherheit ${r.confidence})`);
+    return true;
   } catch (e) {
+    if (quiet) { doc.kiError = K.friendlyError(e); return false; }
     alert("KI-Erkennung fehlgeschlagen: " + K.friendlyError(e));
   } finally {
     delete ui.kiBusy[id]; render();
@@ -1791,12 +1795,13 @@ function editDoc(id) {
     spec: [
       { k: "name", l: "Bezeichnung", req: 1, full: 1 },
       { k: "kind", l: "Art", t: "select", opts: Object.entries(DOC_KINDS) },
+      { k: "ordner", l: "Ordner (Ablage)", t: "select", opts: Object.entries(C.DOC_FOLDERS).map(([k, [l, ic]]) => [k, `${ic} ${l}`]) },
       { k: "objectId", l: "Objekt", t: "select", opts: () => objectOpts() },
       { k: "contractId", l: "Mietvertrag / Mieter", t: "select", opts: () => [["", "–"], ...contractOpts()], full: 1 },
       { k: "status", l: "Status", t: "select", opts: [["neu", "Eingang (unbearbeitet)"], ["verarbeitet", "erledigt / abgelegt"]] },
       { k: "note", l: "Notiz", t: "textarea" },
     ],
-    onSave: (v) => { Object.assign(doc, v); commit("Gespeichert"); },
+    onSave: (v) => { Object.assign(doc, v, { ordnerManuell: v.ordner !== folderOf(doc) || doc.ordnerManuell }); commit("Gespeichert"); },
     onDelete: async () => {
       for (const e of state.expenses) if ((e.fileIds || []).includes(id)) e.fileIds = e.fileIds.filter((x) => x !== id);
       state.documents = state.documents.filter((x) => x.id !== id);
@@ -1819,6 +1824,85 @@ function docCard(doc) {
         ${!e && ["beleg", "bescheid", "abrechnung"].includes(doc.kind) ? `${btn("kiDoc", busy ? "⏳ liest…" : "✨ KI auslesen", "sm", doc.id)}${btn("bookDoc", "Buchen", "sm primary", doc.id)}` : ""}
         ${btn("editDoc", "✎", "sm", doc.id)}
       </div></div></div>`;
+}
+
+// ---------------------------------------------------------------- Ablage je Objekt: Ordner reinwerfen, App sortiert
+const KIND_FOLDER = { vertrag: "mieter", nachtrag: "mieter", protokoll: "mieter", kaution: "mieter", selbstauskunft: "mieter", wohnungsgeber: "mieter", kuendigung: "mieter", zinsbescheinigung: "bank", steuerbescheid: "steuer", ausgangsrechnung: "fewo" };
+function folderOf(doc) {
+  if (doc.ordner && doc.ordner !== "sonstiges") return doc.ordner;
+  const g = C.guessFolder(doc.name, doc.ki?.vendor, doc.ki?.summary, doc.source);
+  return g !== "sonstiges" ? g : KIND_FOLDER[doc.kind] || "sonstiges";
+}
+const docYear = (doc) => (doc.ki?.date || doc.ki?.period_to || "").slice(0, 4) || (`${doc.name} ${doc.source || ""}`.match(/\b(19[89]\d|20[0-4]\d)\b/) || [])[1] || (doc.created || "").slice(0, 4) || "ohne Jahr";
+
+// Ganzen Ordner/viele Dateien einem Objekt zuordnen und (mit KI-Schlüssel) einzeln auslesen und einsortieren
+async function bulkImport(files, objectId) {
+  const list = [...files].filter((f) => !/^\./.test(f.name));
+  const ok = list.filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name) || (f.type || "").startsWith("image/") || /\.(jpe?g|png|heic|webp)$/i.test(f.name));
+  const skipped = list.length - ok.length;
+  if (!ok.length) return toast(skipped ? `Keine Fotos oder PDFs gefunden (${skipped} andere Dateien übersprungen).` : "Keine Dateien gefunden.");
+  ui.bulk = { total: ok.length, done: 0, objectId, phase: "speichern", skipped }; render();
+  const added = await addFiles(ok, { objectId, quiet: true });
+  if (K.hasKey()) {
+    ui.bulk = { ...ui.bulk, phase: "lesen", done: 0, total: added.length }; render();
+    let fail = 0;
+    for (const doc of added) { if (!(await kiReadDoc(doc.id, true))) fail++; ui.bulk.done++; render(); }
+    ui.bulk = null; commit(`${added.length} Dateien einsortiert${fail ? ` – ${fail} konnten nicht gelesen werden (nach Dateiname sortiert)` : ""}${skipped ? ` · ${skipped} andere Dateien übersprungen` : ""}`);
+  } else {
+    ui.bulk = null; commit(`${added.length} Dateien nach Dateinamen einsortiert${skipped ? ` · ${skipped} andere Dateien übersprungen` : ""}. Mit KI-Schlüssel liest die App auch den Inhalt.`);
+  }
+}
+
+// Ordner aus Drag & Drop rekursiv auslesen
+async function filesFromDrop(dt) {
+  const entries = [...(dt.items || [])].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.length) return [...dt.files];
+  const out = [];
+  const walk = async (entry, path) => {
+    if (entry.isFile) { const f = await new Promise((res, rej) => entry.file(res, rej)); f.relPath = path + f.name; out.push(f); return; }
+    const reader = entry.createReader();
+    let batch;
+    do { batch = await new Promise((res, rej) => reader.readEntries(res, rej)); for (const e of batch) await walk(e, `${path}${entry.name}/`); } while (batch.length);
+  };
+  for (const e of entries) await walk(e, "");
+  return out;
+}
+
+function viewAblage(objectId) {
+  if (!state.objects.length) return head("Ablage") + `<div class="card empty"><div class="big">📂</div>Lege zuerst unter „Häuser & Wohnungen“ ein Objekt an.</div>`;
+  const oid = byId("objects", objectId) ? objectId : ui.ablageObj && byId("objects", ui.ablageObj) ? ui.ablageObj : state.objects[0].id;
+  ui.ablageObj = oid;
+  const o = byId("objects", oid);
+  const docs = state.documents.filter((x) => x.objectId === oid);
+  const groups = {};
+  for (const doc of docs) (groups[folderOf(doc)] ||= []).push(doc);
+  const open = ui.ablageFolder && groups[ui.ablageFolder] ? ui.ablageFolder : null;
+  const b = ui.bulk;
+  const unassigned = state.documents.filter((x) => !x.objectId).length;
+  const tiles = Object.entries(C.DOC_FOLDERS).filter(([k]) => groups[k]).map(([k, [l, ic]]) => `<button class="qtile ${open === k ? "on" : ""}" data-act="ablageFolder" data-id="${k}"><span>${ic}</span>${esc(l)}<small class="muted">${groups[k].length} Datei${groups[k].length === 1 ? "" : "en"}</small></button>`).join("");
+  let list = "";
+  if (open) {
+    const byYear = {};
+    for (const doc of groups[open]) (byYear[docYear(doc)] ||= []).push(doc);
+    list = `<div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">${C.DOC_FOLDERS[open][1]} ${esc(C.DOC_FOLDERS[open][0])}</h2>${btn("ablageFolder", "✕ schließen", "sm", "")}</div>
+      ${Object.keys(byYear).sort().reverse().map((y) => `<h3>${esc(y)}</h3><div class="docs">${byYear[y].sort((a, c) => ((a.ki?.date || a.created) < (c.ki?.date || c.created) ? 1 : -1)).map(docCard).join("")}</div>`).join("")}
+      <p class="small muted" style="margin-top:8px">Falsch einsortiert? Bei der Datei auf ✎ tippen und den Ordner ändern.</p></div>`;
+  }
+  return head(`📂 Ablage`, "Ganzen Ordner reinwerfen – die App sortiert nach Schornsteinfeger, Gas, Strom, Versicherung …",
+    `<select data-change="ablageObj" style="width:auto">${opt(state.objects.map((x) => [x.id, x.name]), oid)}</select>`) + `
+    <div class="card noprint drop" data-drop="ablage">
+      <div class="toolbar">
+        <label class="btn primary">📂 Ganzen Ordner wählen<input type="file" webkitdirectory directory multiple data-change="ablageUpload" hidden></label>
+        <label class="btn">📄 Dateien wählen<input type="file" accept="image/*,application/pdf" multiple data-change="ablageUpload" hidden></label>
+        <label class="btn">📷 Foto<input type="file" accept="image/*" capture="environment" data-change="ablageUpload" hidden></label>
+      </div>
+      <p class="small muted" style="margin-top:8px">Für <b>${esc(o.name)}</b>: Ordner oder Dateien hierher ziehen oder auswählen – auch durcheinander. Unterordner werden mitgenommen, nur PDFs und Fotos werden übernommen.
+      ${K.hasKey() ? "Die KI liest jede Datei und legt sie in den passenden Ordner (kostet je Datei ein paar Cent über deinen KI-Schlüssel)." : 'Ohne KI-Schlüssel wird nach dem Dateinamen sortiert. Mit Schlüssel (<a href="#/einstellungen">Einstellungen → KI</a>) liest die App auch den Inhalt.'}</p>
+      ${b ? `<div class="note"><b>${b.phase === "lesen" ? `✨ Lese und sortiere … ${b.done} von ${b.total}` : `Speichere ${b.total} Dateien …`}</b><div class="bar"><i style="width:${b.total ? Math.round((100 * b.done) / b.total) : 0}%"></i></div><span class="small muted">Bitte die Seite offen lassen.</span></div>` : ""}
+    </div>
+    ${docs.length ? `<div class="qgrid">${tiles}</div>` : `<div class="card empty-start"><div class="big">📂</div><b>Noch keine Dateien für ${esc(o.name)}</b><p class="muted">Wirf z. B. den Ordner „Haus Unterlagen“ von deinem Computer hier hinein.</p></div>`}
+    ${list}
+    ${unassigned ? `<p class="small muted">${unassigned} Datei(en) ohne Objekt findest du unter <a href="#/dokumente">Belege & Dokumente</a>.</p>` : ""}`;
 }
 
 function viewDocs() {
@@ -2911,7 +2995,7 @@ function navGroups() {
   return [
     [null, [["", "🏠", "Start"]]],
     ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["instand", "🔧", "Reparaturen"], ...(isCloud() ? [["portal", "🔑", `Mieterportal${portalUnread() ? ` (${portalUnread()})` : ""}`]] : []), ["briefe", "✉️", "Briefe"]]],
-    ["Geld & Belege", [["bank", "🏦", "Konto & Zahlungen"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📷", "Belege & Dokumente"]]],
+    ["Geld & Belege", [["bank", "🏦", "Konto & Zahlungen"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📷", "Belege & Dokumente"], ["ablage", "📂", "Ablage je Objekt"]]],
     ...(hasFewo ? [["Ferienwohnung", [["ferien", "🏖️", "Belegung & Buchungen"], ["rechnungen", "🧾", "Gäste-Rechnungen"]]]] : []),
     ["Steuer", [["erklaerung", "🧮", "Steuererklärung"], ["monat", "📬", "Monatsbericht StB"], ["steuer", "📊", "Anlage V & DATEV"]]],
     ["Mehr", [["ki", "✨", "KI-Assistent"], ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡️", "Admin"]] : []), ["einstellungen", "⚙️", "Einstellungen"]]],
@@ -4564,7 +4648,7 @@ function render() {
   $("#nav").innerHTML = navHtml(route);
   if (!$("#tabbar")) document.body.insertAdjacentHTML("beforeend", '<nav id="tabbar" class="noprint"></nav>');
   $("#tabbar").innerHTML = tabbarHtml(route);
-  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, monat: () => viewMonthReport(arg), portal: viewPortalInbox, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
+  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, monat: () => viewMonthReport(arg), portal: viewPortalInbox, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, ablage: () => viewAblage(arg), konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
     $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
@@ -4690,6 +4774,7 @@ const actions = {
   },
   openDoc, editDoc, bookDoc, kiDoc: (id) => kiReadDoc(id),
   docFilter: (f) => { ui.docFilter = f; render(); },
+  ablageFolder: (k) => { ui.ablageFolder = ui.ablageFolder === k ? null : k || null; render(); },
   letterReset: () => { ui.letter.body = ""; render(); },
   letterKi: async () => {
     const L = ui.letter; if (!K.hasKey()) return toast("Bitte zuerst den KI-Schlüssel in den Einstellungen eintragen.");
@@ -4832,6 +4917,8 @@ document.addEventListener("change", async (e) => {
   if (!k) return;
   if (k === "docUpload" || k === "docScan") { await addFiles(e.target.files, { scan: k === "docScan" }); e.target.value = ""; return; }
   if (k === "autoKi") { ui.autoKi = e.target.checked; return; }
+  if (k === "ablageUpload") { const fl = [...e.target.files]; e.target.value = ""; await bulkImport(fl, ui.ablageObj); return; }
+  if (k === "ablageObj") { ui.ablageObj = e.target.value; ui.ablageFolder = null; location.hash = `#/ablage/${e.target.value}`; return; }
   if (k === "kiPseudo") { state.settings.kiPseudo = e.target.checked; commit(e.target.checked ? "Datensparsamer KI-Modus an" : "Datensparsamer KI-Modus aus"); return; }
   if (k === "smoobuAuto") { state.settings.smoobuAuto = e.target.checked; commit(e.target.checked ? "Smoobu wird automatisch abgerufen" : "Smoobu-Abruf aus"); if (e.target.checked) syncAll(); return; }
   if (k === "syncToken") { try { e.target.value ? localStorage.setItem(SYNC_TOKEN_KEY, e.target.value.trim()) : localStorage.removeItem(SYNC_TOKEN_KEY); } catch {} toast("Sync-Schlüssel gespeichert (nur auf diesem Gerät)"); return; }
@@ -4932,7 +5019,12 @@ document.addEventListener("input", (e) => {
 // Drag & Drop von Dateien auf die Belege-Seite
 document.addEventListener("dragover", (e) => { if (e.target.closest?.("[data-drop]")) { e.preventDefault(); e.target.closest("[data-drop]").classList.add("over"); } });
 document.addEventListener("dragleave", (e) => { e.target.closest?.("[data-drop]")?.classList.remove("over"); });
-document.addEventListener("drop", (e) => { const z = e.target.closest?.("[data-drop]"); if (z) { e.preventDefault(); z.classList.remove("over"); addFiles(e.dataTransfer.files); } });
+document.addEventListener("drop", async (e) => {
+  const z = e.target.closest?.("[data-drop]"); if (!z) return;
+  e.preventDefault(); z.classList.remove("over");
+  if (z.dataset.drop === "ablage") { const files = await filesFromDrop(e.dataTransfer); return bulkImport(files, ui.ablageObj); }
+  addFiles(e.dataTransfer.files);
+});
 
 document.addEventListener("submit", (e) => {
   const f = e.target.dataset?.form;
