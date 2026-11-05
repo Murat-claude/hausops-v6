@@ -3507,8 +3507,12 @@ function inviteDialog() {
 async function loadAdmin() {
   ui.adminBusy = true; render();
   try {
-    const [users, log, plans, settings, canc, teams] = await Promise.all([Cloud.adminUsers(), Cloud.adminLog(), Cloud.plans(), Cloud.appSettings(), Cloud.adminCancellations().catch(() => []), Cloud.adminTeamSizes().catch(() => [])]);
-    for (const u of users) u.teamSize = Number(teams.find((t) => t.owner_id === u.id)?.members || 0);
+    const [users, log, plans, settings, canc, members] = await Promise.all([Cloud.adminUsers(), Cloud.adminLog(), Cloud.plans(), Cloud.appSettings(), Cloud.adminCancellations().catch(() => []), Cloud.adminMemberships().catch(() => [])]);
+    for (const u of users) {
+      u.members = members.filter((m) => m.owner_id === u.id);
+      u.teamSize = u.members.length;
+      u.memberOf = members.filter((m) => m.member_id === u.id);
+    }
     Object.assign(ui, { adminUsers: users, adminLog: log, adminCancellations: canc });
     auth.plans = plans; auth.settings = settings;
   } catch (e) { alert("Admin-Daten konnten nicht geladen werden: " + e.message); }
@@ -3527,7 +3531,7 @@ function viewAdmin() {
   const q = C.normalize(ui.adminSearch || "");
   const list = users.filter((u) => !q || C.normalize(`${u.email} ${u.full_name} ${u.company}`).includes(q));
   const fmtBytes = (b) => (b > 1e6 ? `${(b / 1e6).toFixed(1).replace(".", ",")} MB` : `${Math.round((b || 0) / 1e3)} KB`);
-  const tabs = [["uebersicht", "Übersicht"], ["nutzer", `Nutzer (${users.length})`], ["tarife", "Tarife"], ["einstellungen", "Einstellungen & Rechtstexte"], ["kuendigungen", `Kündigungen (${(ui.adminCancellations || []).filter((c) => c.status !== "erledigt").length})`], ["protokoll", "Protokoll"]];
+  const tabs = [["uebersicht", "Übersicht"], ["nutzer", `Nutzer (${users.length})`], ["tarife", "Tarife"], ["einstellungen", "Einstellungen & Rechtstexte"], ["gruppen", `Gruppen (${users.filter((u) => u.teamSize).length})`], ["kuendigungen", `Kündigungen (${(ui.adminCancellations || []).filter((c) => c.status !== "erledigt").length})`], ["protokoll", "Protokoll"]];
   const st = auth.settings || {};
   const body = {
     uebersicht: `<div class="kpis">
@@ -3541,7 +3545,7 @@ function viewAdmin() {
       <div class="card"><h2>Testphasen, die bald enden</h2>${users.filter((u) => u.plan === "trial" && u.trial_ends_at && days(u.trial_ends_at) > -30 && days(u.trial_ends_at) < 7).map((u) => `<div>${esc(u.email)} – ${d(u.trial_ends_at.slice(0, 10))}</div>`).join("") || '<p class="muted">Keine.</p>'}</div>`,
     nutzer: `<div class="inline" style="margin-bottom:10px"><input placeholder="Suchen (E-Mail, Name, Firma) …" value="${esc(ui.adminSearch || "")}" data-change="adminSearch" style="max-width:320px">${btn("adminReload", "⟳ Aktualisieren", "sm")}</div>
       <div class="table-wrap"><table><thead><tr><th>Nutzer</th><th>Tarif</th><th>Status</th><th class="num">Objekte / Einh.</th><th class="num">Dokumente</th><th>Registriert</th><th>Zuletzt aktiv</th></tr></thead><tbody>
-      ${list.map((u) => `<tr class="click" data-act="adminUser" data-id="${u.id}"><td><b>${esc(u.full_name || u.email)}</b>${u.role === "admin" ? ' <span class="badge">Admin</span>' : ""}${u.teamSize ? ` <span class="badge grey" title="Teammitglieder">👥 +${u.teamSize}</span>` : ""}<div class="small muted">${esc(u.email)}${u.company ? " · " + esc(u.company) : ""}</div></td>
+      ${list.map((u) => `<tr class="click" data-act="adminUser" data-id="${u.id}"><td><b>${esc(u.full_name || u.email)}</b>${u.role === "admin" ? ' <span class="badge">Admin</span>' : ""}${u.teamSize ? ` <span class="badge grey" title="Weitere Personen in der Gruppe">👥 +${u.teamSize}</span>` : ""}<div class="small muted">${esc(u.email)}${u.company ? " · " + esc(u.company) : ""}</div>${(u.memberOf || []).map((m) => `<div class="small muted">↳ Mitglied bei ${esc(adminUserName(m.owner_id))} (${ROLE_LABEL[m.role]})</div>`).join("")}</td>
         <td>${esc(planById[u.plan]?.name || u.plan)}${u.subscription_status ? ` <span class="badge ${u.subscription_status === "active" ? "ok" : u.subscription_status === "past_due" ? "bad" : "grey"}">${esc(u.subscription_status === "active" ? (u.cancel_at_period_end ? "gekündigt" : "Abo") : u.subscription_status)}</span>` : ""}${u.plan === "trial" && u.trial_ends_at ? `<div class="small ${days(u.trial_ends_at) > 0 ? "neg" : "muted"}">bis ${d(u.trial_ends_at.slice(0, 10))}</div>` : ""}</td>
         <td>${u.status === "active" ? '<span class="badge ok">aktiv</span>' : '<span class="badge bad">gesperrt</span>'}</td>
         <td class="num">${u.stats?.objects ?? 0} / ${u.stats?.units ?? 0}</td><td class="num">${u.stats?.documents ?? 0}<div class="small muted">${fmtBytes(Number(u.storage_bytes))}</div></td>
@@ -3568,6 +3572,7 @@ function viewAdmin() {
     kuendigungen: `<p class="small muted" style="margin-bottom:8px">Eingänge über den Kündigungsbutton (§ 312k BGB). Abos werden automatisch zum Laufzeitende gekündigt; ohne E-Mail-Versand (RESEND_API_KEY) bitte die Bestätigung selbst per E-Mail senden.</p>
       <div class="table-wrap"><table><thead><tr><th>Eingang</th><th>Name / E-Mail</th><th>Konto</th><th>Art</th><th>Status</th><th>Bestätigung</th></tr></thead><tbody>
       ${(ui.adminCancellations || []).map((c) => `<tr><td class="small nowrap">${new Date(c.created_at).toLocaleString("de-DE")}<br>K-${String(c.id).padStart(6, "0")}</td><td class="small">${esc(c.name)}<br>${esc(c.email)}</td><td class="small">${esc(c.account_email)}${c.effective_at ? `<br>endet ${d(c.effective_at.slice(0, 10))}` : ""}</td><td class="small">${esc(c.kind)}${c.reason ? `<br><span class="muted">${esc(c.reason.slice(0, 80))}</span>` : ""}</td><td class="small">${esc(c.status)}</td><td class="small">${c.confirmation_sent ? "✓ E-Mail" : '<span class="neg">manuell senden</span>'}</td></tr>`).join("") || '<tr><td colspan="6" class="muted">Keine Kündigungen.</td></tr>'}</tbody></table></div>`,
+    gruppen: adminGroupsHtml(users),
     protokoll: `<table>${(ui.adminLog || []).map((l) => `<tr><td class="small nowrap">${new Date(l.at).toLocaleString("de-DE")}</td><td class="small">${esc(l.action)}</td><td class="small">${esc(users.find((u) => u.id === l.target_id)?.email || l.target_id || "")}</td><td class="small muted">${esc(JSON.stringify(l.details))}</td></tr>`).join("") || '<tr><td class="muted">Noch keine Einträge.</td></tr>'}</table>`,
   }[tab];
   return head("Admin-Bereich", "Kunden, Tarife und Einstellungen – ohne Einblick in Kundendaten", "") + `
@@ -3575,12 +3580,56 @@ function viewAdmin() {
     ${tab === "uebersicht" ? body : `<div class="card">${body}</div>`}`;
 }
 
+const adminUserName = (id) => { const u = (ui.adminUsers || []).find((x) => x.id === id); return u ? u.company || u.full_name || u.email : "?"; };
+
+// Vermieter-Gruppen: Inhaber + weitere Personen (z. B. Ehepaar, Hausverwaltung mit Mitarbeitern)
+function adminGroupHtml(u) {
+  const roleSel = (m) => `<select data-change="adminMemberRole" data-owner="${esc(u.id)}" data-id="${esc(m.member_id)}" style="width:auto">${opt([["editor", "✎ Bearbeiten"], ["viewer", "👁 Nur lesen"]], m.role)}</select>`;
+  const inv = (ui.adminInvites || {})[u.id];
+  return `<div class="card" style="margin-bottom:10px"><div class="head" style="margin-bottom:6px"><div><b>🏠 ${esc(u.company || u.full_name || u.email)}</b> <span class="small muted">${esc(u.email)} · Tarif ${esc(auth.plans.find((p) => p.id === u.plan)?.name || u.plan)}</span></div>
+      <div class="toolbar">${btn("adminGroupAdd", "+ Person hinzufügen", "sm primary", u.id)}${inv === undefined ? btn("adminGroupInvites", "Einladungen zeigen", "sm", u.id) : ""}</div></div>
+    <table><tbody><tr><td><b>${esc(u.full_name || u.email)}</b><div class="small muted">${esc(u.email)}</div></td><td><span class="badge ok">Inhaber</span></td><td></td></tr>
+      ${u.members.map((m) => { const x = (ui.adminUsers || []).find((y) => y.id === m.member_id) || {}; return `<tr><td><b>${esc(x.full_name || x.email || "?")}</b><div class="small muted">${esc(x.email || "")} · seit ${d(String(m.created_at).slice(0, 10))}</div></td><td>${roleSel(m)}</td><td>${btn("adminGroupRemove", "Entfernen", "sm danger", `${u.id}|${m.member_id}`)}</td></tr>`; }).join("")}
+      ${(inv || []).map((i) => `<tr><td>${esc(i.email)}<div class="small muted">Einladung bis ${d(String(i.expires_at).slice(0, 10))}</div></td><td><span class="badge warn">${ROLE_LABEL[i.role]}</span></td><td class="nowrap">${btn("adminGroupLink", "Link", "sm", i.token)}${btn("adminGroupRevoke", "Zurückziehen", "sm", `${u.id}|${i.token}`)}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+
+function adminGroupsHtml(users) {
+  const groups = users.filter((u) => u.teamSize);
+  const owners = users.filter((u) => u.status === "active" && !(u.memberOf || []).length || u.teamSize);
+  return `<div class="note small">Eine <b>Gruppe</b> ist ein gemeinsamer Bestand: der Inhaber (Abo, Daten) und weitere Personen mit „Bearbeiten“ oder „Nur lesen“ – z. B. Ehepaar, Erbengemeinschaft oder Hausverwaltung mit Team. Kunden verwalten ihr Team auch selbst unter „Mein Konto“. Admin-Konten können hier aus Datenschutzgründen nicht in Kundenbestände aufgenommen werden; jede Änderung steht im Protokoll.</div>
+    <div class="inline" style="margin:10px 0"><select id="adminGroupOwner" style="max-width:360px">${opt([["", "Gruppe anlegen für Konto …"], ...owners.filter((u) => !u.teamSize).map((u) => [u.id, `${u.company || u.full_name || u.email} (${u.email})`])], "")}</select>${btn("adminGroupNew", "+ Gruppe anlegen", "")}</div>
+    ${groups.length ? groups.map(adminGroupHtml).join("") : '<p class="muted">Noch keine Gruppen – Konto oben auswählen und weitere Person hinzufügen.</p>'}`;
+}
+
+function adminGroupAddDialog(ownerId) {
+  const u = ui.adminUsers.find((x) => x.id === ownerId);
+  dialog({
+    title: `Person zur Gruppe „${u.company || u.full_name || u.email}“ hinzufügen`, submit: "Hinzufügen",
+    body: `<p class="small muted" style="margin-bottom:8px">Hat die Person schon ein Konto, wird sie sofort hinzugefügt. Sonst entsteht eine Einladung (14 Tage gültig) – den Link bitte an die Person schicken; sie registriert sich mit genau dieser E-Mail-Adresse.</p>
+      <label class="f"><span>E-Mail-Adresse *</span><input name="email" type="email" required></label>
+      <label class="f"><span>Zugriff</span><select name="role">${opt([["editor", "✎ Bearbeiten"], ["viewer", "👁 Nur lesen"]], "editor")}</select></label>
+      ${u.teamSize >= (auth.plans.find((p) => p.id === u.plan)?.max_members ?? Infinity) ? '<div class="note warn small">Achtung: Der Tarif des Kunden sieht nicht mehr Personen vor. Als Admin kannst du trotzdem hinzufügen – ggf. Tarif anpassen.</div>' : ""}`,
+    onSubmit: (form) => {
+      const email = form.email.value.trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast("Bitte gültige E-Mail eingeben."); return false; }
+      Cloud.adminAddMember(ownerId, email, form.role.value).then(async (r) => {
+        if (r?.added) toast("Person hinzugefügt");
+        else { prompt("Noch kein Konto – Einladungslink an die Person schicken:", inviteLink(r.token)); }
+        if (ui.adminInvites) delete ui.adminInvites[ownerId];
+        await loadAdmin();
+      }, (e) => alert(e.message));
+    },
+  });
+}
+
 function adminUserDialog(id) {
   const u = ui.adminUsers.find((x) => x.id === id);
   formDialog({
     title: u.email, data: { ...u, trial_ends_at: u.trial_ends_at ? u.trial_ends_at.slice(0, 10) : "" },
     intro: `<p class="small muted" style="margin-bottom:10px">${esc(u.full_name)}${u.company ? " · " + esc(u.company) : ""} · registriert ${d(u.created_at.slice(0, 10))} · ${u.stats?.objects ?? 0} Objekte, ${u.stats?.units ?? 0} Einheiten, ${u.stats?.documents ?? 0} Dokumente</p>
-      <div class="toolbar" style="margin-bottom:12px">${btn("adminResetPw", "Passwort-Reset-Mail senden", "sm", u.email)}${u.id !== auth.user.id ? btn("adminDelete", "Konto löschen", "sm danger", u.id) : ""}</div>`,
+      <div class="toolbar" style="margin-bottom:12px">${btn("adminResetPw", "Passwort-Reset-Mail senden", "sm", u.email)}${u.id !== auth.user.id ? btn("adminDelete", "Konto löschen", "sm danger", u.id) : ""}</div>
+      <div class="small" style="margin-bottom:12px">👥 <b>Gruppe:</b> ${u.teamSize ? u.members.map((m) => `${esc(adminUserName(m.member_id))} (${ROLE_LABEL[m.role]})`).join(", ") : "nur der Inhaber"}${(u.memberOf || []).length ? ` · Mitglied bei ${u.memberOf.map((m) => esc(adminUserName(m.owner_id))).join(", ")}` : ""} ${btn("adminGroupAdd", "+ Person hinzufügen", "sm", u.id)}</div>`,
     spec: [
       { k: "plan", l: "Tarif", t: "select", opts: () => auth.plans.map((p) => [p.id, p.name]) },
       { k: "trial_ends_at", l: "Testphase bis", t: "date" },
@@ -3717,6 +3766,12 @@ const actions = {
     catch (e) { alert("Löschen fehlgeschlagen: " + e.message); }
   },
   adminTab: (t) => { ui.adminTab = t; render(); },
+  adminGroupAdd: (owner) => { if ($("#modal").open) $("#modal").close(); adminGroupAddDialog(owner); },
+  adminGroupNew: () => { const v = $("#adminGroupOwner")?.value; if (!v) return toast("Bitte zuerst ein Konto auswählen."); adminGroupAddDialog(v); },
+  adminGroupInvites: async (owner) => { try { ui.adminInvites = { ...(ui.adminInvites || {}), [owner]: await Cloud.adminInvites(owner) }; render(); } catch (e) { alert(e.message); } },
+  adminGroupLink: (token) => prompt("Einladungslink:", inviteLink(token)),
+  adminGroupRevoke: async (v) => { const [owner, token] = v.split("|"); if (!confirm("Einladung zurückziehen?")) return; try { await Cloud.adminRevokeInvite(token); ui.adminInvites[owner] = await Cloud.adminInvites(owner); toast("Zurückgezogen"); render(); } catch (e) { alert(e.message); } },
+  adminGroupRemove: async (v) => { const [owner, member] = v.split("|"); if (!confirm(`${adminUserName(member)} aus der Gruppe von ${adminUserName(owner)} entfernen? Die Person verliert sofort den Zugriff.`)) return; try { await Cloud.adminRemoveMember(owner, member); toast("Entfernt"); await loadAdmin(); } catch (e) { alert(e.message); } },
   adminReload: () => loadAdmin(),
   adminUser: (id) => adminUserDialog(id),
   adminPlan: (id) => adminPlanDialog(id),
@@ -3873,6 +3928,7 @@ document.addEventListener("change", async (e) => {
   if (k === "adminSearch") { ui.adminSearch = e.target.value; render(); return; }
   if (k === "switchWs") { switchWorkspace(e.target.value); return; }
   if (k === "autoInvoiceDrafts") { state.settings.autoInvoiceDrafts = e.target.checked; commit(e.target.checked ? "Neue Smoobu-Buchungen bekommen automatisch einen Rechnungsentwurf" : "Automatische Rechnungsentwürfe aus"); return; }
+  if (k === "adminMemberRole") { try { await Cloud.adminSetMemberRole(e.target.dataset.owner, e.target.dataset.id, e.target.value); toast("Rolle geändert"); await loadAdmin(); } catch (err) { alert(err.message); } return; }
   if (k === "teamRole") { try { await Cloud.teamSetRole(e.target.dataset.id, e.target.value); toast("Rolle geändert"); loadTeam(); } catch (err) { alert(err.message); } return; }
   if (k === "attachExpense") { const id = e.target.dataset.id; if (!byId("expenses", id)) return toast("Bitte die Ausgabe zuerst speichern."); $("#modal").close(); await addFiles(e.target.files, { expenseId: id }); editExpense(id); return; }
   if (k === "kiKey") { K.setKey(e.target.value); toast(e.target.value ? "KI-Schlüssel gespeichert (nur auf diesem Gerät)" : "KI-Schlüssel entfernt"); render(); return; }

@@ -123,6 +123,12 @@ export const acceptInvite = (token) => rpc("accept_invite", { p_token: token });
 export const teamSetRole = (member, role) => rpc("team_set_role", { p_member: member, p_role: role });
 export const teamRemove = (owner, member) => rpc("team_remove", { p_owner: owner, p_member: member });
 export const adminTeamSizes = () => rpc("admin_team_sizes");
+export const adminMemberships = () => rpc("admin_memberships");
+export const adminInvites = (owner) => rpc("admin_invites", { p_owner: owner });
+export const adminAddMember = (owner, email, role) => rpc("admin_add_member", { p_owner: owner, p_email: email, p_role: role });
+export const adminSetMemberRole = (owner, member, role) => rpc("admin_set_member_role", { p_owner: owner, p_member: member, p_role: role });
+export const adminRemoveMember = (owner, member) => rpc("admin_remove_member", { p_owner: owner, p_member: member });
+export const adminRevokeInvite = (token) => rpc("admin_revoke_invite", { p_token: token });
 export const teamRevokeInvite = (token) => rpc("team_revoke_invite", { p_token: token });
 
 // ---------------------------------------------------------------- Belege (Storage)
