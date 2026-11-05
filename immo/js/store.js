@@ -1,7 +1,17 @@
 // Datenhaltung: lokal im Browser (localStorage) + Backup-Datei (JSON).
 import { uid, monthKey, addMonths } from "./core.js";
 
-const KEY = "hausops-immo-v1";
+const BASE_KEY = "hausops-immo-v1";
+let KEY = BASE_KEY;
+// Im Cloud-Modus bekommt jeder Nutzer einen eigenen lokalen Zwischenspeicher
+export function useUser(uid) { KEY = uid ? `${BASE_KEY}:${uid}` : BASE_KEY; }
+export function legacyLocal() {
+  try { const raw = localStorage.getItem(BASE_KEY); return raw ? normalizeState(JSON.parse(raw)) : null; } catch { return null; }
+}
+export function normalizeState(data) {
+  const base = emptyState();
+  return { ...base, ...(data || {}), settings: { ...base.settings, ...((data || {}).settings || {}) } };
+}
 
 export function emptyState() {
   return {

@@ -2,5 +2,8 @@
   "name": "hausops-immobilien",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test tests/core.test.mjs" }
+  "scripts": {
+    "test": "node --test tests/core.test.mjs",
+    "test:db": "psql \"$DATABASE_URL\" -v ON_ERROR_STOP=1 -f supabase/tests/supabase_stub.sql -f supabase/migrations/20261105000000_hausops_immo.sql -f supabase/tests/rls_test.sql"
+  }
 }

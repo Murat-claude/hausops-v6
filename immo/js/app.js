@@ -3,6 +3,7 @@ import * as C from "./core.js";
 import * as S from "./store.js";
 import * as F from "./files.js";
 import * as K from "./ki.js";
+import * as Cloud from "./cloud.js";
 
 let state = S.load();
 const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
@@ -14,9 +15,12 @@ const eur = C.fmtEUR, d = C.fmtDate;
 const byId = (list, id) => (state[list] || []).find((x) => x.id === id);
 const sum = (arr, f = (x) => x) => arr.reduce((s, x) => s + (f(x) || 0), 0);
 
+function persist() { S.save(state); scheduleSync(); }
+
 function commit(msg) {
-  if (!S.save(state)) toast("⚠️ Speichern fehlgeschlagen (Speicher voll?) – bitte Datensicherung exportieren.");
+  if (!S.save(state) && !isCloud()) toast("⚠️ Speichern fehlgeschlagen (Speicher voll?) – bitte Datensicherung exportieren.");
   else if (msg) toast(msg);
+  scheduleSync();
   render();
 }
 
@@ -252,6 +256,8 @@ function editObject(id) {
 
 function editUnit(id, objectId) {
   if (!state.objects.length) return toast("Bitte zuerst ein Objekt anlegen.");
+  const lim = planOf()?.max_units;
+  if (!id && isCloud() && lim && state.units.length >= lim) return alert(`Dein Tarif „${planOf().name}“ umfasst bis zu ${lim} Einheiten. Unter „Mein Konto“ kannst du auf einen größeren Tarif wechseln.`);
   const u = byId("units", id) || { id: C.uid("u_"), objectId: objectId || state.objects[0].id, type: "wohnung", vat: "0" };
   formDialog({
     title: id ? "Einheit bearbeiten" : "Neue Einheit", spec: SPEC.unit, data: { ...u, vat: String(u.vat ?? 0) },
@@ -477,7 +483,7 @@ function invoiceFromBooking(bookingId) {
   };
   state.invoices.push(inv);
   b.invoiceId = inv.id;
-  S.save(state);
+  persist();
   location.hash = `#/rechnung/${inv.id}`;
   toast(`Rechnung ${inv.number} erstellt`);
 }
@@ -524,7 +530,7 @@ function editInvoice(id) {
       });
       if (isNew) { inv.number = takeInvoiceNumber(inv.date); state.invoices.push(inv); }
       refreshInvoiceStatus(inv.id);
-      S.save(state);
+      persist();
       location.hash = `#/rechnung/${inv.id}`;
       render();
     },
@@ -540,7 +546,7 @@ function cancelInvoice(id) {
   state.invoices.push(st);
   const b = byId("bookings", inv.bookingId);
   if (b) b.invoiceId = null;
-  S.save(state);
+  persist();
   location.hash = `#/rechnung/${st.id}`;
 }
 
@@ -1243,7 +1249,7 @@ async function addFiles(fileList, { scan = false, expenseId = null } = {}) {
       const id = C.uid("d_");
       let blob = file, thumb = "", type = isPdf ? "application/pdf" : file.type;
       if (!isPdf) { const r = await F.prepareImage(file, scan); blob = r.blob; thumb = r.thumb; type = "image/jpeg"; }
-      await F.putFile(id, blob);
+      await putDocBlob(id, blob);
       const doc = { id, name: file.name || `Scan ${d(today())}`, type, size: blob.size, thumb, created: new Date().toISOString(), kind: "beleg", objectId: "", contractId: "", expenseId, status: expenseId ? "verarbeitet" : "neu", note: "", ki: null };
       state.documents.push(doc);
       if (expenseId) { const e = byId("expenses", expenseId); if (e) e.fileIds = [...(e.fileIds || []), id]; }
@@ -1256,7 +1262,7 @@ async function addFiles(fileList, { scan = false, expenseId = null } = {}) {
 }
 
 async function openDoc(id) {
-  const blob = await F.getFile(id);
+  const blob = await getDocBlob(id);
   if (!blob) return toast("Datei nicht gefunden (anderes Gerät?)");
   const url = URL.createObjectURL(blob);
   window.open(url, "_blank");
@@ -1266,7 +1272,7 @@ async function openDoc(id) {
 // Lädt Bilder aus IndexedDB in <img data-doc="…"> (Druckansichten)
 async function hydrateDocImages() {
   for (const img of document.querySelectorAll("img[data-doc]")) {
-    const blob = await F.getFile(img.dataset.doc).catch(() => null);
+    const blob = await getDocBlob(img.dataset.doc).catch(() => null);
     if (blob) img.src = URL.createObjectURL(blob);
   }
 }
@@ -1286,7 +1292,7 @@ function guessObject(hint) {
 async function kiReadDoc(id) {
   const doc = byId("documents", id);
   if (!K.hasKey()) { toast("Für die KI-Erkennung zuerst unter Einstellungen den API-Schlüssel eintragen."); location.hash = "#/einstellungen"; return; }
-  const blob = await F.getFile(id);
+  const blob = await getDocBlob(id);
   if (!blob) return toast("Datei nicht gefunden");
   ui.kiBusy = { ...(ui.kiBusy || {}), [id]: true }; render();
   try {
@@ -1295,7 +1301,7 @@ async function kiReadDoc(id) {
     doc.kind = KI_DOC_KIND[r.doc_type] || doc.kind;
     doc.objectId = doc.objectId || guessObject(r.object_hint);
     if (r.vendor) doc.name = `${r.vendor}${r.date ? " " + d(r.date) : ""}`;
-    S.save(state);
+    persist();
     toast(`Ausgelesen: ${r.vendor} · ${eur(Math.round(r.amount * 100))} (Sicherheit ${r.confidence})`);
   } catch (e) {
     alert("KI-Erkennung fehlgeschlagen: " + K.friendlyError(e));
@@ -1353,7 +1359,7 @@ function editDoc(id) {
     onDelete: async () => {
       for (const e of state.expenses) if ((e.fileIds || []).includes(id)) e.fileIds = e.fileIds.filter((x) => x !== id);
       state.documents = state.documents.filter((x) => x.id !== id);
-      await F.deleteFile(id).catch(() => {});
+      await deleteDocBlob(id);
       commit("Dokument gelöscht");
     },
   });
@@ -1602,15 +1608,323 @@ async function kiAsk(q) {
   window.scrollTo(0, document.body.scrollHeight);
 }
 
+// ---------------------------------------------------------------- Konten, Cloud-Sync & Admin
+
+const auth = { mode: "local", user: null, profile: null, settings: null, plans: [], version: 0, sync: "ok", syncTimer: null, pending: false };
+const isCloud = () => auth.mode === "cloud" && !!auth.user;
+const isAdmin = () => isCloud() && auth.profile?.role === "admin";
+const planOf = () => auth.plans.find((p) => p.id === auth.profile?.plan);
+
+// Belege: lokal zwischenspeichern, im Cloud-Modus zusätzlich hochladen / nachladen
+async function putDocBlob(id, blob) {
+  await F.putFile(id, blob);
+  if (isCloud()) await Cloud.uploadFile(auth.user.id, id, blob);
+}
+async function getDocBlob(id) {
+  const local = await F.getFile(id).catch(() => null);
+  if (local || !isCloud()) return local;
+  const remote = await Cloud.downloadFile(auth.user.id, id).catch(() => null);
+  if (remote) await F.putFile(id, remote).catch(() => {});
+  return remote;
+}
+async function deleteDocBlob(id) {
+  await F.deleteFile(id).catch(() => {});
+  if (isCloud()) await Cloud.removeFile(auth.user.id, id).catch(() => {});
+}
+
+function scheduleSync() {
+  if (!isCloud()) return;
+  auth.pending = true;
+  setSync("saving");
+  clearTimeout(auth.syncTimer);
+  auth.syncTimer = setTimeout(syncNow, 1200);
+}
+
+async function syncNow() {
+  if (!isCloud() || !auth.pending) return;
+  auth.pending = false;
+  try {
+    auth.version = await Cloud.saveState(state, auth.version);
+    setSync("ok");
+  } catch (e) {
+    if (e.code === "conflict") {
+      const remote = await Cloud.loadState(auth.user.id);
+      state = S.normalizeState(remote.data); auth.version = remote.version; S.save(state);
+      alert("Deine Daten wurden zwischenzeitlich auf einem anderen Gerät geändert. Die neueste Version wurde geladen – bitte die letzte Änderung ggf. wiederholen.");
+      setSync("ok"); render();
+    } else if (e.code === "plan_limit") {
+      const remote = await Cloud.loadState(auth.user.id);
+      state = S.normalizeState(remote.data); auth.version = remote.version; S.save(state);
+      alert(`Dein Tarif „${planOf()?.name || ""}“ erlaubt höchstens ${e.limit} Einheiten. Bitte Tarif wechseln (Mein Konto).`);
+      setSync("ok"); render();
+    } else if (e.code === "blocked") {
+      setSync("error"); alert("Dein Konto ist gesperrt. Bitte wende dich an den Support.");
+    } else {
+      auth.pending = true; setSync("offline");
+      clearTimeout(auth.syncTimer); auth.syncTimer = setTimeout(syncNow, 15000);
+    }
+  }
+}
+
+function setSync(s) {
+  auth.sync = s;
+  const el = $("#sync");
+  if (el) el.innerHTML = syncLabel();
+}
+const syncLabel = () => ({ ok: "☁︎ gespeichert", saving: "☁︎ speichert …", offline: "⚠︎ offline – wird nachgeholt", error: "⚠︎ nicht gespeichert" }[auth.sync]);
+
+window.addEventListener("online", () => syncNow());
+window.addEventListener("beforeunload", (e) => { if (auth.pending) { syncNow(); e.preventDefault(); } });
+
+async function boot() {
+  const cloud = await Cloud.init().catch(() => false);
+  if (!cloud) { auth.mode = "local"; render(); return; }
+  auth.mode = "cloud";
+  auth.settings = await Cloud.appSettings().catch(() => null);
+  auth.plans = await Cloud.plans().catch(() => []);
+  Cloud.onAuth(async (event, s) => {
+    if (event === "PASSWORD_RECOVERY") { ui.authTab = "newpw"; render(); }
+    if (event === "SIGNED_OUT") { ui.authTab = "login"; ui.authMsg = ""; Object.assign(ui, { adminUsers: null, chat: [], letter: null, nk: null }); auth.user = null; auth.profile = null; S.useUser(null); state = S.emptyState(); render(); }
+  });
+  const s = await Cloud.session().catch(() => null);
+  if (s) await enterAccount(s.user); else render();
+}
+
+async function enterAccount(user) {
+  auth.user = user;
+  try {
+    auth.profile = await Cloud.profile(user.id);
+    if (auth.profile.status !== "active") { render(); return; }
+    S.useUser(user.id);
+    const remote = await Cloud.loadState(user.id);
+    auth.version = remote.version;
+    state = S.normalizeState(remote.data);
+    S.save(state);
+    Cloud.touch();
+    // Erster Login: vorhandene lokale Daten (aus dem lokalen Modus) übernehmen?
+    const legacy = S.legacyLocal();
+    if (!state.objects.length && legacy?.objects?.length && confirm(`Auf diesem Gerät gibt es lokale Daten (${legacy.objects.length} Objekte). In dein Konto übernehmen?`)) {
+      state = legacy; S.save(state); auth.pending = true; await syncNow();
+      for (const doc of state.documents || []) { const b = await F.getFile(doc.id).catch(() => null); if (b) await Cloud.uploadFile(user.id, doc.id, b).catch(() => {}); }
+    }
+  } catch (e) {
+    alert("Anmeldung fehlgeschlagen: " + Cloud.friendlyAuthError(e));
+    await Cloud.signOut();
+  }
+  if (!location.hash || location.hash === "#/") location.hash = "#/";
+  render();
+}
+
+function legalLink(k, label) { return `<button class="btn link small" data-act="legal" data-id="${k}">${label}</button>`; }
+
+function viewAuth() {
+  const tab = ui.authTab || "login";
+  const st = auth.settings || {};
+  const plans = auth.plans.filter((p) => p.active && p.id !== "intern");
+  const form = {
+    login: `<form data-form="login"><h2>Anmelden</h2>
+      <label class="f"><span>E-Mail</span><input name="email" type="email" autocomplete="email" required></label>
+      <label class="f"><span>Passwort</span><input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" style="width:100%;justify-content:center">Anmelden</button>
+      <p class="small" style="margin-top:10px"><button type="button" class="btn link" data-act="authTab" data-id="reset">Passwort vergessen?</button></p></form>`,
+    register: st.registration_open === false ? `<h2>Registrierung</h2><p class="muted">Die Registrierung ist derzeit geschlossen.${st.support_email ? ` Kontakt: ${esc(st.support_email)}` : ""}</p>` : `<form data-form="register"><h2>Kostenlos testen</h2>
+      <p class="small muted" style="margin-bottom:10px">${st.trial_days || 30} Tage alle Funktionen – ohne Zahlungsdaten.</p>
+      <div class="fgrid"><label class="f"><span>Name</span><input name="fullName" required autocomplete="name"></label>
+      <label class="f"><span>Firma (optional)</span><input name="company" autocomplete="organization"></label></div>
+      <label class="f"><span>E-Mail</span><input name="email" type="email" required autocomplete="email"></label>
+      <label class="f"><span>Passwort (mind. 8 Zeichen)</span><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+      <label class="f inline small"><input type="checkbox" name="terms" required> Ich akzeptiere die ${legalLink("agb", "AGB")} und habe die ${legalLink("datenschutz", "Datenschutzerklärung")} gelesen.</label>
+      <button class="btn primary" style="width:100%;justify-content:center">Konto erstellen</button></form>`,
+    reset: `<form data-form="reset"><h2>Passwort zurücksetzen</h2><p class="small muted" style="margin-bottom:10px">Du bekommst eine E-Mail mit einem Link zum Festlegen eines neuen Passworts.</p>
+      <label class="f"><span>E-Mail</span><input name="email" type="email" required></label>
+      <button class="btn primary" style="width:100%;justify-content:center">Link senden</button></form>`,
+    newpw: `<form data-form="newpw"><h2>Neues Passwort festlegen</h2>
+      <label class="f"><span>Neues Passwort (mind. 8 Zeichen)</span><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+      <button class="btn primary" style="width:100%;justify-content:center">Speichern</button></form>`,
+  }[tab];
+  return `<div class="auth">
+    <div class="auth-hero"><div class="logo">${esc(st.product_name || "HausOps Immobilien")}</div>
+      <h1>Deine Immobilien. Einfach verwaltet.</h1>
+      <ul><li>Wohnungen, Häuser, Garagen, Stellplätze & Ferienwohnungen</li><li>Bankabgleich: Mieteingänge automatisch erkannt</li><li>Nebenkostenabrechnung nach BetrKV mit Mieterbrief</li><li>Belege fotografieren – die KI liest sie aus</li><li>Anlage V, DATEV-Export & Steuerberater-Paket</li></ul>
+      ${plans.length ? `<div class="plans">${plans.map((p) => `<div class="plan"><b>${esc(p.name)}</b><div class="v">${p.price_month_cents ? eur(p.price_month_cents) + "<span class=\"small\"> / Monat</span>" : "kostenlos"}</div><div class="small">${esc(p.description)}</div></div>`).join("")}</div>` : ""}
+    </div>
+    <div class="auth-box card">
+      ${st.announcement ? `<div class="note warn">${esc(st.announcement)}</div>` : ""}
+      ${tab !== "newpw" ? `<div class="tabs"><button data-act="authTab" data-id="login" class="${tab === "login" ? "active" : ""}">Anmelden</button><button data-act="authTab" data-id="register" class="${tab === "register" ? "active" : ""}">Registrieren</button></div>` : ""}
+      ${ui.authMsg ? `<div class="note">${esc(ui.authMsg)}</div>` : ""}
+      ${form}
+      <div class="small muted" style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">${legalLink("impressum", "Impressum")}${legalLink("datenschutz", "Datenschutz")}${legalLink("agb", "AGB")}</div>
+    </div></div>`;
+}
+
+function viewBlocked() {
+  return `<div class="auth"><div class="auth-box card" style="margin:auto"><h2>Konto gesperrt</h2><p>Dein Konto ist derzeit gesperrt. Bitte wende dich an den Support${auth.settings?.support_email ? `: <a href="mailto:${esc(auth.settings.support_email)}">${esc(auth.settings.support_email)}</a>` : ""}.</p><br>${btn("logout", "Abmelden")}</div></div>`;
+}
+
+function trialInfo() {
+  const p = auth.profile;
+  if (!p?.trial_ends_at || p.plan !== "trial") return null;
+  const days = Math.ceil((new Date(p.trial_ends_at) - new Date()) / 86400000);
+  return { days, expired: days < 0, end: p.trial_ends_at.slice(0, 10) };
+}
+
+function banners() {
+  if (!isCloud()) return "";
+  const out = [];
+  if (auth.settings?.announcement) out.push(`<div class="note warn noprint">📣 ${esc(auth.settings.announcement)}</div>`);
+  const t = trialInfo();
+  if (t && (t.expired || t.days <= 7)) out.push(`<div class="note warn noprint">${t.expired ? "Deine Testphase ist abgelaufen." : `Deine Testphase endet in ${t.days} Tag(en).`} <a href="#/konto">Tarif wählen →</a></div>`);
+  return out.join("");
+}
+
+function viewKonto() {
+  const p = auth.profile, plan = planOf(), t = trialInfo();
+  const st = auth.settings || {};
+  return head("Mein Konto", esc(p.email), btn("logout", "Abmelden")) + `
+    <form class="card" data-form="profile"><h2>Profil</h2><div class="fgrid">
+      <label class="f"><span>Name</span><input name="full_name" value="${esc(p.full_name)}"></label>
+      <label class="f"><span>Firma</span><input name="company" value="${esc(p.company)}"></label></div>
+      <button class="btn primary">Speichern</button></form>
+    <div class="card"><h2>Tarif</h2>
+      <p><b>${esc(plan?.name || p.plan)}</b> ${plan?.price_month_cents ? `· ${eur(plan.price_month_cents)} / Monat` : ""} ${t ? (t.expired ? '<span class="badge bad">Testphase abgelaufen</span>' : `<span class="badge warn">Test bis ${d(t.end)}</span>`) : ""}</p>
+      <p class="small muted">Nutzung: ${state.units.length} Einheiten${plan?.max_units ? ` von max. ${plan.max_units}` : ""} · ${state.objects.length} Objekte · ${state.documents.length} Dokumente</p>
+      <div class="plans" style="margin-top:10px">${auth.plans.filter((x) => x.active && !["trial", "intern"].includes(x.id)).map((x) => `<div class="plan ${x.id === p.plan ? "current" : ""}"><b>${esc(x.name)}</b><div class="v">${eur(x.price_month_cents)}<span class="small"> / Monat</span></div><div class="small">${esc(x.description)}</div>
+        ${x.id === p.plan ? '<span class="badge ok">aktuell</span>' : `<a class="btn sm" href="mailto:${esc(st.support_email || "")}?subject=${encodeURIComponent(`Tarifwechsel auf ${x.name}`)}&body=${encodeURIComponent(`Bitte stellt mein Konto ${p.email} auf den Tarif ${x.name} um.`)}">Wechseln</a>`}</div>`).join("")}</div>
+      <p class="small muted" style="margin-top:8px">Der Tarifwechsel wird aktuell per E-Mail beauftragt und vom Admin freigeschaltet.</p></div>
+    <form class="card" data-form="password"><h2>Passwort ändern</h2>
+      <label class="f"><span>Neues Passwort (mind. 8 Zeichen)</span><input name="password" type="password" minlength="8" required autocomplete="new-password" style="max-width:340px"></label>
+      <button class="btn">Passwort ändern</button></form>
+    <div class="card"><h2>Daten & Datenschutz</h2>
+      <p class="small muted" style="margin-bottom:8px">Deine Daten sind von allen anderen Konten getrennt gespeichert; auch Administratoren sehen keine Objekt- oder Mieterdaten.</p>
+      <div class="toolbar">${btn("backupFull", "⬇ Alle Daten exportieren")}${btn("deleteSelf", "Konto & alle Daten löschen", "danger")}</div>
+      <div class="small" style="margin-top:10px">${legalLink("impressum", "Impressum")} · ${legalLink("datenschutz", "Datenschutz")} · ${legalLink("agb", "AGB")}</div></div>`;
+}
+
+// ---------------------------------------------------------------- Admin-Bereich
+
+async function loadAdmin() {
+  ui.adminBusy = true; render();
+  try {
+    const [users, log, plans, settings] = await Promise.all([Cloud.adminUsers(), Cloud.adminLog(), Cloud.plans(), Cloud.appSettings()]);
+    Object.assign(ui, { adminUsers: users, adminLog: log });
+    auth.plans = plans; auth.settings = settings;
+  } catch (e) { alert("Admin-Daten konnten nicht geladen werden: " + e.message); }
+  ui.adminBusy = false; render();
+}
+
+function viewAdmin() {
+  if (!isAdmin()) return head("Kein Zugriff");
+  if (!ui.adminUsers && !ui.adminBusy) { loadAdmin(); return head("Admin") + '<div class="card muted">Lade …</div>'; }
+  const users = ui.adminUsers || [];
+  const tab = ui.adminTab || "uebersicht";
+  const now = Date.now(), days = (iso) => (iso ? (now - new Date(iso)) / 86400000 : Infinity);
+  const planById = Object.fromEntries(auth.plans.map((p) => [p.id, p]));
+  const paying = users.filter((u) => u.status === "active" && (planById[u.plan]?.price_month_cents || 0) > 0);
+  const mrr = sum(paying, (u) => planById[u.plan].price_month_cents);
+  const q = C.normalize(ui.adminSearch || "");
+  const list = users.filter((u) => !q || C.normalize(`${u.email} ${u.full_name} ${u.company}`).includes(q));
+  const fmtBytes = (b) => (b > 1e6 ? `${(b / 1e6).toFixed(1).replace(".", ",")} MB` : `${Math.round((b || 0) / 1e3)} KB`);
+  const tabs = [["uebersicht", "Übersicht"], ["nutzer", `Nutzer (${users.length})`], ["tarife", "Tarife"], ["einstellungen", "Einstellungen & Rechtstexte"], ["protokoll", "Protokoll"]];
+  const st = auth.settings || {};
+  const body = {
+    uebersicht: `<div class="kpis">
+        <div class="kpi"><div class="l">Nutzer gesamt</div><div class="v">${users.length}</div><div class="s">${users.filter((u) => days(u.created_at) <= 30).length} neu in 30 Tagen</div></div>
+        <div class="kpi"><div class="l">Aktiv (30 Tage)</div><div class="v">${users.filter((u) => days(u.last_seen_at) <= 30).length}</div></div>
+        <div class="kpi"><div class="l">Zahlende Kunden</div><div class="v">${paying.length}</div><div class="s">${users.filter((u) => u.plan === "trial").length} in Testphase</div></div>
+        <div class="kpi"><div class="l">Monatsumsatz (MRR)</div><div class="v">${eur(mrr)}</div><div class="s">${eur(mrr * 12)} / Jahr</div></div>
+        <div class="kpi"><div class="l">Speicher Belege</div><div class="v">${fmtBytes(sum(users, (u) => Number(u.storage_bytes)))}</div></div>
+      </div>
+      <div class="card"><h2>Nach Tarif</h2><table>${auth.plans.map((p) => `<tr><td>${esc(p.name)}</td><td class="num">${users.filter((u) => u.plan === p.id).length} Nutzer</td><td class="num">${eur(sum(users.filter((u) => u.plan === p.id && u.status === "active"), () => p.price_month_cents))} / Monat</td></tr>`).join("")}</table></div>
+      <div class="card"><h2>Testphasen, die bald enden</h2>${users.filter((u) => u.plan === "trial" && u.trial_ends_at && days(u.trial_ends_at) > -30 && days(u.trial_ends_at) < 7).map((u) => `<div>${esc(u.email)} – ${d(u.trial_ends_at.slice(0, 10))}</div>`).join("") || '<p class="muted">Keine.</p>'}</div>`,
+    nutzer: `<div class="inline" style="margin-bottom:10px"><input placeholder="Suchen (E-Mail, Name, Firma) …" value="${esc(ui.adminSearch || "")}" data-change="adminSearch" style="max-width:320px">${btn("adminReload", "⟳ Aktualisieren", "sm")}</div>
+      <div class="table-wrap"><table><thead><tr><th>Nutzer</th><th>Tarif</th><th>Status</th><th class="num">Objekte / Einh.</th><th class="num">Dokumente</th><th>Registriert</th><th>Zuletzt aktiv</th></tr></thead><tbody>
+      ${list.map((u) => `<tr class="click" data-act="adminUser" data-id="${u.id}"><td><b>${esc(u.full_name || u.email)}</b>${u.role === "admin" ? ' <span class="badge">Admin</span>' : ""}<div class="small muted">${esc(u.email)}${u.company ? " · " + esc(u.company) : ""}</div></td>
+        <td>${esc(planById[u.plan]?.name || u.plan)}${u.plan === "trial" && u.trial_ends_at ? `<div class="small ${days(u.trial_ends_at) > 0 ? "neg" : "muted"}">bis ${d(u.trial_ends_at.slice(0, 10))}</div>` : ""}</td>
+        <td>${u.status === "active" ? '<span class="badge ok">aktiv</span>' : '<span class="badge bad">gesperrt</span>'}</td>
+        <td class="num">${u.stats?.objects ?? 0} / ${u.stats?.units ?? 0}</td><td class="num">${u.stats?.documents ?? 0}<div class="small muted">${fmtBytes(Number(u.storage_bytes))}</div></td>
+        <td class="small">${d(u.created_at.slice(0, 10))}</td><td class="small">${u.last_seen_at ? d(u.last_seen_at.slice(0, 10)) : "–"}</td></tr>`).join("")}</tbody></table></div>`,
+    tarife: `<div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th class="num">Preis / Monat</th><th class="num">Max. Einheiten</th><th>KI inkl.</th><th>Aktiv</th><th></th></tr></thead><tbody>
+      ${auth.plans.map((p) => `<tr><td class="small">${esc(p.id)}</td><td>${esc(p.name)}<div class="small muted">${esc(p.description)}</div></td><td class="num">${eur(p.price_month_cents)}</td><td class="num">${p.max_units ?? "∞"}</td><td>${p.ki_included ? "✓" : ""}</td><td>${p.active ? "✓" : "–"}</td><td>${btn("adminPlan", "✎", "sm", p.id)}</td></tr>`).join("")}</tbody></table></div>
+      ${btn("adminPlan", "+ Tarif", "", "")}
+      <p class="small muted" style="margin-top:8px">Das Einheiten-Limit wird serverseitig geprüft. Online-Zahlung (z. B. Stripe) ist der nächste Ausbauschritt – bis dahin Tarife hier manuell zuweisen.</p>`,
+    einstellungen: `<form data-form="appsettings"><div class="fgrid">
+        <label class="f"><span>Produktname</span><input name="product_name" value="${esc(st.product_name)}"></label>
+        <label class="f"><span>Support-E-Mail</span><input name="support_email" type="email" value="${esc(st.support_email)}"></label>
+        <label class="f"><span>Testphase (Tage)</span><input name="trial_days" type="number" value="${esc(st.trial_days)}"></label>
+        <label class="f inline"><input type="checkbox" name="registration_open" ${st.registration_open ? "checked" : ""}> Registrierung offen</label>
+        <label class="f full"><span>Ankündigung (Banner für alle Nutzer, leer = aus)</span><input name="announcement" value="${esc(st.announcement)}"></label>
+        <label class="f full"><span>Impressum</span><textarea name="impressum">${esc(st.impressum)}</textarea></label>
+        <label class="f full"><span>Datenschutzerklärung</span><textarea name="datenschutz" style="min-height:160px">${esc(st.datenschutz)}</textarea></label>
+        <label class="f full"><span>AGB</span><textarea name="agb" style="min-height:160px">${esc(st.agb)}</textarea></label>
+      </div><button class="btn primary">Speichern</button>
+      <p class="small muted" style="margin-top:8px">Vor dem Verkauf: Impressum, Datenschutzerklärung (inkl. Auftragsverarbeitung mit Supabase/Anthropic) und AGB rechtlich prüfen lassen.</p></form>`,
+    protokoll: `<table>${(ui.adminLog || []).map((l) => `<tr><td class="small nowrap">${new Date(l.at).toLocaleString("de-DE")}</td><td class="small">${esc(l.action)}</td><td class="small">${esc(users.find((u) => u.id === l.target_id)?.email || l.target_id || "")}</td><td class="small muted">${esc(JSON.stringify(l.details))}</td></tr>`).join("") || '<tr><td class="muted">Noch keine Einträge.</td></tr>'}</table>`,
+  }[tab];
+  return head("Admin-Bereich", "Kunden, Tarife und Einstellungen – ohne Einblick in Kundendaten", "") + `
+    <div class="tabs">${tabs.map(([k, l]) => `<button data-act="adminTab" data-id="${k}" class="${tab === k ? "active" : ""}">${l}</button>`).join("")}</div>
+    ${tab === "uebersicht" ? body : `<div class="card">${body}</div>`}`;
+}
+
+function adminUserDialog(id) {
+  const u = ui.adminUsers.find((x) => x.id === id);
+  formDialog({
+    title: u.email, data: { ...u, trial_ends_at: u.trial_ends_at ? u.trial_ends_at.slice(0, 10) : "" },
+    intro: `<p class="small muted" style="margin-bottom:10px">${esc(u.full_name)}${u.company ? " · " + esc(u.company) : ""} · registriert ${d(u.created_at.slice(0, 10))} · ${u.stats?.objects ?? 0} Objekte, ${u.stats?.units ?? 0} Einheiten, ${u.stats?.documents ?? 0} Dokumente</p>
+      <div class="toolbar" style="margin-bottom:12px">${btn("adminResetPw", "Passwort-Reset-Mail senden", "sm", u.email)}${u.id !== auth.user.id ? btn("adminDelete", "Konto löschen", "sm danger", u.id) : ""}</div>`,
+    spec: [
+      { k: "plan", l: "Tarif", t: "select", opts: () => auth.plans.map((p) => [p.id, p.name]) },
+      { k: "trial_ends_at", l: "Testphase bis", t: "date" },
+      { k: "status", l: "Status", t: "select", opts: [["active", "aktiv"], ["blocked", "gesperrt"]] },
+      { k: "role", l: "Rolle", t: "select", opts: [["user", "Kunde"], ["admin", "Admin"]] },
+      { k: "admin_note", l: "Interne Notiz (Rechnungen, Absprachen)", t: "textarea" },
+    ],
+    onSave: async (v) => {
+      try {
+        await Cloud.adminUpdateUser({ p_id: u.id, p_plan: v.plan, p_status: v.status, p_role: v.role, p_trial_ends_at: v.trial_ends_at ? `${v.trial_ends_at}T23:59:59Z` : null, p_clear_trial: !v.trial_ends_at, p_note: v.admin_note });
+        toast("Nutzer aktualisiert"); loadAdmin();
+      } catch (e) { alert(e.message); }
+    },
+  });
+}
+
+function adminPlanDialog(id) {
+  const p = auth.plans.find((x) => x.id === id) || { id: "", name: "", price_month_cents: 0, max_units: null, ki_included: false, description: "", sort: auth.plans.length, active: true };
+  formDialog({
+    title: id ? `Tarif ${p.name}` : "Neuer Tarif", data: { ...p, max_units: p.max_units ?? "" },
+    spec: [
+      { k: "id", l: "ID (klein, ohne Leerzeichen)", req: 1 }, { k: "name", l: "Name", req: 1 },
+      { k: "price_month_cents", l: "Preis pro Monat (€)", t: "money" }, { k: "max_units", l: "Max. Einheiten (leer = unbegrenzt)", t: "number" },
+      { k: "description", l: "Beschreibung", full: 1 }, { k: "sort", l: "Reihenfolge", t: "number" },
+      { k: "ki_included", l: "KI inklusive", t: "checkbox" }, { k: "active", l: "Buchbar / sichtbar", t: "checkbox" },
+    ],
+    onSave: async (v) => {
+      if (id && v.id !== id) { toast("Die ID kann nicht geändert werden."); return false; }
+      try { await Cloud.savePlan({ ...v, id: v.id.toLowerCase().replace(/[^a-z0-9_-]/g, ""), max_units: v.max_units === "" ? null : v.max_units, sort: Number(v.sort) || 0 }); toast("Tarif gespeichert"); loadAdmin(); }
+      catch (e) { alert(e.message); }
+    },
+  });
+}
+
+function showLegal(k) {
+  const st = auth.settings || {};
+  const title = { impressum: "Impressum", datenschutz: "Datenschutzerklärung", agb: "Allgemeine Geschäftsbedingungen" }[k];
+  dialog({ title, wide: true, body: `<div style="white-space:pre-wrap">${esc(st[k] || "Noch nicht hinterlegt.")}</div>` });
+}
+
 // ---------------------------------------------------------------- Routing & Events
 
 function render() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [route, arg] = hash.split("/");
-  $("#nav").innerHTML = NAV.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
-  const views = { "": viewDashboard, objekte: viewObjects, mieter: viewTenants, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi };
+  const gate = auth.mode === "cloud" && (!auth.user || ui.authTab === "newpw" || auth.profile?.status === "blocked");
+  document.body.classList.toggle("authscreen", gate);
+  if (gate) { $("#view").innerHTML = auth.user && auth.profile?.status === "blocked" && ui.authTab !== "newpw" ? viewBlocked() : viewAuth(); return; }
+  const nav = [...NAV.slice(0, -1), ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡", "Admin"]] : []), NAV[NAV.length - 1]];
+  $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${esc(planOf()?.name || "")}<br><span id="sync">${syncLabel()}</span>` : "Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.";
+  $("#nav").innerHTML = nav.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
+  const views = { "": viewDashboard, objekte: viewObjects, mieter: viewTenants, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
-    $("#view").innerHTML = (views[route] || viewDashboard)();
+    $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
   } catch (e) {
     console.error(e);
@@ -1620,6 +1934,24 @@ function render() {
 
 const actions = {
   newObject: () => editObject(), editObject,
+  logout: async () => { await syncNow(); await Cloud.signOut(); location.hash = "#/"; },
+  authTab: (t) => { ui.authTab = t; ui.authMsg = ""; render(); },
+  legal: showLegal,
+  deleteSelf: async () => {
+    if (prompt("Konto und ALLE Daten endgültig löschen? Zur Bestätigung LÖSCHEN eintippen.") !== "LÖSCHEN") return;
+    try { await Cloud.deleteAccount(null); localStorage.removeItem(`hausops-immo-v1:${auth.user.id}`); await Cloud.signOut(); alert("Dein Konto wurde gelöscht."); }
+    catch (e) { alert("Löschen fehlgeschlagen: " + e.message); }
+  },
+  adminTab: (t) => { ui.adminTab = t; render(); },
+  adminReload: () => loadAdmin(),
+  adminUser: (id) => adminUserDialog(id),
+  adminPlan: (id) => adminPlanDialog(id),
+  adminResetPw: async (email) => { try { await Cloud.resetPassword(email); toast(`Reset-Mail an ${email} gesendet`); } catch (e) { alert(Cloud.friendlyAuthError(e)); } },
+  adminDelete: async (id) => {
+    const u = ui.adminUsers.find((x) => x.id === id);
+    if (prompt(`Konto ${u.email} mit ALLEN Daten und Belegen endgültig löschen? Zur Bestätigung die E-Mail-Adresse eintippen.`) !== u.email) return;
+    try { await Cloud.deleteAccount(id); $("#modal").close(); toast("Konto gelöscht"); loadAdmin(); } catch (e) { alert("Löschen fehlgeschlagen: " + e.message); }
+  },
   openDoc, editDoc, bookDoc, kiDoc: (id) => kiReadDoc(id),
   docFilter: (f) => { ui.docFilter = f; render(); },
   letterReset: () => { ui.letter.body = ""; render(); },
@@ -1630,7 +1962,7 @@ const actions = {
     catch (e) { alert(K.friendlyError(e)); }
     ui.letterBusy = false; render();
   },
-  letterSave: () => { const L = ui.letter; const l = { id: C.uid("l_"), date: today(), contractId: L.contractId, kind: L.kind, subject: L.subject, body: L.body }; state.letters.push(l); S.save(state); location.hash = `#/brief/${l.id}`; },
+  letterSave: () => { const L = ui.letter; const l = { id: C.uid("l_"), date: today(), contractId: L.contractId, kind: L.kind, subject: L.subject, body: L.body }; state.letters.push(l); persist(); location.hash = `#/brief/${l.id}`; },
   letterMail: () => { const L = ui.letter; const c = byId("contracts", L.contractId); const mail = (c?.tenantIds || []).map((x) => byId("tenants", x)?.email).filter(Boolean).join(","); location.href = `mailto:${mail}?subject=${encodeURIComponent(L.subject)}&body=${encodeURIComponent(L.body)}`; },
   letterDel: (id) => { if (confirm("Brief aus dem Archiv löschen?")) { state.letters = state.letters.filter((x) => x.id !== id); commit("Gelöscht"); } },
   kiExample: (q) => kiAsk(q),
@@ -1677,8 +2009,8 @@ const actions = {
   delRule: (k) => { delete state.rules[k]; commit("Regel gelöscht"); },
   backupFull: async () => {
     toast("Sicherung wird erstellt …");
-    const files = await F.allFiles(); const out = {};
-    for (const [id, blob] of Object.entries(files)) out[id] = { type: blob.type, data: await F.blobToBase64(blob) };
+    const out = {};
+    for (const doc of state.documents) { const blob = await getDocBlob(doc.id).catch(() => null); if (blob) out[doc.id] = { type: blob.type, data: await F.blobToBase64(blob) }; }
     download(`hausops-immobilien-sicherung-mit-belegen-${today()}.json`, JSON.stringify({ ...state, _files: out }), "application/json");
   },
   backup: () => download(`hausops-immobilien-sicherung-${today()}.json`, JSON.stringify(state, null, 1), "application/json"),
@@ -1729,6 +2061,7 @@ document.addEventListener("change", async (e) => {
   if (!k) return;
   if (k === "docUpload" || k === "docScan") { await addFiles(e.target.files, { scan: k === "docScan" }); e.target.value = ""; return; }
   if (k === "autoKi") { ui.autoKi = e.target.checked; return; }
+  if (k === "adminSearch") { ui.adminSearch = e.target.value; render(); return; }
   if (k === "attachExpense") { const id = e.target.dataset.id; if (!byId("expenses", id)) return toast("Bitte die Ausgabe zuerst speichern."); $("#modal").close(); await addFiles(e.target.files, { expenseId: id }); editExpense(id); return; }
   if (k === "kiKey") { K.setKey(e.target.value); toast(e.target.value ? "KI-Schlüssel gespeichert (nur auf diesem Gerät)" : "KI-Schlüssel entfernt"); render(); return; }
   const v = e.target.value;
@@ -1747,12 +2080,37 @@ document.addEventListener("change", async (e) => {
       const next = S.importBackup(await file.text());
       const files = next._files || {}; delete next._files;
       if (confirm(`Sicherung mit ${next.objects.length} Objekten, ${next.transactions.length} Umsätzen und ${Object.keys(files).length} Belegdateien einspielen? Aktuelle Daten werden ersetzt.`)) {
-        for (const [id, f] of Object.entries(files)) await F.putFile(id, await F.base64ToBlob(f.data, f.type));
+        for (const [id, f] of Object.entries(files)) await putDocBlob(id, await F.base64ToBlob(f.data, f.type));
         state = next; commit("Sicherung eingespielt");
       }
     } catch (err) { alert(err.message); }
   }
 });
+
+async function handleAccountForm(f, form) {
+  const v = Object.fromEntries(new FormData(form));
+  const btnEl = form.querySelector("button:not([type=button])");
+  if (btnEl) btnEl.disabled = true;
+  try {
+    if (f === "login") { await Cloud.signIn(v.email.trim(), v.password); const s = await Cloud.session(); ui.authMsg = ""; await enterAccount(s.user); }
+    if (f === "register") {
+      if (v.password.length < 8) throw new Error("Das Passwort muss mindestens 8 Zeichen haben.");
+      const r = await Cloud.signUp({ email: v.email.trim(), password: v.password, fullName: v.fullName.trim(), company: (v.company || "").trim() });
+      if (r.session) await enterAccount(r.session.user);
+      else { ui.authTab = "login"; ui.authMsg = "Fast geschafft! Bitte bestätige deine E-Mail-Adresse über den Link in der Mail und melde dich dann an."; render(); }
+    }
+    if (f === "reset") { await Cloud.resetPassword(v.email.trim()); ui.authTab = "login"; ui.authMsg = "Falls ein Konto existiert, ist eine E-Mail mit Link unterwegs."; render(); }
+    if (f === "newpw") { await Cloud.updatePassword(v.password); ui.authTab = "login"; toast("Passwort gespeichert"); const s = await Cloud.session(); if (s) await enterAccount(s.user); else render(); }
+    if (f === "profile") { await Cloud.updateProfile(auth.user.id, { full_name: v.full_name.trim(), company: v.company.trim() }); Object.assign(auth.profile, { full_name: v.full_name.trim(), company: v.company.trim() }); toast("Profil gespeichert"); render(); }
+    if (f === "password") { await Cloud.updatePassword(v.password); form.reset(); toast("Passwort geändert"); }
+    if (f === "appsettings") {
+      await Cloud.saveAppSettings({ product_name: v.product_name, support_email: v.support_email, trial_days: Number(v.trial_days) || 30, registration_open: !!v.registration_open, announcement: v.announcement, impressum: v.impressum, datenschutz: v.datenschutz, agb: v.agb });
+      auth.settings = await Cloud.appSettings(); toast("Einstellungen gespeichert"); render();
+    }
+  } catch (err) {
+    alert(Cloud.friendlyAuthError(err));
+  } finally { if (btnEl) btnEl.disabled = false; }
+}
 
 document.addEventListener("input", (e) => {
   const lf = e.target.dataset?.letter;
@@ -1769,6 +2127,7 @@ document.addEventListener("submit", (e) => {
   if (!f) return;
   e.preventDefault();
   if (f === "ki") { kiAsk(e.target.q.value); return; }
+  if (["login", "register", "reset", "newpw", "profile", "password", "appsettings"].includes(f)) { handleAccountForm(f, e.target); return; }
   const fd = Object.fromEntries(new FormData(e.target));
   const s = state.settings;
   if (f === "owner") Object.assign(s, fd, { invoiceIban: C.normIban(fd.invoiceIban) });
@@ -1793,4 +2152,4 @@ document.addEventListener("submit", (e) => {
 });
 
 window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
-render();
+boot();

@@ -174,3 +174,26 @@ dialog .df .grow { flex: 1; }
   .table-wrap, .card { overflow: visible; }
   a { color: inherit; text-decoration: none; }
 }
+
+/* Anmeldung & Tarife */
+body.authscreen .side { display: none; }
+body.authscreen main { max-width: none; padding: 0; }
+.auth { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+.auth-hero { background: var(--brand); color: #fff; padding: 56px 48px; }
+.auth-hero .logo { padding: 0 0 28px; }
+.auth-hero h1 { font-size: 30px; margin-bottom: 18px; line-height: 1.2; }
+.auth-hero ul { list-style: none; margin-bottom: 28px; }
+.auth-hero li { padding: 6px 0 6px 26px; position: relative; color: #dce8eb; }
+.auth-hero li::before { content: "✓"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+.auth-box { align-self: center; justify-self: center; width: min(440px, calc(100% - 32px)); margin: 32px 16px; }
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.plan { border: 1px solid rgba(255,255,255,.25); border-radius: 10px; padding: 12px; }
+.card .plan, .plans .plan.current { border-color: var(--line); }
+.plan.current { outline: 2px solid var(--brand); }
+.plan .v { font-size: 20px; font-weight: 700; margin: 4px 0; }
+@media (max-width: 900px) {
+  .auth { grid-template-columns: minmax(0, 1fr); }
+  .auth-hero { padding: 28px 20px; }
+  .auth-hero h1 { font-size: 22px; }
+  .auth-box { order: -1; }
+}
