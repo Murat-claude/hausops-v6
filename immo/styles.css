@@ -197,3 +197,18 @@ body.authscreen main { max-width: none; padding: 0; }
   .auth-hero h1 { font-size: 22px; }
   .auth-box { order: -1; }
 }
+
+/* Mieter & Assistent */
+.tl { border-left: 3px solid var(--brand); padding: 6px 12px; margin-bottom: 12px; }
+.sig { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 60px; }
+.sig div { border-top: 1px solid var(--ink); padding-top: 4px; font-size: 12px; }
+.stepper { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.stepper span { padding: 6px 12px; border-radius: 99px; background: #e6eae8; font-size: 13px; color: var(--muted); }
+.stepper span.on { background: var(--brand); color: #fff; }
+.stepper span.done { background: var(--ok-bg); color: var(--ok); }
+.q { padding: 10px 0; border-top: 1px solid var(--line); }
+.card.wiz.off { opacity: .6; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 6px; }
+.cols ul { margin: 4px 0 0 16px; }
+.research { background: #eef4fb; }
+.positions td { font-size: 12px; }

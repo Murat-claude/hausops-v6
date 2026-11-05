@@ -744,9 +744,11 @@ export function nkItemsFromExpenses(state, objectId, from, to) {
     if (e.objectId !== objectId || e.date < from || e.date > to) continue;
     const kind = e.betrkv && e.betrkv !== "keine" ? e.betrkv : map[e.category];
     if (!kind || !BETRKV.some((x) => x[0] === kind)) continue;
+    const amount = typeof e.umlageAmount === "number" ? e.umlageAmount : e.amount; // nur der umlagefähige Anteil
+    if (!amount) continue;
     const def = BETRKV.find((x) => x[0] === kind);
     items[kind] = items[kind] || { kind, label: def[1], amount: 0, key: def[2], pct: 70, shares: {}, umlage: true, expenseIds: [] };
-    items[kind].amount += e.amount;
+    items[kind].amount += amount;
     items[kind].expenseIds.push(e.id);
   }
   return Object.values(items);
@@ -929,4 +931,27 @@ export function taxOpenPoints(state, year) {
   }
   if ((state.units || []).some((u) => u.type === "ferienwohnung")) pts.push("Ferienwohnung: Einordnung gewerblich oder Vermögensverwaltung und Umsatzsteuer (Kleinunternehmer?) mit dem Steuerberater klären; Plattformen melden Umsätze (DAC7).");
   return pts;
+}
+
+// ---------------------------------------------------------------- Zählerstände & Mieterwechsel
+
+export const METER_TYPES = { wasser_kalt: "Wasser kalt (m³)", wasser_warm: "Wasser warm (m³)", heizung: "Heizung (kWh / Einheiten)", strom: "Strom (kWh)", gas: "Gas (m³)", sonstiges: "Sonstiges" };
+
+// Verbrauch einer Einheit im Zeitraum aus den Zählerständen (Ablesung zu Beginn → Ende)
+export function consumptionFor(state, unitId, type, from, to) {
+  const rs = (state.meterReadings || []).filter((r) => r.unitId === unitId && r.type === type && r.date).sort((a, b) => (a.date < b.date ? -1 : 1));
+  if (rs.length < 2) return null;
+  const startR = [...rs].reverse().find((r) => r.date <= from) || rs.find((r) => r.date >= from && r.date <= to);
+  const endR = [...rs].reverse().find((r) => r.date <= addDaysIso(to, 45) && r.date > (startR?.date || ""));
+  if (!startR || !endR) return null;
+  return Math.max(0, Math.round((Number(endR.value) - Number(startR.value)) * 1000) / 1000);
+}
+
+// Prüft einen geplanten Mieterwechsel: Überschneidung oder Leerstand
+export function checkMove(oldContract, moveOutDate, moveInDate) {
+  const warnings = [];
+  if (oldContract && moveOutDate && moveOutDate < oldContract.start) warnings.push("Auszug liegt vor dem Mietbeginn des bisherigen Mieters.");
+  if (moveOutDate && moveInDate && moveInDate <= moveOutDate) warnings.push("Einzug muss nach dem Mietende des Vormieters liegen (sonst doppelte Miete/Nebenkosten).");
+  const gap = moveOutDate && moveInDate ? nightsBetween(moveOutDate, moveInDate) - 1 : 0;
+  return { warnings, vacancyDays: Math.max(0, gap) };
 }

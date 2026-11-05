@@ -249,3 +249,30 @@ test("Miteigentum, Monatstabelle, offene Punkte", () => {
   assert.match(pts, /100 %/);
   assert.match(pts, /AfA/);
 });
+
+import { consumptionFor, checkMove, nkItemsFromExpenses } from "../js/core.js";
+
+test("Verbrauch aus Zählerständen und Mieterwechsel-Prüfung", () => {
+  const s = emptyState();
+  s.meterReadings = [
+    { unitId: "u", type: "wasser_kalt", date: "2024-12-31", value: 100 },
+    { unitId: "u", type: "wasser_kalt", date: "2025-06-30", value: 140 }, // Mieterwechsel
+    { unitId: "u", type: "wasser_kalt", date: "2026-01-03", value: 182.5 },
+  ];
+  assert.equal(consumptionFor(s, "u", "wasser_kalt", "2025-01-01", "2025-12-31"), 82.5);
+  assert.equal(consumptionFor(s, "u", "heizung", "2025-01-01", "2025-12-31"), null);
+  assert.equal(checkMove({ start: "2020-01-01" }, "2025-06-30", "2025-07-01").vacancyDays, 0);
+  assert.equal(checkMove({ start: "2020-01-01" }, "2025-06-30", "2025-08-01").vacancyDays, 31);
+  assert.equal(checkMove({ start: "2020-01-01" }, "2025-06-30", "2025-06-15").warnings.length, 1);
+});
+
+test("Nur der umlagefähige Anteil einer Rechnung geht in die NK-Abrechnung", () => {
+  const s = emptyState();
+  s.expenses = [
+    { id: "e1", objectId: "o", date: "2025-03-01", amount: 120000, category: "erhaltung", betrkv: "hauswart", umlageAmount: 80000 },
+    { id: "e2", objectId: "o", date: "2025-03-01", amount: 50000, category: "erhaltung" }, // Reparatur: nicht umlagefähig
+    { id: "e3", objectId: "o", date: "2025-05-01", amount: 30000, category: "versicherung" },
+  ];
+  const items = nkItemsFromExpenses(s, "o", "2025-01-01", "2025-12-31");
+  assert.deepEqual(items.map((i) => [i.kind, i.amount]).sort(), [["hauswart", 80000], ["versicherung", 30000]]);
+});
