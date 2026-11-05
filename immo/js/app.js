@@ -6,6 +6,7 @@ import * as K from "./ki.js";
 import * as Cloud from "./cloud.js";
 import * as B from "./betrkv.js";
 import * as R from "./recht.js";
+import * as T from "./steuer.js";
 
 let state = S.load();
 const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
@@ -186,6 +187,8 @@ const SPEC = {
     { k: "purchasePrice", l: "Kaufpreis inkl. Nebenkosten (€)", t: "money" },
     { k: "buildingShare", l: "Davon Gebäudeanteil = AfA-Basis (€)", t: "money" },
     { k: "afaRate", l: "AfA-Satz in %", t: "number", step: 0.01, hint: "2 % (Baujahr 1925–2022), 2,5 % (vor 1925), 3 % (ab 2023)" },
+    { k: "aktenzeichen", l: "Aktenzeichen Grundsteuerwert-/Einheitswertbescheid", hint: "Steht im Bescheid des Finanzamts – wird in der Anlage V abgefragt" },
+    { k: "ehegatten", l: "Miteigentümer sind Ehegatten / eingetragene Lebenspartner", t: "checkbox" },
     { k: "kappung15", l: "Gebiet mit Kappungsgrenzen-Verordnung (15 % statt 20 %)", t: "checkbox" },
     { k: "mietpreisbremse", l: "Gebiet mit Mietpreisbremse (§ 556d BGB)", t: "checkbox" },
     { k: "vergleichsmiete", l: "Ortsübliche Vergleichsmiete laut Mietspiegel (€/m²)", t: "money", hint: "Für die Prüfung von Neuvermietung (Mietpreisbremse) und Mieterhöhung" },
@@ -236,6 +239,8 @@ const SPEC = {
     { k: "objectId", l: "Objekt", t: "select", opts: () => objectOpts() },
     { k: "betrkv", l: "Betriebskostenart (für NK-Abrechnung)", t: "select", opts: () => [["", "– automatisch / keine –"], ...C.BETRKV.map(([k, l]) => [k, l])] },
     { k: "umlageAmount", l: "davon umlagefähig (€, leer = ganzer Betrag)", t: "moneyOpt", hint: "z. B. nur Pflege-/Wartungsanteil einer Hausmeister- oder Heizungsrechnung" },
+    { k: "distribute", l: "Erhaltungsaufwand steuerlich verteilen", t: "select", opts: [["1", "sofort im Zahlungsjahr abziehen"], ["2", "auf 2 Jahre verteilen (§ 82b EStDV)"], ["3", "auf 3 Jahre"], ["4", "auf 4 Jahre"], ["5", "auf 5 Jahre"]], hint: "Nur bei Erhaltungsaufwand an Wohngebäuden" },
+    { k: "vorsteuer", l: "darin enthaltene Vorsteuer (€)", t: "moneyOpt", hint: "Nur bei Regelbesteuerung (z. B. Ferienwohnung) – für die Umsatzsteuer-Voranmeldung" },
     { k: "vendor", l: "Empfänger / Firma" }, { k: "belegNr", l: "Belegnummer / Rechnungsnr." },
     { k: "note", l: "Notiz", t: "textarea" },
   ],
@@ -1089,6 +1094,7 @@ function viewTax() {
       ${!s.datevBerater || !s.datevMandant ? `<div class="note warn">Berater- und Mandantennummer fehlen – bitte unter <a href="#/einstellungen">Einstellungen</a> eintragen (bekommst du vom Steuerberater).</div>` : ""}
       ${openTx ? `<div class="note warn">${openTx} Bankumsätze im Zeitraum sind noch nicht zugeordnet und fehlen im Export. <a href="#/bank">Jetzt zuordnen →</a></div>` : ""}
       <div class="toolbar">${btn("datev", "⬇ DATEV-Buchungsstapel (EXTF)", "primary")}${btn("journal", "⬇ Buchungsliste (Excel)")}<a class="btn" href="#/bericht/${from}_${to}">🖨 Bericht drucken</a><a class="btn" href="#/paket/${y}">📦 Jahrespaket ${y} für Steuerberater</a></div>
+      <div class="note" style="margin-top:12px">🧾 <b>Steuererklärung selbst machen:</b> Vorprüfung wie beim Steuerberater, Ausfüllhilfe für Anlage V / V-FeWo mit Kopier-Knöpfen und Schritt-für-Schritt-Abgabe in Mein ELSTER. <a class="btn sm primary" href="#/erklaerung/${y}">Erklärung ${y} vorbereiten →</a></div>
       <p class="small muted" style="margin-top:8px">${rows.length} Buchungssätze · SKR ${s.skr} · Bank ${C.accountsFor(s).bank}. Der Buchungsstapel kann vom Steuerberater direkt in DATEV Rechnungswesen importiert werden (Format EXTF 700). Kontenzuordnung unter Einstellungen anpassbar.</p>
       ${rows.length ? `<details style="margin-top:8px"><summary class="small">Vorschau Buchungssätze</summary><div class="table-wrap"><table><thead><tr><th>Datum</th><th class="num">Betrag</th><th>S/H</th><th>Konto</th><th>Gegenkonto</th><th>Beleg</th><th>Text</th></tr></thead><tbody>
         ${rows.slice(0, 100).map((r) => `<tr><td>${d(r.date)}</td><td class="num">${C.fmtNum(r.amount)}</td><td>${r.sh}</td><td>${r.konto}</td><td>${r.gegen}</td><td class="small">${esc(r.beleg)}</td><td class="small">${esc(r.text)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}
@@ -1340,7 +1346,7 @@ function viewSettings() {
 
 // ---------------------------------------------------------------- Belege & Dokumente
 
-const DOC_KINDS = { beleg: "Rechnung / Beleg", bescheid: "Bescheid (Grundsteuer, Abgaben)", abrechnung: "Versorger-/Jahresabrechnung", vertrag: "Mietvertrag", nachtrag: "Nachtrag / Mieterhöhung / Vereinbarung", protokoll: "Übergabeprotokoll", kaution: "Kaution (Nachweis, Kautionskonto)", selbstauskunft: "Mieterselbstauskunft / Bonität", wohnungsgeber: "Wohnungsgeberbestätigung", kuendigung: "Kündigung", korrespondenz: "Schriftverkehr", foto: "Fotos / Mängel", zaehler: "Zählerstand / Foto", sonstiges: "Sonstiges" };
+const DOC_KINDS = { beleg: "Rechnung / Beleg", bescheid: "Bescheid (Grundsteuer, Abgaben)", abrechnung: "Versorger-/Jahresabrechnung", vertrag: "Mietvertrag", nachtrag: "Nachtrag / Mieterhöhung / Vereinbarung", protokoll: "Übergabeprotokoll", kaution: "Kaution (Nachweis, Kautionskonto)", selbstauskunft: "Mieterselbstauskunft / Bonität", wohnungsgeber: "Wohnungsgeberbestätigung", kuendigung: "Kündigung", korrespondenz: "Schriftverkehr", foto: "Fotos / Mängel", zaehler: "Zählerstand / Foto", zinsbescheinigung: "Zinsbescheinigung (Darlehen)", steuerbescheid: "Steuerbescheid", sonstiges: "Sonstiges" };
 const KI_DOC_KIND = { rechnung: "beleg", bescheid: "bescheid", abrechnung: "abrechnung", vertrag: "vertrag", zaehlerstand: "zaehler", kontoauszug: "sonstiges", sonstiges: "sonstiges" };
 
 async function addFiles(fileList, { scan = false, expenseId = null, meta = null } = {}) {
@@ -2460,6 +2466,106 @@ function addFeed(unitId) {
   });
 }
 
+// ---------------------------------------------------------------- Steuererklärung selbst machen (ELSTER-Ausfüllhilfe)
+
+function copyField(v) { copyText(String(v)); }
+
+function viewTaxReturn(yearArg) {
+  const y = Number(yearArg) || Number(today().slice(0, 4)) - 1;
+  const tab = ui.erklTab || "pruefung";
+  const checks = T.taxChecks(state, y, today());
+  const bad = checks.filter((c) => c.level === "bad").length;
+  const s = state.settings;
+  const deadline = `31.07.${y + 1}`;
+  const row = (label, cents, { up = false, hint = "", zero = false } = {}) => {
+    const v = up ? T.euroUp(cents) : T.euroDown(cents);
+    if (!v && !zero) return "";
+    return `<tr><td>${label}${hint ? `<div class="small muted">${hint}</div>` : ""}</td><td class="num"><b>${v.toLocaleString("de-DE")}</b> €</td><td>${btn("copyVal", "📋", "sm", String(v))}</td></tr>`;
+  };
+  const txt = (label, v) => (v ? `<tr><td>${label}</td><td class="num">${esc(v)}</td><td>${btn("copyVal", "📋", "sm", v)}</td></tr>` : "");
+  const objects = state.objects.map((o) => {
+    const f = T.taxFigures(state, o.id, y);
+    const units = state.units.filter((u) => u.objectId === o.id);
+    const fewo = units.filter((u) => u.type === "ferienwohnung");
+    const onlyFewo = fewo.length && fewo.length === units.length;
+    const owners = C.parseOwners(o.owners);
+    const quote = fewo.length ? T.fewoUsage(state, fewo[0].id, y).costQuote : 1;
+    const wk = (c) => Math.round(c * (onlyFewo ? quote : 1));
+    return { o, f, fewo, onlyFewo, owners, quote, wk };
+  });
+  const tabs = [["pruefung", `1. Vorprüfung${bad ? ` (${bad} ⚠)` : " ✓"}`], ["anlage", "2. Anlage V / V-FeWo"], ["ust", "3. Umsatzsteuer"], ["abgabe", "4. Abgabe in ELSTER"]];
+  const body = {
+    pruefung: `<div class="card"><h2>Vorprüfung ${y}</h2>
+      <p class="small muted" style="margin-bottom:10px">Diese Punkte prüft sonst der Steuerberater. Rote Punkte bitte vor der Abgabe klären, gelbe sind Hinweise und Chancen.</p>
+      ${checks.length ? checks.map((c) => `<div class="note small ${c.level === "bad" ? "warn" : ""}">${c.level === "bad" ? "⛔" : c.level === "warn" ? "⚠️" : "ℹ️"} <b>${esc(c.area)}:</b> ${esc(c.text)} ${c.fix ? `<a href="${c.fix}">beheben →</a>` : ""}</div>`).join("") : '<div class="note">✅ Keine Auffälligkeiten gefunden.</div>'}
+      <h3>Gut zu wissen – häufig vergessene Werbungskosten</h3>
+      <ul class="small" style="margin-left:18px">
+        <li>Fahrten zum Objekt (Besichtigung, Handwerker, Übergabe): 0,30 €/km je gefahrenem Kilometer – als Ausgabe „Fahrtkosten“ erfassen.</li>
+        <li>Kontoführung des Mietkontos, Porto, Telefon, Fachliteratur, Software (auch dieses Programm), Mitgliedsbeitrag Haus & Grund.</li>
+        <li>Finanzierung: Bereitstellungszinsen, Notar/Grundbuch für die Grundschuld (Geldbeschaffungskosten), Disagio.</li>
+        <li>Große Reparaturen an Wohngebäuden kannst du auf 2–5 Jahre verteilen (§ 82b EStDV) – sinnvoll bei schwankendem Einkommen. Einstellbar je Ausgabe.</li>
+        <li>Neubau mit Baubeginn zwischen 1.10.2023 und 30.9.2029: degressive AfA 5 % möglich (§ 7 Abs. 5a EStG); Sonder-AfA § 7b bei Mietwohnungsneubau.</li>
+      </ul></div>`,
+    anlage: `<div class="note small">So geht's: In <b>Mein ELSTER</b> → Formulare → Einkommensteuer ${y} → <b>Anlage V</b> (je Objekt eine) bzw. <b>Anlage V-FeWo</b> für Ferienwohnungen hinzufügen. Feldbezeichnung suchen, Wert mit 📋 kopieren und einfügen. Beträge in vollen Euro: Einnahmen abgerundet, Werbungskosten aufgerundet. Belege nicht mitschicken – nur aufbewahren.</div>
+      ${objects.map(({ o, f, fewo, onlyFewo, owners, quote, wk }) => `<div class="card"><h2>${onlyFewo ? "Anlage V-FeWo" : "Anlage V"} – ${esc(o.name)}</h2>
+        <table class="taxform"><tbody>
+          <tr class="sec"><td colspan="3">Allgemeine Angaben</td></tr>
+          ${txt("Lage des Grundstücks: Straße, Hausnummer", o.street)}${txt("Postleitzahl", o.zip)}${txt("Ort", o.city)}
+          ${txt("Aktenzeichen (Grundsteuerwert-/Einheitswertbescheid)", o.aktenzeichen || "")}
+          ${txt("Angeschafft am", o.purchaseDate ? d(o.purchaseDate) : "")}
+          ${f.flaecheWohnen ? txt("Gesamtwohnfläche (m²)", String(f.flaecheWohnen).replace(".", ",")) : ""}
+          ${owners.length > 1 ? `<tr><td colspan="3" class="small">Miteigentum: ${owners.map((x) => `${esc(x.name)} ${x.share} %`).join(", ")}${o.ehegatten ? " – Gesamtbeträge eintragen, Anteile in der Anlage angeben" : " – <b>Feststellungserklärung nötig</b> (siehe Vorprüfung)"}</td></tr>` : ""}
+          ${onlyFewo ? `<tr><td colspan="3" class="small">Vermietungstage ${T.fewoUsage(state, fewo[0].id, y).rented}, Eigennutzung ${T.fewoUsage(state, fewo[0].id, y).own} Tage, Leerstand ${T.fewoUsage(state, fewo[0].id, y).empty} Tage${quote < 1 ? ` → Werbungskosten zu ${Math.round(quote * 100)} % (bereits unten berücksichtigt)` : ""}</td></tr>` : ""}
+          <tr class="sec"><td colspan="3">Einnahmen</td></tr>
+          ${row(`Mieteinnahmen für Wohnungen (ohne Umlagen)${f.wohnungen ? ` – ${f.wohnungen} Wohnung(en)` : ""}`, f.wohnen)}
+          ${row("Mieteinnahmen für andere Räume / Garagen / Stellplätze / Gewerbe (netto)", f.andere)}
+          ${row(onlyFewo ? "Einnahmen aus der Vermietung der Ferienwohnung (netto, ohne Kurtaxe)" : "Einnahmen Ferienwohnung (netto)", f.fewo)}
+          ${row("Einnahmen aus Umlagen (Nebenkosten-Vorauszahlungen und -Nachzahlungen)", f.umlagen)}
+          ${row("Vereinnahmte Umsatzsteuer", f.ustEingenommen, { hint: "nur bei Regelbesteuerung" })}
+          ${row("Sonstige Einnahmen", f.sonstige)}
+          ${row("davon: Mieten für frühere Jahre (Nachzahlungen)", f.nachzahlungVorjahre, { hint: "nur zur Information – sind oben enthalten (Zuflussprinzip)" })}
+          <tr class="sec"><td colspan="3">Werbungskosten</td></tr>
+          ${row(`Absetzung für Abnutzung (AfA) – linear ${String(o.afaRate || 0).replace(".", ",")} %`, wk(f.afa), { up: true, hint: o.buildingShare ? `Bemessungsgrundlage Gebäude ${eur(o.buildingShare)}` : "" })}
+          ${row("Schuldzinsen (laut Zinsbescheinigung, ohne Tilgung)", wk(f.zinsen), { up: true })}
+          ${row("Erhaltungsaufwendungen, sofort abziehbar", wk(f.erhaltung), { up: true })}
+          ${row(`Erhaltungsaufwendungen – auf mehrere Jahre verteilt (§ 82b EStDV), Anteil ${y}`, wk(f.erhaltungVerteilt), { up: true })}
+          ${row("Grundsteuer, Straßenreinigung, Müll, Wasser, Entwässerung, Heizung, Schornstein, Versicherungen, Hauswart, Treppenreinigung …", wk(f.betrieb), { up: true })}
+          ${row("Verwaltungskosten (Hausverwaltung, Steuerberatung, Software, Bankgebühren)", wk(f.verwaltung), { up: true })}
+          ${row("Sonstige Werbungskosten (Fahrtkosten, Portal-Provisionen, Reinigung FeWo, Hausgeld-Anteile …)", wk(f.sonstigeWk), { up: true })}
+          ${row("An das Finanzamt gezahlte Umsatzsteuer / Vorsteuer", wk(f.vorsteuer), { up: true, hint: "nur bei Regelbesteuerung" })}
+          <tr class="sum"><td>Überschuss / Verlust (zur Kontrolle, ELSTER rechnet selbst)</td><td class="num"><b>${eur(f.einnahmen - (onlyFewo ? Math.round(f.werbungskosten * quote) : f.werbungskosten))}</b></td><td></td></tr>
+        </tbody></table></div>`).join("") || '<div class="card muted">Noch keine Objekte.</div>'}`,
+    ust: (() => {
+      if (s.kleinunternehmer) return `<div class="card"><h2>Umsatzsteuer</h2><p>Du bist als <b>Kleinunternehmer</b> (§ 19 UStG) eingestellt: keine Umsatzsteuer-Voranmeldungen. Prüfe jährlich die Grenzen: Vorjahresumsatz höchstens 25.000 €, laufendes Jahr höchstens 100.000 € (seit 2025). Wohnungsmieten zählen als steuerfreie Umsätze nicht mit.</p></div>`;
+      const q = [1, 2, 3, 4].map((n) => { const m1 = String((n - 1) * 3 + 1).padStart(2, "0"); const m3 = (n - 1) * 3 + 3; return { label: `${n}. Quartal ${y}`, ...T.ustVa(state, `${y}-${m1}-01`, `${y}-${String(m3).padStart(2, "0")}-${C.daysInMonth(`${y}-${String(m3).padStart(2, "0")}`)}`) }; });
+      const yr = T.ustVa(state, `${y}-01-01`, `${y}-12-31`);
+      const kz = (v, label) => `<td class="num">${(v / 100).toLocaleString("de-DE", { minimumFractionDigits: 2 })} ${btn("copyVal", "📋", "sm", (v / 100).toFixed(2).replace(".", ","))}</td>`;
+      return `<div class="card"><h2>Umsatzsteuer-Voranmeldung</h2>
+        <p class="small muted" style="margin-bottom:8px">Für Ferienwohnung (7 %) und separat vermietete Stellplätze (19 %) bei Regelbesteuerung. In Mein ELSTER: Formulare → Umsatzsteuer → <b>Umsatzsteuer-Voranmeldung</b> (monatlich, wenn die Steuer im Vorjahr über 9.000 € lag, sonst vierteljährlich – bei höchstens 2.000 € kann das Finanzamt davon befreien; Abgabe bis zum 10. des Folgemonats). Grundlage: vereinnahmte Entgelte (Ist-Versteuerung). Vorsteuer aus Rechnungen bei den Ausgaben im Feld „Vorsteuer“ erfassen.</p>
+        <div class="table-wrap"><table><thead><tr><th>Zeitraum</th><th class="num">Kz 81 Umsätze 19 % (netto)</th><th class="num">Kz 86 Umsätze 7 % (netto)</th><th class="num">Kz 66 Vorsteuer</th><th class="num">Zahllast / Erstattung</th></tr></thead><tbody>
+          ${q.map((x) => `<tr><td>${x.label}</td>${kz(x.kz81)}${kz(x.kz86)}${kz(x.kz66)}<td class="num ${x.zahllast < 0 ? "pos" : ""}"><b>${eur(x.zahllast)}</b></td></tr>`).join("")}
+        </tbody><tfoot><tr><td>Jahr ${y} (Umsatzsteuererklärung)</td>${kz(yr.kz81)}${kz(yr.kz86)}${kz(yr.kz66)}<td class="num">${eur(yr.zahllast)}</td></tr></tfoot></table></div>
+        <p class="small muted" style="margin-top:6px">Die Kennzahlen (Kz) sind die der Umsatzsteuer-Voranmeldung; in ELSTER bitte anhand der Bezeichnung kontrollieren.</p></div>`;
+    })(),
+    abgabe: `<div class="card"><h2>So gibst du die Erklärung ${y} selbst ab</h2>
+      <ol class="steps">
+        <li><b>ELSTER-Konto anlegen</b> (einmalig, kostenlos) auf <a href="https://www.elster.de" target="_blank" rel="noopener">elster.de</a> → „Benutzerkonto erstellen“ mit Zertifikatsdatei. Die Aktivierungsdaten kommen per Brief – <b>rund 2 Wochen</b> einplanen.</li>
+        <li><b>Frist:</b> ohne Steuerberater in der Regel bis <b>${deadline}</b>. Wer Verluste geltend machen will oder eine Erstattung erwartet, kann auch freiwillig bis zu 4 Jahre rückwirkend abgeben.</li>
+        <li>In Mein ELSTER → <b>Formulare & Leistungen → Einkommensteuer ${y}</b>. Tipp: „Belegabruf“ aktivieren – Lohn-, Renten- und Versicherungsdaten werden dann automatisch übernommen.</li>
+        <li>Hauptvordruck und deine übrigen Anlagen (z. B. N, Vorsorgeaufwand, Kind) ausfüllen – das ist unabhängig von der Vermietung.</li>
+        <li>Je Objekt eine <b>Anlage V</b> (Ferienwohnung: <b>Anlage V-FeWo</b>) hinzufügen und die Werte aus Schritt 2 übertragen (📋 kopieren).</li>
+        <li>„<b>Prüfen</b>“ klicken – ELSTER zeigt Fehler und Hinweise. Danach „Absenden“. Belege nicht mitschicken, aber aufbewahren (8 Jahre).</li>
+        <li><b>Bescheid prüfen:</b> Er kommt nach einigen Wochen. Mit der App vergleichen; bei Abweichungen innerhalb eines Monats Einspruch einlegen (geht auch über ELSTER).</li>
+        ${!s.kleinunternehmer ? `<li><b>Umsatzsteuer:</b> Voranmeldungen laufend, dazu jährlich die Umsatzsteuererklärung (Schritt 3).</li>` : ""}
+      </ol>
+      <div class="note small">Wann sich der Steuerberater trotzdem lohnt: Miteigentum ohne Ehe (Feststellungserklärung), gewerbliche Ferienvermietung, Verkauf einer Immobilie innerhalb von 10 Jahren, große Sanierung nach dem Kauf (15-%-Grenze) oder Kaufpreisaufteilung, die das Finanzamt anzweifelt. Für den Rest bereitet die App alles so vor, dass du es sicher selbst kannst.</div>
+      <p class="small muted">Keine Steuerberatung: Die App rechnet mit deinen erfassten Daten und weist auf typische Fehler hin. Für die Richtigkeit der Angaben bist du selbst verantwortlich.</p></div>`,
+  }[tab];
+  return head(`Steuererklärung ${y} selbst machen`, "Ausfüllhilfe für Mein ELSTER – Anlage V, Anlage V-FeWo, Umsatzsteuer", btn("erklYear", `‹ ${y - 1}`, "", y - 1) + btn("erklYear", `${y + 1} ›`, "", y + 1) + `<button class="btn primary" onclick="window.print()">🖨 Ausfüllhilfe drucken</button>`) + `
+    <div class="tabs noprint">${tabs.map(([k, l]) => `<button data-act="erklTab" data-id="${k}" class="${tab === k ? "active" : ""}">${l}</button>`).join("")}</div>
+    ${body}`;
+}
+
 // ---------------------------------------------------------------- Konten, Cloud-Sync & Admin
 
 const auth = { mode: "local", user: null, profile: null, settings: null, plans: [], version: 0, sync: "ok", syncTimer: null, pending: false };
@@ -2894,8 +3000,8 @@ function render() {
   setTimeout(setSyncBadge, 0);
   if (!$("#gsearch")) $("#nav").insertAdjacentHTML("beforebegin", `<input id="gsearch" type="search" placeholder="🔎 Suchen … ( / )" autocomplete="off">`);
   if (route === "mieter" && arg && ui.folderTenant !== arg) { ui.folderTenant = arg; ui.folderTab = ui.nextFolderTab || "ueberblick"; ui.nextFolderTab = null; }
-  $("#nav").innerHTML = nav.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") || (r === "mieter" && ["protokoll", "auskunft"].includes(route)) || (r === "nebenkosten" && route === "nkassistent") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
-  const views = { "": viewDashboard, objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
+  $("#nav").innerHTML = nav.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket", "erklaerung"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") || (r === "mieter" && ["protokoll", "auskunft"].includes(route)) || (r === "nebenkosten" && route === "nkassistent") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
+  const views = { "": viewDashboard, objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
     $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
@@ -2908,6 +3014,9 @@ function render() {
 const actions = {
   newObject: () => editObject(), editObject,
   moveWizard: (unitId) => moveWizard(unitId || null),
+  erklTab: (t) => { ui.erklTab = t; render(); },
+  erklYear: (y) => { location.hash = `#/erklaerung/${y}`; },
+  copyVal: (v) => copyField(v),
   syncNow: () => syncAll(),
   connectBank: () => connectBank(),
   unlinkBank: (id) => { const a = byId("accounts", id); if (!confirm(`Live-Verbindung für „${a.name}“ trennen? Bereits abgerufene Umsätze bleiben erhalten. Die Freigabe kannst du zusätzlich im Online-Banking widerrufen.`)) return; delete a.eb; commit("Live-Verbindung getrennt"); },

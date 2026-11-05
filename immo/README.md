@@ -88,6 +88,30 @@ Getestet: Signaturprüfung, Formularkodierung und die Abbildung aller Abo-Ereign
 - Rechtliches: Impressum, Datenschutzerklärung mit Auftragsverarbeitung (Supabase, Netlify, Anthropic), AGB, AV-Vertrag für Kunden.
 - Eigene Domain und Branding (Produktname ist im Admin-Bereich einstellbar).
 
+## Steuererklärung selbst machen (ohne Steuerberater)
+
+Unter **Steuer & DATEV → „Erklärung vorbereiten“** (bzw. `#/erklaerung/<Jahr>`):
+
+1. **Vorprüfung** – was sonst der Steuerberater prüft:
+   - nicht zugeordnete Bankumsätze, Ausgaben ohne Objekt oder Beleg, fehlende Zinsbescheinigung
+   - fehlende AfA-Daten
+   - **15-%-Grenze** für anschaffungsnahe Aufwendungen in den ersten 3 Jahren nach dem Kauf, mit Frühwarnung
+   - als Herstellung erfasste Ausgaben
+   - **verbilligte Vermietung** (unter 66 % bzw. 50 % der ortsüblichen Warmmiete)
+   - **Eigennutzung der Ferienwohnung** (Kosten anteilig) und geringe Auslastung
+   - **Miteigentum ohne Ehe** (Feststellungserklärung ESt 1 B nötig)
+   - Umsatzsteuerpflicht
+   - Liste oft vergessener Werbungskosten
+2. **Ausfüllhilfe Anlage V / Anlage V-FeWo** je Objekt, nach den Feldbezeichnungen in Mein ELSTER (Zeilennummern ändern sich jährlich):
+   - Lage, Aktenzeichen, Anschaffung, Wohnfläche, Miteigentum
+   - Einnahmen: Wohnungen, andere Räume/Garagen, Ferienwohnung, Umlagen, vereinnahmte USt
+   - Werbungskosten: AfA, Schuldzinsen, Erhaltung (sofort bzw. **auf 2–5 Jahre verteilt nach § 82b EStDV**, je Ausgabe einstellbar), Betriebskosten, Verwaltung, Sonstiges, Vorsteuer
+   - Jeder Wert mit 📋-Knopf in vollen Euro, Einnahmen abgerundet und Werbungskosten aufgerundet, dazu Ausdruck als PDF
+3. **Umsatzsteuer:** Kennzahlen 81/86/66 der Voranmeldung je Quartal und Jahr (Ist-Versteuerung). Vorsteuer kann je Ausgabe erfasst werden. Für Kleinunternehmer gibt es die Grenzen ab 2025.
+4. **Abgabe in Mein ELSTER Schritt für Schritt:** Konto (Aktivierungsbrief ca. 2 Wochen), Frist (in der Regel 31. Juli des Folgejahres), Belegabruf, Anlagen, Prüfen und Absenden, Bescheid prüfen und ggf. Einspruch (1 Monat).
+
+Die Abgabe erfolgt über das kostenlose Portal Mein ELSTER. Eine Direktübermittlung aus der App würde eine Registrierung als ELSTER-Softwarehersteller und die zertifizierte ERiC-Bibliothek auf einem eigenen Server erfordern (möglicher späterer Ausbau für den Verkauf). Keine Steuerberatung: In Sonderfällen (Feststellungserklärung, gewerbliche Ferienvermietung, Verkauf innerhalb von 10 Jahren, große Sanierung nach dem Kauf) bleibt der Steuerberater sinnvoll.
+
 ## Live-Synchronisation: Bank, Smoobu, Airbnb & Booking.com
 
 Die App ruft **beim Öffnen, danach alle 15 Minuten und beim Zurückkehren in die App** automatisch ab:

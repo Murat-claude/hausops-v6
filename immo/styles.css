@@ -235,3 +235,9 @@ body.authscreen main { max-width: none; padding: 0; }
 .channel { border-top: 1px solid var(--line); padding: 10px 0; }
 .channel code { font-size: 11px; word-break: break-all; background: #f4f6f5; padding: 1px 4px; border-radius: 4px; }
 #livesync { color: #c8d8dc; }
+
+/* Steuererklärung */
+.taxform td { padding: 7px 8px; }
+.taxform tr.sec td { background: var(--soft); font-weight: 700; color: var(--brand); }
+.taxform tr.sum td { border-top: 2px solid var(--ink); }
+ol.steps { margin-left: 20px; } ol.steps li { margin-bottom: 10px; }

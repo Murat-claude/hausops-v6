@@ -478,11 +478,15 @@ export function anlageV(state, year) {
     }
   }
   for (const e of state.expenses || []) {
-    if (!inYear(e.date, year)) continue;
     const cat = EXPENSE_CATEGORIES[e.category];
     if (!cat || !cat.av) continue;
+    // Erhaltungsaufwand kann auf 2–5 Jahre verteilt werden (§ 82b EStDV)
+    const n = cat.av === "erhaltung" ? Math.min(5, Math.max(1, Number(e.distribute) || 1)) : 1;
+    const start = Number(e.date.slice(0, 4));
+    if (year < start || year >= start + n) continue;
+    const part = n === 1 ? e.amount : year === start + n - 1 ? e.amount - Math.floor(e.amount / n) * (n - 1) : Math.floor(e.amount / n);
     const r = byId[e.objectId ?? "_"] || byId._;
-    r.costs[cat.av] += e.amount;
+    r.costs[cat.av] += part;
   }
   for (const o of state.objects || []) byId[o.id].costs.afa += afaForYear(o, year);
   for (const r of result) {
