@@ -2287,8 +2287,8 @@ function viewTenants() {
         <td class="small">${n ? `<a href="#/mieter/${n.tenantIds[0]}">${esc(tenantNames(n))}</a><br>ab ${d(n.start)}` : ""}</td>
         <td class="nowrap">${c && !c.end ? btn("moveWizard", "Mieterwechsel / Auszug", "sm", u.id) : !c && !n ? btn("moveWizard", "Neuen Mieter eintragen", "sm primary", u.id) : ""}</td></tr>`; }).join("") || '<tr><td colspan="6" class="muted">Noch keine Einheiten.</td></tr>'}
     </tbody></table></div></div>` : ""}
-    ${vacant.length && filter !== "belegung" ? `<div class="note">Frei: ${vacant.map((u) => `${esc(unitLabel(u))} ${btn("moveWizard", "vermieten", "sm link", u.id)}`).join(" · ")}</div>` : ""}
-    <div class="folders" ${filter === "belegung" ? 'style="display:none"' : ""}>${list.map(({ t, c, status, back, miss, defects }) => { const u = c && byId("units", c.unitId); const r = c ? C.rentForMonth(c, C.monthKey(today())) : null;
+    ${filter !== "belegung" ? tenantsOverviewHtml(all, vacant, list.length) : ""}
+    <div class="folders" ${filter === "belegung" || !all.length ? 'style="display:none"' : ""}>${list.map(({ t, c, status, back, miss, defects }) => { const u = c && byId("units", c.unitId); const r = c ? C.rentForMonth(c, C.monthKey(today())) : null;
       return `<a class="folder" href="#/mieter/${t.id}">
         <div class="tab">${esc(u ? `${C.UNIT_TYPES[u.type]} · ${u.name}` : "–")}</div>
         <div class="fhead"><b>${esc(t.name)}</b> ${badge[status]}</div>
@@ -2296,7 +2296,29 @@ function viewTenants() {
         <div class="small">${c ? `seit ${d(c.start)}${c.end ? ` · bis ${d(c.end)}` : ""}` : ""}${r ? ` · ${eur(r.total)} warm` : ""}</div>
         <div class="fbadges">${back > 0 ? `<span class="badge bad">Rückstand ${eur(back)}</span>` : c && status !== "ehemalig" ? '<span class="badge ok">Miete ok</span>' : ""}
           ${defects ? `<span class="badge warn">🔧 ${defects} Mangel</span>` : ""}${miss ? `<span class="badge warn">📁 ${miss} fehlt</span>` : c ? '<span class="badge ok">📁 vollständig</span>' : ""}</div>
-      </a>`; }).join("") || '<p class="muted">Keine Mieter gefunden.</p>'}</div>`;
+      </a>`; }).join("") || '<p class="muted">Keine Mieter in dieser Ansicht.</p>'}</div>`;
+}
+
+const UNIT_ICON = { wohnung: "🏠", haus: "🏡", gewerbe: "🏢", garage: "🚗", stellplatz: "🅿️", carport: "🅿️", keller: "📦", lager: "📦", ferienwohnung: "🏖️", sonstiges: "🔑" };
+
+// Kopf der Mieterseite: Kennzahlen, Start ohne Mieter, freie Einheiten als Kacheln je Objekt
+function tenantsOverviewHtml(all, vacant, shown) {
+  const units = rentableUnits(), key = C.monthKey(today());
+  const active = all.filter((x) => ["aktiv", "gekuendigt"].includes(x.status));
+  const rentSum = sum(active, (x) => (x.c ? C.rentForMonth(x.c, key).total : 0));
+  const backSum = sum(active, (x) => Math.max(0, x.back));
+  const stats = all.length ? `<div class="bigstats four"><div><b>${active.length}</b><span>vermietet</span></div><div><b>${vacant.length}</b><span>frei</span></div><div><b>${eur(rentSum)}</b><span>Miete pro Monat (warm)</span></div><div><b class="${backSum ? "neg" : ""}">${eur(backSum)}</b><span>Rückstand</span></div></div>` : "";
+  const start = !all.length ? `<div class="card empty-start"><div class="big">👥</div><h2>Noch keine Mieter eingetragen</h2>
+      <p class="muted">Lege deinen ersten Mieter an – mit Einzugsdatum, Miete und Kaution. Den Mietvertrag kannst du danach einfach fotografieren und ablegen.</p>
+      <div class="toolbar" style="justify-content:center;margin-top:12px">${btn("moveWizard", "+ Ersten Mieter eintragen", "primary", "")}</div></div>` : "";
+  if (!vacant.length) return stats + start;
+  const byObj = new Map();
+  for (const u of vacant) { if (!byObj.has(u.objectId)) byObj.set(u.objectId, []); byObj.get(u.objectId).push(u); }
+  const tile = (u) => `<button class="unit-tile" data-act="moveWizard" data-id="${u.id}" title="Mieter für ${esc(u.name)} eintragen">
+      <span class="ut-ic">${UNIT_ICON[u.type] || "🔑"}</span><span class="ut-tx"><b>${esc(u.name)}</b><small>${esc(C.UNIT_TYPES[u.type] || "")}${u.area ? ` · ${String(u.area).replace(".", ",")} m²` : ""}</small></span><span class="ut-go">+ Mieter</span></button>`;
+  const groups = [...byObj.entries()].map(([oid, us]) => `<div class="ut-group"><div class="ut-obj">🏘️ ${esc(byId("objects", oid)?.name || "Objekt")} <span class="muted small">· ${us.length} frei</span></div><div class="unit-tiles">${us.map(tile).join("")}</div></div>`).join("");
+  const open = !all.length || vacant.length <= 6 || ui.vacantOpen;
+  return stats + start + `<details class="card vacant" ${open ? "open" : ""} data-vacant><summary><h2 style="display:inline">🔓 Freie Einheiten <span class="badge warn">${vacant.length}</span></h2> <span class="small muted">– antippen, um einen Mieter einzutragen</span></summary>${groups}</details>`;
 }
 
 function viewTenant(id) {
@@ -4900,3 +4922,4 @@ window.addEventListener("hashchange", () => {
   render(); window.scrollTo(0, 0);
 });
 boot();
+document.addEventListener("toggle", (e) => { if (e.target?.matches?.("details[data-vacant]")) ui.vacantOpen = e.target.open; }, true);
