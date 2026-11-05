@@ -15,6 +15,9 @@ test("Rechnungsmail: Absendername, Antwortadresse, Kopie, PDF-Anhang", () => {
 test("Rechnungsmail: ungültige Empfänger und Anhänge werden abgelehnt", () => {
   assert.throws(() => buildMail({ to: "a@b.de, c@d.de", subject: "x" }, { mailFrom: "x@y.de" }), /Empfänger/);
   assert.throws(() => buildMail({ to: "a@b.de", subject: "x", attachment: { filename: "x.exe", content: "AAAA" } }, { mailFrom: "x@y.de" }), /PDF/);
+  const multi = buildMail({ to: "stb@kanzlei.de", subject: "Monatsbericht", attachments: [{ filename: "Bericht.pdf", content: "JVBERi0=" }, { filename: "Tabelle.csv", content: "QUJD" }, { filename: "EXTF.csv", content: "QUJD" }] }, { mailFrom: "x@y.de" });
+  assert.equal(multi.attachments.length, 3);
+  assert.throws(() => buildMail({ to: "a@b.de", subject: "x", attachments: Array.from({ length: 6 }, () => ({ filename: "a.pdf", content: "AAAA" })) }, { mailFrom: "x@y.de" }), /5 Anhänge/);
   assert.throws(() => buildMail({ to: "a@b.de", subject: "x", attachment: { filename: "x.pdf", content: "A".repeat(6e6) } }, { mailFrom: "x@y.de" }), /groß/);
   assert.equal(fromHeader("x@y.de", ""), "x@y.de");
 });

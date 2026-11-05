@@ -120,3 +120,59 @@ export function invoicePdfDoc(m) {
 
 export const invoicePdf = (m) => invoicePdfDoc(m).output("blob");
 export const invoicePdfBytes = (m) => new Uint8Array(invoicePdfDoc(m).output("arraybuffer"));
+
+// ---------------------------------------------------------------- Berichte (z. B. Monatsbericht für den Steuerberater), A4 quer
+// model: { title, subtitle, author, summary: [[label, value, bold?]], sections: [{ heading, note?, cols: [{ label, w, align? }], rows: [[...]], total?: [...] }], footer }
+export function reportPdfDoc(m) {
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape", compress: true });
+  doc.setProperties({ title: pdfSafe(m.title), author: pdfSafe(m.author || ""), creator: "Homevio" });
+  const L = 14, R = 283, BOTTOM = 196;
+  const grey = [110, 110, 110], dark = [25, 25, 25];
+  const font = (size, style = "normal", color = dark) => { doc.setFont("helvetica", style); doc.setFontSize(size); doc.setTextColor(...color); };
+  const text = (t, x, y, opt) => doc.text(pdfSafe(t), x, y, opt);
+  let y = 18;
+  font(16, "bold"); text(m.title, L, y); y += 6;
+  font(9.5, "normal", grey); text(m.subtitle || "", L, y); y += 8;
+  // Zusammenfassung in zwei Spalten
+  if (m.summary?.length) {
+    const half = Math.ceil(m.summary.length / 2);
+    m.summary.forEach(([k, v, bold], i) => {
+      const col = i < half ? 0 : 1, row = i < half ? i : i - half;
+      const x = L + col * 135, yy = y + row * 5.4;
+      font(9.5, bold ? "bold" : "normal"); text(k, x, yy); text(v, x + 120, yy, { align: "right" });
+    });
+    y += half * 5.4 + 6;
+  }
+  const newPage = () => { doc.addPage(); y = 16; };
+  for (const s of m.sections || []) {
+    if (y + 22 > BOTTOM) newPage();
+    font(11.5, "bold"); text(s.heading, L, y); y += 5;
+    if (s.note) { font(8, "normal", grey); for (const part of doc.splitTextToSize(pdfSafe(s.note), R - L)) { text(part, L, y); y += 3.8; } y += 1; }
+    const total = s.cols.reduce((a, c) => a + c.w, 0), scale = (R - L) / total;
+    const xs = []; let x = L; for (const c of s.cols) { xs.push(x); x += c.w * scale; }
+    const head = () => {
+      doc.setFillColor(31, 78, 95); doc.rect(L, y - 4, R - L, 6, "F");
+      font(8, "bold", [255, 255, 255]);
+      s.cols.forEach((c, i) => text(c.label, c.align === "right" ? xs[i] + c.w * scale - 1.5 : xs[i] + 1.5, y, { align: c.align === "right" ? "right" : "left" }));
+      y += 5.5;
+    };
+    if (!s.rows.length) { font(8.5, "normal", grey); text("– keine Einträge –", L, y); y += 7; continue; }
+    head();
+    const drawRow = (row, bold) => {
+      const cells = row.map((v, i) => doc.splitTextToSize(pdfSafe(v ?? ""), s.cols[i].w * scale - 3));
+      const h = Math.max(...cells.map((c) => c.length)) * 3.8 + 1.6;
+      if (y + h > BOTTOM) { newPage(); head(); }
+      font(8.3, bold ? "bold" : "normal");
+      cells.forEach((lines, i) => lines.forEach((ln, li) => text(ln, s.cols[i].align === "right" ? xs[i] + s.cols[i].w * scale - 1.5 : xs[i] + 1.5, y + li * 3.8, { align: s.cols[i].align === "right" ? "right" : "left" })));
+      y += h; doc.setDrawColor(225); doc.line(L, y - 3, R, y - 3);
+    };
+    s.rows.forEach((r) => drawRow(r, false));
+    if (s.total) drawRow(s.total, true);
+    y += 5;
+  }
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) { doc.setPage(i); font(7.5, "normal", grey); text(m.footer || "", L, 204); text(`Seite ${i} von ${pages}`, R, 204, { align: "right" }); }
+  return doc;
+}
+export const reportPdf = (m) => reportPdfDoc(m).output("blob");
+export const reportPdfBytes = (m) => new Uint8Array(reportPdfDoc(m).output("arraybuffer"));

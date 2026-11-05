@@ -21,14 +21,21 @@ function buildMail(body, { mailFrom }) {
   const msg = { from: fromHeader(mailFrom, b.fromName), to: [to], subject, text };
   if (bcc && EMAIL.test(bcc)) msg.bcc = [bcc];
   if (replyTo && EMAIL.test(replyTo)) msg.reply_to = replyTo;
-  if (b.attachment) {
-    const content = String(b.attachment.content || "");
+  // Anhänge: PDF (Rechnungen, Berichte) und CSV (Excel-Tabelle, DATEV-Buchungsstapel), max. 5 Dateien, zusammen max. 4 MB
+  const list = Array.isArray(b.attachments) ? b.attachments : b.attachment ? [b.attachment] : [];
+  if (list.length > 5) throw Object.assign(new Error("Höchstens 5 Anhänge."), { status: 400 });
+  let bytes = 0;
+  const atts = [];
+  for (const a of list) {
+    const content = String(a?.content || "");
     if (!/^[A-Za-z0-9+/=\s]+$/.test(content)) throw Object.assign(new Error("Anhang ungültig."), { status: 400 });
-    if (content.length * 0.75 > MAX_PDF_BYTES) throw Object.assign(new Error("Anhang zu groß (max. 4 MB)."), { status: 413 });
-    const filename = String(b.attachment.filename || "Rechnung.pdf").replace(/[\\/:*?"<>|\r\n]+/g, "_").slice(0, 120);
-    if (!/\.pdf$/i.test(filename)) throw Object.assign(new Error("Nur PDF-Anhänge erlaubt."), { status: 400 });
-    msg.attachments = [{ filename, content: content.replace(/\s+/g, "") }];
+    bytes += content.length * 0.75;
+    const filename = String(a.filename || "Anhang.pdf").replace(/[\\/:*?"<>|\r\n]+/g, "_").slice(0, 120);
+    if (!/\.(pdf|csv)$/i.test(filename)) throw Object.assign(new Error("Nur PDF- oder CSV-Anhänge erlaubt."), { status: 400 });
+    atts.push({ filename, content: content.replace(/\s+/g, "") });
   }
+  if (bytes > MAX_PDF_BYTES) throw Object.assign(new Error("Anhang zu groß (max. 4 MB)."), { status: 413 });
+  if (atts.length) msg.attachments = atts;
   return msg;
 }
 

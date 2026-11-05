@@ -8,6 +8,7 @@ import * as B from "./betrkv.js";
 import * as R from "./recht.js";
 import * as T from "./steuer.js";
 import * as I from "./instand.js";
+import * as M from "./monat.js";
 
 let state = S.load();
 const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
@@ -1343,6 +1344,7 @@ function viewTax() {
   const incomeRows = [["kalt", "Mieteinnahmen (Kaltmiete, Zuschläge)"], ["umlage", "Umlagen / Nebenkosten-Vorauszahlungen und -Nachzahlungen"], ["fewo", "Einnahmen Ferienwohnung (netto)"], ["sonstige", "Sonstige Einnahmen"]];
   const col = (r, fn) => av.map((x) => `<td class="num">${eur(fn(x))}</td>`).join("") + (av.length > 1 ? `<td class="num"><b>${eur(sum(av, fn))}</b></td>` : "");
   return head("Steuer & DATEV", "Anlage V, DATEV-Export und Monatspaket für den Steuerberater", btn("year", "‹ " + (y - 1), "", y - 1) + `<b style="padding:0 6px">${y}</b>` + btn("year", (y + 1) + " ›", "", y + 1)) + `
+    <div class="card noprint"><h2>📬 Monatsbericht für den Steuerberater</h2><p class="small muted" style="margin-bottom:8px">Alle Mieteinnahmen und alle Ferienwohnungs-Einnahmen eines Monats als PDF, Excel-Tabelle und DATEV-Datei – mit einem Klick an deinen Steuerberater.</p><a class="btn primary" href="#/monat/${C.addMonths(C.monthKey(today()), -1)}">Monatsbericht öffnen</a></div>
     <div class="card noprint"><h2>DATEV-Export & Steuerberater-Paket</h2>
       <div class="inline" style="margin-bottom:10px">
         <label class="small">von <input type="date" value="${from}" data-change="datevFrom"></label>
@@ -1579,6 +1581,8 @@ function viewSettings() {
     <form class="card" data-form="datev"><h2>DATEV & Kontenrahmen</h2><div class="fgrid">
       <label class="f"><span>Kontenrahmen</span><select name="skr">${opt([["03", "SKR 03"], ["04", "SKR 04"]], skr)}</select></label>
       <label class="f"><span>Sachkontenlänge</span><input type="number" name="datevKontenlaenge" value="${esc(s.datevKontenlaenge || 4)}"></label>
+      <label class="f"><span>Steuerberater / Kanzlei</span><input name="taxAdvisorName" value="${esc(s.taxAdvisorName || "")}" placeholder="z. B. Kanzlei Müller"></label>
+      <label class="f"><span>E-Mail des Steuerberaters (für den Monatsbericht)</span><input name="taxAdvisorEmail" type="email" value="${esc(s.taxAdvisorEmail || "")}"></label>
       <label class="f"><span>Beraternummer</span><input name="datevBerater" value="${esc(s.datevBerater || "")}"></label>
       <label class="f"><span>Mandantennummer</span><input name="datevMandant" value="${esc(s.datevMandant || "")}"></label>
       <label class="f"><span>Mietabgleich (Soll/Ist) ab Monat</span><input type="month" name="sollStart" value="${esc(s.sollStart || "")}"></label>
@@ -2839,7 +2843,7 @@ function navGroups() {
     ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["instand", "🔧", "Reparaturen"], ...(isCloud() ? [["portal", "🔑", `Mieterportal${portalUnread() ? ` (${portalUnread()})` : ""}`]] : []), ["briefe", "✉️", "Briefe"]]],
     ["Geld & Belege", [["bank", "🏦", "Konto & Zahlungen"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📷", "Belege & Dokumente"]]],
     ...(hasFewo ? [["Ferienwohnung", [["ferien", "🏖️", "Belegung & Buchungen"], ["rechnungen", "🧾", "Gäste-Rechnungen"]]]] : []),
-    ["Steuer", [["erklaerung", "🧮", "Steuererklärung"], ["steuer", "📊", "Anlage V & DATEV"]]],
+    ["Steuer", [["erklaerung", "🧮", "Steuererklärung"], ["monat", "📬", "Monatsbericht StB"], ["steuer", "📊", "Anlage V & DATEV"]]],
     ["Mehr", [["ki", "✨", "KI-Assistent"], ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡️", "Admin"]] : []), ["einstellungen", "⚙️", "Einstellungen"]]],
   ];
 }
@@ -2919,6 +2923,8 @@ function buildTodos() {
   if (newRep) t.push({ ic: "🔧", text: `${newRep} gemeldete Reparatur${newRep > 1 ? "en" : ""} noch nicht beauftragt`, btn: `<a class="btn sm" href="#/instand">Ansehen</a>` });
   for (const m of I.maintenanceDue(state, today()).slice(0, 3)) t.push({ ic: "🛠", text: `Wartung ${m.overdue ? "überfällig" : "fällig"}: ${esc(m.title)} – ${esc(byId("objects", m.objectId)?.name || "")} (${d(m.due)})`, btn: btnRaw("maintDone", "✓ Erledigt", m.id) });
   if (isCloud() && portalUnread()) t.push({ ic: "🔑", text: `${portalUnread()} neue Meldung${portalUnread() > 1 ? "en" : ""} im Mieterportal`, btn: `<a class="btn sm primary" href="#/portal">Ansehen</a>` });
+  { const prev = C.addMonths(C.monthKey(today()), -1), day = Number(today().slice(8, 10));
+    if (day <= 15 && (state.contracts.length || state.bookings.length) && !(state.settings.monthReports || {})[prev]?.sentAt) t.push({ ic: "📬", text: `Monatsbericht ${C.fmtMonth(prev)} an den Steuerberater senden`, btn: `<a class="btn sm primary" href="#/monat/${prev}">Ansehen & senden</a>` }); }
   const inbox = state.documents.filter((x) => x.status === "neu").length;
   if (inbox) t.push({ ic: "📷", text: `${inbox} Beleg${inbox > 1 ? "e" : ""} im Eingang – buchen`, btn: `<a class="btn sm primary" href="#/dokumente">Buchen</a>` });
   const drafts = state.invoices.filter((i) => i.status === "entwurf").length;
@@ -4080,6 +4086,144 @@ async function handlePortalInvites() {
   auth.portals = (await Cloud.myPortals().catch(() => [])) || [];
 }
 
+// ---------------------------------------------------------------- Monatsbericht für den Steuerberater
+
+const eurS = (c) => eur(c || 0);
+const monthTitle = (key) => `${C.MONTHS_DE[Number(key.slice(5, 7)) - 1]} ${key.slice(0, 4)}`;
+
+function viewMonthReport(arg) {
+  const key = /^\d{4}-\d{2}$/.test(arg || "") ? arg : C.addMonths(C.monthKey(today()), -1);
+  const r = M.monthReport(state, key), t = r.totals, s = state.settings;
+  const sent = (s.monthReports || {})[key];
+  const hasFewo = r.invoices.length || r.bookings.length || r.fewoPayments.length;
+  const table = (head, rows, foot) => `<div class="table-wrap"><table><thead><tr>${head.map((h) => `<th${h.endsWith("€") ? ' class="num"' : ""}>${h.replace(" €", "")}</th>`).join("")}</tr></thead><tbody>${rows.join("") || `<tr><td colspan="${head.length}" class="muted">Keine Einträge</td></tr>`}</tbody>${foot ? `<tfoot><tr>${foot}</tr></tfoot>` : ""}</table></div>`;
+  return head("Monatsbericht für den Steuerberater", `${monthTitle(key)} · Mieten und Ferienwohnung komplett`,
+    btn("monthNav", "‹", "", C.addMonths(key, -1)) + `<input type="month" value="${key}" data-change="monthReportKey" style="width:auto">` + btn("monthNav", "›", "", C.addMonths(key, 1))) + `
+    ${sent?.sentAt ? `<div class="note small">✅ Gesendet am ${new Date(sent.sentAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })} an ${esc(sent.to || "")}${sent.via !== "email" ? " (eigenes Mail-Programm)" : ""}</div>` : ""}
+    <div class="bigstats four"><div><b>${eurS(t.rentIst)}</b><span>Mieten erhalten (Soll ${eurS(t.rentSoll)})</span></div><div><b>${eurS(t.fewoGross)}</b><span>Ferienwohnung Rechnungen</span></div><div><b>${eurS(t.inflows + t.fewoPaid)}</b><span>Zahlungseingänge gesamt</span></div><div><b>${r.open.length}</b><span>offene Punkte</span></div></div>
+    <div class="card"><h2>📤 An den Steuerberater</h2>
+      <p class="small muted" style="margin-bottom:10px">Enthält: Bericht als PDF, alle Einzelposten als Excel-Tabelle (CSV) und den DATEV-Buchungsstapel des Monats. ${s.taxAdvisorEmail ? `Empfänger: <b>${esc(s.taxAdvisorName || "")} ${esc(s.taxAdvisorEmail)}</b>` : 'E-Mail des Steuerberaters unter <a href="#/einstellungen">Einstellungen → DATEV</a> eintragen.'}</p>
+      <div class="toolbar">${btn("monthSend", "📧 An Steuerberater senden", "primary", key)}${btn("monthPdf", "📄 PDF", "", key)}${btn("monthCsv", "📊 Excel (CSV)", "", key)}${btn("monthDatev", "DATEV-Datei", "", key)}</div></div>
+    <div class="card"><h2>🏠 Mieteinnahmen ${monthTitle(key)}</h2>
+      ${table(["Objekt / Einheit", "Mieter", "Kalt €", "NK €", "Soll €", "Erhalten €", "Eingang"], r.rent.map((x) => `<tr><td>${esc(x.where)}</td><td>${esc(x.tenant)}</td><td class="num">${eurS(x.kalt + x.extra)}</td><td class="num">${eurS(x.nk)}</td><td class="num">${eurS(x.soll)}</td><td class="num ${x.diff < 0 ? "neg" : ""}">${eurS(x.ist)}</td><td class="small">${x.dates.map(d).join(", ") || '<span class="neg">fehlt</span>'}</td></tr>`),
+        `<td colspan="2"><b>Summe</b></td><td class="num">${eurS(t.kalt + t.extra)}</td><td class="num">${eurS(t.nk)}</td><td class="num">${eurS(t.rentSoll)}</td><td class="num"><b>${eurS(t.rentIst)}</b></td><td></td>`)}
+      ${r.inflows.length ? `<h3 style="margin-top:12px">Alle Zahlungseingänge im Monat (Zufluss)</h3>${table(["Datum", "Objekt / Einheit", "Art", "Betrag €"], r.inflows.map((p) => `<tr><td>${d(p.date)}</td><td>${esc(p.where)}</td><td class="small">${esc(C.INCOME_KINDS[p.kind] || p.kind)}${p.period && p.period !== key ? ` für ${C.fmtMonth(p.period)}` : ""}</td><td class="num">${eurS(p.amount)}</td></tr>`), `<td colspan="3"><b>Summe</b></td><td class="num"><b>${eurS(t.inflows)}</b></td>`)}` : ""}
+      ${t.deposits ? `<p class="small muted">Kautionen ${eurS(t.deposits)} sind durchlaufend und keine Einnahme.</p>` : ""}</div>
+    <div class="card"><h2>🏖️ Ferienwohnung ${monthTitle(key)}</h2>
+      ${hasFewo ? `<h3>Rechnungen des Monats</h3>${table(["Nr.", "Datum", "Empfänger", "Netto 7 % €", "USt 7 % €", "19 % netto €", "Kurtaxe €", "Brutto €", "Bezahlt €"], r.invoices.map((i) => `<tr><td>${esc(i.number)}${i.type === "storno" ? ' <span class="badge grey">Storno</span>' : ""}</td><td>${d(i.date)}</td><td>${esc(i.recipient)}</td><td class="num">${eurS(i.net7)}</td><td class="num">${eurS(i.vat7)}</td><td class="num">${eurS(i.net19)}</td><td class="num">${eurS(i.kurtaxe)}</td><td class="num">${eurS(i.gross)}</td><td class="num">${eurS(i.paid)}</td></tr>`),
+          `<td colspan="3"><b>Summe</b></td><td class="num">${eurS(t.fewoNet7)}</td><td class="num">${eurS(t.fewoVat7)}</td><td class="num">${eurS(t.fewoNet19)}</td><td class="num">${eurS(t.kurtaxe)}</td><td class="num"><b>${eurS(t.fewoGross)}</b></td><td></td>`)}
+        <h3 style="margin-top:12px">Buchungen mit Anreise im Monat</h3>${table(["Anreise", "Gast", "Einheit", "Nächte", "Kanal", "Betrag €", "Rechnung"], r.bookings.map((b) => `<tr><td>${d(b.from)}</td><td>${esc(b.guest)}</td><td class="small">${esc(b.where)}</td><td>${b.nights}</td><td class="small">${esc(b.channel)}${b.ref ? `<br><span class="muted">Nr. ${esc(b.ref)}</span>` : ""}</td><td class="num">${eurS(b.total)}</td><td>${b.status === "storniert" ? '<span class="badge grey">storniert</span>' : b.invoice ? esc(b.invoice) : btn("invoiceFromBooking", "Rechnung erstellen", "sm", b.id)}</td></tr>`), `<td colspan="3"><b>Summe</b></td><td>${t.nights}</td><td></td><td class="num"><b>${eurS(t.bookings)}</b></td><td></td>`)}
+        ${t.provisions ? `<p class="small muted">Portal-Provisionen im Monat: ${eurS(t.provisions)} (als Ausgabe gebucht)</p>` : ""}` : '<p class="muted">Keine Ferienwohnungs-Umsätze in diesem Monat.</p>'}</div>
+    <div class="card"><h2>⚠️ Offene Punkte</h2>${r.open.length ? `<ul style="margin-left:18px">${r.open.map((x) => `<li class="small">${esc(x)}</li>`).join("")}</ul>` : '<p class="small muted">Alles vollständig. 👍</p>'}
+      <p class="small muted" style="margin-top:8px">Ausgaben des Monats (${r.expenses.length}, ${eurS(t.expenses)}) sind in der Excel-Tabelle und im DATEV-Stapel enthalten.</p></div>`;
+}
+
+function monthPdfModel(key) {
+  const r = M.monthReport(state, key), t = r.totals, s = state.settings;
+  const n = (c) => eur(c || 0);
+  return {
+    title: `Monatsbericht ${monthTitle(key)} – Vermietung & Ferienwohnung`,
+    subtitle: `${s.ownerName || ""}${s.taxNumber ? ` · St.-Nr. ${s.taxNumber}` : ""}${s.taxAdvisorName ? ` · für ${s.taxAdvisorName}` : ""} · erstellt am ${d(today())}`,
+    author: s.ownerName,
+    summary: [["Mieten Soll", n(t.rentSoll)], ["Mieten erhalten", n(t.rentIst), true], ["davon Kaltmiete + Zuschläge (Soll)", n(t.kalt + t.extra)], ["davon NK-Vorauszahlungen (Soll)", n(t.nk)], ["Alle Zahlungseingänge Miete (Zufluss)", n(t.inflows)],
+      ["FeWo Rechnungen brutto", n(t.fewoGross), true], ["FeWo netto 7 % / USt 7 %", `${n(t.fewoNet7)} / ${n(t.fewoVat7)}`], ["FeWo netto 19 % / USt 19 %", `${n(t.fewoNet19)} / ${n(t.fewoVat19)}`], ["Kurtaxe (durchlaufend)", n(t.kurtaxe)], ["FeWo Zahlungseingänge", n(t.fewoPaid)]],
+    sections: [
+      { heading: "1. Mieteinnahmen (Soll / Ist)", cols: [{ label: "Objekt / Einheit", w: 5 }, { label: "Mieter", w: 4 }, { label: "Kalt", w: 2, align: "right" }, { label: "NK", w: 2, align: "right" }, { label: "Soll", w: 2, align: "right" }, { label: "Erhalten", w: 2, align: "right" }, { label: "Eingang", w: 3 }],
+        rows: r.rent.map((x) => [x.where, x.tenant, n(x.kalt + x.extra), n(x.nk), n(x.soll), n(x.ist), x.dates.map(d).join(", ") || "fehlt"]),
+        total: ["Summe", "", n(t.kalt + t.extra), n(t.nk), n(t.rentSoll), n(t.rentIst), ""] },
+      { heading: "2. Zahlungseingänge Miete im Monat (Zuflussprinzip)", note: t.deposits ? `Kautionen ${n(t.deposits)} sind durchlaufend und nicht enthalten.` : "", cols: [{ label: "Datum", w: 2 }, { label: "Objekt / Einheit", w: 6 }, { label: "Art", w: 6 }, { label: "Betrag", w: 2, align: "right" }],
+        rows: r.inflows.map((p) => [d(p.date), p.where, `${C.INCOME_KINDS[p.kind] || p.kind}${p.period && p.period !== key ? ` für ${C.fmtMonth(p.period)}` : ""}`, n(p.amount)]), total: ["Summe", "", "", n(t.inflows)] },
+      { heading: "3. Ferienwohnung – Rechnungen des Monats", cols: [{ label: "Nr.", w: 3 }, { label: "Datum", w: 2 }, { label: "Empfänger", w: 4 }, { label: "Netto 7 %", w: 2, align: "right" }, { label: "USt 7 %", w: 2, align: "right" }, { label: "Netto 19 %", w: 2, align: "right" }, { label: "USt 19 %", w: 2, align: "right" }, { label: "Kurtaxe", w: 2, align: "right" }, { label: "Brutto", w: 2, align: "right" }, { label: "Bezahlt", w: 2, align: "right" }],
+        rows: r.invoices.map((i) => [`${i.number}${i.type === "storno" ? " (Storno)" : ""}`, d(i.date), i.recipient, n(i.net7), n(i.vat7), n(i.net19), n(i.vat19), n(i.kurtaxe), n(i.gross), n(i.paid)]),
+        total: ["Summe", "", "", n(t.fewoNet7), n(t.fewoVat7), n(t.fewoNet19), n(t.fewoVat19), n(t.kurtaxe), n(t.fewoGross), ""] },
+      { heading: "4. Ferienwohnung – Buchungen mit Anreise im Monat", note: t.provisions ? `Portal-Provisionen im Monat: ${n(t.provisions)} (als Ausgabe gebucht).` : "", cols: [{ label: "Anreise", w: 2 }, { label: "Abreise", w: 2 }, { label: "Gast", w: 4 }, { label: "Einheit", w: 4 }, { label: "Nächte", w: 1, align: "right" }, { label: "Kanal", w: 3 }, { label: "Betrag", w: 2, align: "right" }, { label: "Rechnung", w: 3 }],
+        rows: r.bookings.map((b) => [d(b.from), d(b.to), b.guest, b.where, String(b.nights), `${b.channel}${b.ref ? ` ${b.ref}` : ""}`, n(b.total), b.status === "storniert" ? "storniert" : b.invoice || "noch keine"]),
+        total: ["Summe", "", "", "", String(t.nights), "", n(t.bookings), ""] },
+      { heading: "5. Ausgaben des Monats", cols: [{ label: "Datum", w: 2 }, { label: "Empfänger", w: 5 }, { label: "Kategorie", w: 6 }, { label: "Beleg", w: 2 }, { label: "Betrag", w: 2, align: "right" }],
+        rows: r.expenses.map((e) => [d(e.date), e.vendor, C.EXPENSE_CATEGORIES[e.category]?.label || e.category, e.beleg ? "ja" : "fehlt", n(e.amount)]), total: ["Summe", "", "", "", n(t.expenses)] },
+      { heading: "6. Offene Punkte", cols: [{ label: "Hinweis", w: 1 }], rows: r.open.map((x) => [x]) },
+    ],
+    footer: `Erstellt mit ${auth.settings?.product_name || "Homevio"} · Zahlen aus den in der App erfassten Daten; DATEV-Buchungsstapel liegt bei.`,
+  };
+}
+
+async function monthFiles(key) {
+  const P = await import("./pdf.js");
+  const pdf = P.reportPdf(monthPdfModel(key));
+  const r = M.monthReport(state, key);
+  const csv = new Blob([M.monthCsv(r, C.INCOME_KINDS)], { type: "text/csv;charset=utf-8" });
+  const datev = new Blob([C.toWin1252(C.datevCsv(state, r.from, r.to))], { type: "text/csv;charset=windows-1252" });
+  const base = `Monatsbericht_${key}`;
+  return [{ name: `${base}.pdf`, blob: pdf, type: "application/pdf" }, { name: `${base}_Einzelposten.csv`, blob: csv, type: "text/csv" }, { name: `EXTF_Buchungsstapel_${key}.csv`, blob: datev, type: "text/csv" }];
+}
+
+function markMonthSent(key, to, via) {
+  if (isCloud() && !canWrite()) return;
+  state.settings.monthReports = { ...(state.settings.monthReports || {}), [key]: { sentAt: new Date().toISOString(), to, via } };
+  commit();
+}
+
+async function archiveMonthPdf(key, blob) {
+  if (isCloud() && !canWrite()) return;
+  try {
+    const id = C.uid("d_");
+    await putDocBlob(id, blob);
+    state.documents.push({ id, name: `Monatsbericht ${monthTitle(key)}.pdf`, type: "application/pdf", size: blob.size, thumb: null, created: new Date().toISOString(), kind: "steuerbescheid", objectId: "", contractId: "", status: "verarbeitet", note: "An den Steuerberater gesendet", ki: null });
+  } catch {}
+}
+
+function monthSendDialog(key) {
+  const s = state.settings;
+  const text = `Guten Tag${s.taxAdvisorName ? ` ${s.taxAdvisorName}` : ""},\n\nanbei die Unterlagen für ${monthTitle(key)}:\n• Monatsbericht (PDF) mit allen Mieteinnahmen und Ferienwohnungs-Einnahmen\n• Einzelposten als Excel-Tabelle (CSV)\n• DATEV-Buchungsstapel\n\nBei Fragen melden Sie sich gern.\n\nMit freundlichen Grüßen\n${s.ownerName || ""}`;
+  dialog({
+    title: `Monatsbericht ${monthTitle(key)} senden`, submit: "📧 Jetzt senden", wide: true,
+    body: `<label class="f"><span>An (Steuerberater) *</span><input name="to" type="email" required value="${esc(s.taxAdvisorEmail || "")}"></label>
+      <label class="f inline"><input type="checkbox" name="copy" ${s.ownerEmail ? "checked" : "disabled"}> Kopie an mich ${s.ownerEmail ? `(${esc(s.ownerEmail)})` : ""}</label>
+      <label class="f"><span>Betreff</span><input name="subject" value="${esc(`Unterlagen ${monthTitle(key)} – Vermietung & Ferienwohnung${s.ownerName ? ` – ${s.ownerName}` : ""}`)}"></label>
+      <label class="f"><span>Nachricht</span><textarea name="text" style="min-height:180px">${esc(text)}</textarea></label>
+      <p class="small muted">📎 Monatsbericht_${key}.pdf · Einzelposten (CSV) · DATEV-Buchungsstapel</p>
+      <div class="toolbar"><button type="button" class="btn" data-share>📤 Stattdessen mit eigenem Mail-Programm / teilen</button></div>`,
+    onOpen: (form) => { form.querySelector("[data-share]").onclick = () => { const v = { to: form.to.value.trim(), subject: form.subject.value, text: form.text.value }; $("#modal").close(); monthShare(key, v); }; },
+    onSubmit: (form) => {
+      const to = form.to.value.trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { toast("Bitte die E-Mail des Steuerberaters eingeben."); return false; }
+      if (!s.taxAdvisorEmail && canWrite()) { s.taxAdvisorEmail = to; persist(); }
+      monthSend(key, { to, copy: form.copy.checked, subject: form.subject.value.trim(), text: form.text.value });
+    },
+  });
+}
+
+async function monthSend(key, m) {
+  const s = state.settings;
+  toast("📧 Monatsbericht wird gesendet …");
+  try {
+    const files = await monthFiles(key);
+    const attachments = [];
+    for (const f of files) attachments.push({ filename: f.name, content: await F.blobToBase64(f.blob) });
+    await callFn("immo-mail", { to: m.to, bcc: m.copy && s.ownerEmail ? s.ownerEmail : "", replyTo: s.ownerEmail || "", fromName: s.ownerName || "", subject: m.subject, text: m.text, attachments });
+    await archiveMonthPdf(key, files[0].blob);
+    markMonthSent(key, m.to, "email");
+    toast(`✅ Monatsbericht ${monthTitle(key)} an ${m.to} gesendet`);
+  } catch (e) {
+    if (confirm(`Der Bericht konnte nicht direkt gesendet werden:\n${e.message}\n\nStattdessen mit deinem eigenen Mail-Programm senden?`)) monthShare(key, m);
+  }
+}
+
+// Ohne Mail-Server: Teilen-Menü (Handy) oder Dateien herunterladen + Mail-Programm öffnen
+async function monthShare(key, m) {
+  const files = await monthFiles(key);
+  const fs = typeof File === "function" ? files.map((f) => new File([f.blob], f.name, { type: f.type })) : [];
+  if (fs.length && navigator.canShare?.({ files: fs })) {
+    try { await navigator.share({ files: fs, title: m.subject, text: m.text }); await archiveMonthPdf(key, files[0].blob); markMonthSent(key, m.to, "teilen"); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  for (const f of files) download(f.name, f.blob);
+  location.href = `mailto:${encodeURIComponent(m.to || "")}?subject=${encodeURIComponent(m.subject || "")}&body=${encodeURIComponent(m.text || "")}`;
+  await archiveMonthPdf(key, files[0].blob);
+  markMonthSent(key, m.to, "mailprogramm");
+  toast("Die 3 Dateien wurden heruntergeladen – bitte im Mail-Programm anhängen.");
+}
+
 // ---------------------------------------------------------------- Team & Zugriff
 
 async function loadTeam() {
@@ -4341,7 +4485,7 @@ function render() {
   $("#nav").innerHTML = navHtml(route);
   if (!$("#tabbar")) document.body.insertAdjacentHTML("beforeend", '<nav id="tabbar" class="noprint"></nav>');
   $("#tabbar").innerHTML = tabbarHtml(route);
-  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, portal: viewPortalInbox, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
+  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, monat: () => viewMonthReport(arg), portal: viewPortalInbox, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
     $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
@@ -4419,6 +4563,11 @@ const actions = {
   portalToRepair, portalToMeter, portalFilter: (f) => { ui.portalFilter = f; render(); },
   portalLeave: () => { auth.portalView = null; render(); },
   tpReport, tpMeter, tpMessage, tpOpenDoc, tpDocs: () => document.getElementById("tpdocs")?.scrollIntoView({ behavior: "smooth" }),
+  monthNav: (k) => { location.hash = `#/monat/${k}`; },
+  monthSend: (k) => monthSendDialog(k),
+  monthPdf: async (k) => { const f = await monthFiles(k); download(f[0].name, f[0].blob); },
+  monthCsv: async (k) => { const f = await monthFiles(k); download(f[1].name, f[1].blob); },
+  monthDatev: async (k) => { const f = await monthFiles(k); download(f[2].name, f[2].blob); },
   teamInvite: () => inviteDialog(),
   teamShareInvite: (v) => { const [token, email] = v.split("|"); shareInvite(token, email); },
   teamRevoke: async (token) => { if (!confirm("Einladung zurückziehen? Der Link funktioniert danach nicht mehr.")) return; try { await Cloud.teamRevokeInvite(token); toast("Einladung zurückgezogen"); loadTeam(); } catch (e) { alert(e.message); } },
@@ -4603,6 +4752,7 @@ document.addEventListener("change", async (e) => {
   if (k === "switchWs") { if (e.target.value.startsWith("portal:")) { auth.portalView = e.target.value.slice(7); ui.tp = null; render(); startPortalPoll(); } else switchWorkspace(e.target.value); return; }
   if (k === "portalStatus") { try { await Cloud.portalUpdateItem(Number(e.target.dataset.id), { status: e.target.value }); const it = portalData()?.items.find((x) => x.id === Number(e.target.dataset.id)); if (it) it.status = e.target.value; toast("Status geändert – der Mieter sieht ihn im Portal"); } catch (err) { alert(err.message); } return; }
   if (k === "portalEmergency") { state.settings.portalEmergency = e.target.value.trim(); commit("Notfall-Kontakte gespeichert"); for (const row of portalData()?.tenants || []) if (!row.revoked_at) Cloud.portalUpdateTenant(row.id, { info: portalInfo(row.tenant_key) }).catch(() => {}); return; }
+  if (k === "monthReportKey") { if (e.target.value) location.hash = `#/monat/${e.target.value}`; return; }
   if (k === "instObj") { ui.instObj = e.target.value; render(); return; }
   if (k === "repairUpload") {
     const r = state.repairs.find((x) => x.id === e.target.dataset.id);
@@ -4728,7 +4878,7 @@ document.addEventListener("submit", (e) => {
     }
     s.accounts = { ...(s.accounts || {}), [skrOld]: accs };
     s.expenseAccounts = { ...(s.expenseAccounts || {}), [skrOld]: exps };
-    Object.assign(s, { skr: fd.skr, datevBerater: fd.datevBerater.trim(), datevMandant: fd.datevMandant.trim(), datevKontenlaenge: Number(fd.datevKontenlaenge) || 4, autoAssignScore: Number(fd.autoAssignScore) || 80, sollStart: fd.sollStart || "" });
+    Object.assign(s, { skr: fd.skr, datevBerater: fd.datevBerater.trim(), datevMandant: fd.datevMandant.trim(), datevKontenlaenge: Number(fd.datevKontenlaenge) || 4, autoAssignScore: Number(fd.autoAssignScore) || 80, sollStart: fd.sollStart || "", taxAdvisorName: (fd.taxAdvisorName || "").trim(), taxAdvisorEmail: (fd.taxAdvisorEmail || "").trim() });
   }
   commit("Einstellungen gespeichert");
 });

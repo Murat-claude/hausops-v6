@@ -142,6 +142,21 @@ Getestet: Signaturprüfung, Formularkodierung und die Abbildung aller Abo-Ereign
 - Rechtliches: Impressum, Datenschutzerklärung mit Auftragsverarbeitung (Supabase, Netlify, Anthropic), AGB, AV-Vertrag für Kunden.
 - Eigene Domain und Branding (Produktname ist im Admin-Bereich einstellbar).
 
+## Monatsbericht für den Steuerberater
+
+Menü **Steuer → Monatsbericht StB** (oder `#/monat/2026-10`). Pro Monat:
+- **Mieteinnahmen**: Soll laut Vertrag (kalt, NK, Zuschläge) und tatsächlich erhaltene Beträge mit Eingangsdatum, je Mieter und Einheit. Dazu alle Zahlungseingänge des Monats nach dem Zuflussprinzip (auch Nachzahlungen und NK-Nachzahlungen). Kautionen werden getrennt ausgewiesen.
+- **Ferienwohnung**:
+  - Rechnungen des Monats mit Netto, USt 7 % / 19 %, Kurtaxe (durchlaufend), brutto und bezahlt.
+  - Buchungen mit Anreise im Monat, mit Kanal und Buchungsnummer.
+  - Portal-Provisionen.
+- **Ausgaben** des Monats und **offene Punkte** (fehlende Miete, Buchung ohne Rechnung, fehlender Beleg).
+- **Ein Klick „An Steuerberater senden“**:
+  - Die Mail enthält drei Anhänge: PDF-Bericht, Einzelposten als Excel-Tabelle (CSV) und DATEV-Buchungsstapel.
+  - Der Bericht wird unter Belege & Dokumente abgelegt und als „gesendet“ markiert.
+  - Ohne eingerichteten Mailversand geht es über das Teilen-Menü bzw. Download und eigenes Mail-Programm.
+- Name und E-Mail des Steuerberaters stehen unter **Einstellungen → DATEV**. Vom 1. bis 15. eines Monats erinnert die Startseite an den Bericht des Vormonats.
+
 ## Reparaturen & Instandhaltung
 
 Menü **Vermietung → Reparaturen**, außerdem „🔧 Reparatur / Schaden“ im „+“-Menü.
