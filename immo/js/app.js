@@ -313,11 +313,36 @@ function editTenant(id) {
   formDialog({
     title: id ? "Mieter bearbeiten" : "Neuer Mieter", spec: SPEC.tenant, data: t,
     onSave: (v) => { upsert("tenants", { ...t, ...v, ibans: v.ibans.map(C.normIban) }); commit("Mieter gespeichert"); },
-    onDelete: id && (() => {
-      if (state.contracts.some((c) => c.tenantIds.includes(id))) return alert("Mieter ist noch einem Mietvertrag zugeordnet.");
-      state.tenants = state.tenants.filter((x) => x.id !== id); commit("Mieter gelöscht");
-    }),
+    onDelete: id && (() => deleteTenantAll(id, true)),
   });
+}
+
+// Mieter löschen (z. B. falsch angelegt): eigene Verträge und deren Zahlungen mit entfernen,
+// Bank-Buchungen werden wieder „offen“ und können neu zugeordnet werden.
+function deleteTenantAll(id, confirmed) {
+  const t = byId("tenants", id); if (!t) return;
+  const own = state.contracts.filter((c) => c.tenantIds.includes(id) && c.tenantIds.length === 1);
+  const shared = state.contracts.filter((c) => c.tenantIds.includes(id) && c.tenantIds.length > 1);
+  const cIds = new Set(own.map((c) => c.id));
+  const pays = state.payments.filter((p) => cIds.has(p.contractId));
+  const payIds = new Set(pays.map((p) => p.id));
+  const txs = state.transactions.filter((tx) => tx.link?.type === "payment" && (tx.link.ids || [tx.link.id]).some((x) => payIds.has(x)));
+  const msg = `„${t.name}“ wirklich löschen?\n\n` + [
+    own.length ? `• ${own.length} Mietvertrag/-verträge (${own.map((c) => unitLabel(byId("units", c.unitId))).join(", ")}) werden gelöscht.` : "",
+    pays.length ? `• ${pays.length} Zahlung(en) werden gelöscht${txs.length ? `; ${txs.length} Bank-Buchung(en) erscheinen wieder unter „Konto & Zahlungen → Offen“` : ""}.` : "",
+    shared.length ? `• Aus ${shared.length} gemeinsamen Vertrag/Verträgen wird nur dieser Mieter entfernt.` : "",
+    "• Dokumente bleiben unter „Belege & Dokumente“ erhalten.",
+  ].filter(Boolean).join("\n") + "\n\nDas lässt sich nicht rückgängig machen.";
+  if (!confirmed && !confirm(msg)) return false;
+  if (confirmed && (own.length || pays.length) && !confirm(msg)) return false;
+  for (const tx of txs) { const ids = tx.link.ids || [tx.link.id]; state.payments = state.payments.filter((p) => !ids.includes(p.id)); tx.link = null; }
+  state.payments = state.payments.filter((p) => !payIds.has(p.id));
+  state.contracts = state.contracts.filter((c) => !cIds.has(c.id));
+  for (const c of shared) c.tenantIds = c.tenantIds.filter((x) => x !== id);
+  state.meterReadings = (state.meterReadings || []).filter((r) => !cIds.has(r.contractId));
+  state.tenants = state.tenants.filter((x) => x.id !== id);
+  commit("Mieter gelöscht");
+  if (location.hash.startsWith("#/mieter/")) location.hash = "#/mieter";
 }
 
 const legalNotes = (list) => list.length ? `<div class="legal">${list.map((x) => `<div class="note small ${x.level === "bad" ? "warn" : ""}">${x.level === "bad" ? "⚠️" : "§"} ${esc(x.text)}</div>`).join("")}</div>` : "";
@@ -2423,7 +2448,7 @@ function viewTenant(id) {
         ${active ? btn("newReading", "+ Zählerstand", "sm", active.id) : ""}</div></div>`,
   }[tab];
   return head(`📁 ${t.name}`, [u && esc(unitLabel(u)), t.phone && `<a href="tel:${esc(t.phone)}">${esc(t.phone)}</a>`, t.email && `<a href="mailto:${esc(t.email)}">${esc(t.email)}</a>`].filter(Boolean).join(" · "),
-    btn("editTenant", "Stammdaten", "", id) + (active && !active.end && active.start <= today() ? btn("moveWizard", "Auszug / Mieterwechsel", "", active.unitId) : "") + btn("newNote", "+ Vorgang", "", `notiz|${id}|${active?.id || ""}`) + btn("letterFor", "✉ Brief", "", `zahlungserinnerung|${active?.id || ""}`) + `<a class="btn" href="#/auskunft/${id}">🛡 Datenauskunft</a>`) + `
+    btn("editTenant", "✎ Name & Kontakt", "", id) + (active ? btn("editContract", "✎ Miete & Vertrag", "", active.id) : "") + (active && !active.end && active.start <= today() ? btn("moveWizard", "Auszug / Mieterwechsel", "", active.unitId) : "") + btn("newNote", "+ Vorgang", "", `notiz|${id}|${active?.id || ""}`) + btn("letterFor", "✉ Brief", "", `zahlungserinnerung|${active?.id || ""}`) + `<a class="btn" href="#/auskunft/${id}">🛡 Datenauskunft</a>` + btn("deleteTenant", "🗑 Löschen", "danger", id)) + `
     <div class="tabs">${tabs.map(([k, l]) => `<button data-act="folderTab" data-id="${k}" class="${tab === k ? "active" : ""}">${l}</button>`).join("")}</div>
     ${body}`;
 }
@@ -4689,7 +4714,7 @@ const actions = {
     const nk = nkDraft();
     await kiAsk(`Prüfe die aktuelle Nebenkostenabrechnung für ${byId("objects", nk.objectId)?.name} (${d(nk.from)}–${d(nk.to)}) auf Fehler und Risiken: Sind alle Positionen nach BetrKV umlagefähig, passen die Umlageschlüssel, fehlen typische Kostenarten, ist die Frist eingehalten? Positionen: ${nk.items.map((i) => `${i.label} ${eur(i.amount)} nach ${C.NK_KEYS[i.key]}`).join("; ")}.`);
   }, newUnit: (id) => editUnit(null, id), editUnit,
-  newTenant: () => editTenant(), editTenant, newContract: (unitId) => editContract(null, unitId), editContract, addStep,
+  newTenant: () => editTenant(), editTenant, deleteTenant: (id) => deleteTenantAll(id), newContract: (unitId) => editContract(null, unitId), editContract, addStep,
   moveWizardFromContract: (unitId) => { $("#modal").close(); moveWizard(unitId || undefined); },
   deleteContract: (id) => {
     const c = byId("contracts", id); if (!c) return;
