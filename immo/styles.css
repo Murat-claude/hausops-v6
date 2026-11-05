@@ -77,7 +77,7 @@ tfoot td { font-weight: 650; border-top: 2px solid var(--line); }
 .tabs button.active { color: var(--brand); border-color: var(--brand); font-weight: 600; }
 
 input, select, textarea { font: inherit; padding: 7px 9px; border: 1px solid #cfd5d1; border-radius: 7px; background: #fff; width: 100%; color: var(--ink); }
-input[type=checkbox] { width: auto; }
+input[type=checkbox], input[type=radio] { width: auto; flex: none; margin: 0; padding: 0; }
 textarea { min-height: 70px; resize: vertical; }
 label.f { display: block; margin-bottom: 10px; }
 label.f > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
@@ -337,3 +337,14 @@ body.portalscreen main { max-width: 900px; margin: 0 auto; padding: 16px; }
 img.pphoto { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); cursor: zoom-in; background: #f3f3f3; }
 .pitem.unread { border-left: 4px solid #d9a400; }
 @media (max-width: 900px) { .tp-tiles { grid-template-columns: 1fr 1fr; } body.portalscreen main { padding: 12px; } }
+/* Auswahllisten (Ja/Nein, Häkchen) – auf dem Handy untereinander, gut antippbar */
+.checks label { cursor: pointer; line-height: 1.35; }
+.checks input[type=radio], .checks input[type=checkbox], label.f.inline input[type=checkbox], label.f.inline input[type=radio] { width: 20px; height: 20px; accent-color: var(--brand); }
+.q > div:first-child { overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .checks { gap: 10px 22px; }
+  .checks label { min-height: 36px; }
+}
+@media (max-width: 900px) {
+  .btn { max-width: 100%; white-space: normal; text-align: center; }
+}
