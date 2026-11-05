@@ -5,6 +5,18 @@ Läuft als eigenständige Web-App unter **`/immo/`** auf derselben Netlify-Seite
 
 > **Rechtliches:** Welche gesetzlichen Regeln die App prüft (Mietrecht, Betriebskosten, CO2-Aufteilung, Umsatzsteuer bei Stellplätzen, GoBD, DSGVO, Verbraucherrecht beim Verkauf), mit Mustertexten und offenen Punkten, steht in [`RECHTLICHES.md`](RECHTLICHES.md).
 
+## Bedienung – so einfach wie möglich
+
+- **Start „Heute zu tun“:** Die App zeigt selbst, was ansteht, jeweils mit einem Knopf zum Erledigen. Dazu gehören:
+  - Kontobewegungen zuordnen (sichere Vorschläge mit einem Klick)
+  - Mietrückstände mit „Erinnerung schreiben“, fällige Vorgänge und Mängel
+  - Belege im Eingang, Rechnungsentwürfe, unvollständige Mieterakten
+  - fällige Nebenkostenabrechnung mit Frist, Steuererklärung (Januar bis Juli), ablaufende Bankfreigabe, mögliche Mieterhöhung
+- **„Was möchtest du tun?“:** große Kacheln für Beleg fotografieren, Neuer Mieter, Konto abrufen, Mieten prüfen, Nebenkosten und Steuererklärung. Alle Zahlen gibt es aufklappbar darunter.
+- **Einrichtungs-Assistent beim ersten Start** in 4 Schritten: deine Daten, das erste Haus (Art per Bild-Knopf), Einheiten mit ＋/− zählen (Wohnungen, ganzes Haus, Garagen, Stellplätze, Keller, Ferienwohnungen, Gewerbe), danach die nächsten Schritte.
+- **Menü in Gruppen und Alltagssprache:** Vermietung · Geld & Belege · Ferienwohnung (nur sichtbar, wenn vorhanden) · Steuer · Mehr. Suche überall mit „/“.
+- **Am Handy:** Leiste unten (Start, Mieter, **＋**, Geld, Menü) mit großen Tippflächen. Über ＋ geht alles Häufige mit einem Tipp: Beleg fotografieren, PDF ablegen, Neuer Mieter, Ausgabe, Miete bar, Notiz/Mangel, Ferien-Buchung, Haus/Wohnung.
+
 ## Funktionen
 
 | Bereich | Was es kann |

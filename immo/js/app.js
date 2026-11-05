@@ -695,11 +695,6 @@ function journalCsv(from, to) {
 
 // ---------------------------------------------------------------- Ansichten
 
-const NAV = [
-  ["", "▦", "Übersicht"], ["objekte", "⌂", "Objekte & Einheiten"], ["mieter", "☺", "Mieter & Verträge"],
-  ["mieten", "€", "Mieteingänge"], ["bank", "⇄", "Bank"], ["ausgaben", "✎", "Ausgaben"], ["dokumente", "📎", "Belege & Dokumente"], ["nebenkosten", "⚖", "Nebenkosten"], ["briefe", "✉", "Briefe"],
-  ["ferien", "☀", "Ferienwohnung"], ["rechnungen", "▤", "Rechnungen"], ["steuer", "§", "Steuer & DATEV"], ["ki", "✨", "KI-Assistent"], ["einstellungen", "⚙", "Einstellungen"],
-];
 
 function head(title, sub, actions = "") {
   return `<div class="head"><div><h1>${esc(title)}</h1>${sub ? `<div class="muted">${sub}</div>` : ""}</div><div class="toolbar noprint">${actions}</div></div>`;
@@ -2566,6 +2561,188 @@ function viewTaxReturn(yearArg) {
     ${body}`;
 }
 
+// ---------------------------------------------------------------- Einfache Bedienung: Menü, Start „Heute zu tun“, Einrichtung, Handy-Leiste
+
+// Menü in klaren Gruppen und Alltagssprache. Gruppen ohne Inhalt (z. B. Ferienwohnung) werden ausgeblendet.
+function navGroups() {
+  const hasFewo = fewoUnits().length > 0 || state.bookings.length > 0;
+  return [
+    [null, [["", "🏠", "Start"]]],
+    ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["briefe", "✉️", "Briefe"]]],
+    ["Geld & Belege", [["bank", "🏦", "Konto & Zahlungen"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📷", "Belege & Dokumente"]]],
+    ...(hasFewo ? [["Ferienwohnung", [["ferien", "🏖️", "Belegung & Buchungen"], ["rechnungen", "🧾", "Gäste-Rechnungen"]]]] : []),
+    ["Steuer", [["erklaerung", "🧮", "Steuererklärung"], ["steuer", "📊", "Anlage V & DATEV"]]],
+    ["Mehr", [["ki", "✨", "KI-Assistent"], ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡️", "Admin"]] : []), ["einstellungen", "⚙️", "Einstellungen"]]],
+  ];
+}
+
+// Welcher Menüpunkt gehört zur aktuellen Seite?
+function navKeyFor(route) {
+  return { rechnung: "rechnungen", bericht: "steuer", paket: "steuer", nkbrief: "nebenkosten", nkassistent: "nebenkosten", brief: "briefe", protokoll: "mieter", auskunft: "mieter" }[route] ?? route;
+}
+
+function navHtml(route) {
+  const active = navKeyFor(route);
+  return navGroups().map(([title, items]) => `${title ? `<div class="navgroup">${title}</div>` : ""}${items.map(([r, ic, l]) => `<a href="#/${r}" class="${active === r ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("")}`).join("");
+}
+
+// Untere Leiste am Handy
+function tabbarHtml(route) {
+  const a = navKeyFor(route);
+  const t = (href, ic, l, on) => `<a href="${href}" class="${on ? "on" : ""}"><span>${ic}</span>${l}</a>`;
+  return t("#/", "🏠", "Start", a === "") + t("#/mieter", "👥", "Mieter", a === "mieter") +
+    `<button class="plus" data-act="quickAdd" aria-label="Neu erfassen">＋</button>` +
+    t("#/bank", "🏦", "Geld", ["bank", "ausgaben", "mieten"].includes(a)) + `<button data-act="openMenu"><span>☰</span>Menü</button>`;
+}
+
+function openMenu() {
+  dialog({ title: "Menü", body: `<nav class="menu-sheet">${navHtml(location.hash.replace(/^#\/?/, "").split("/")[0])}</nav>` });
+  $("#modal").classList.add("sheet");
+  $("#modal .menu-sheet").addEventListener("click", (e) => { if (e.target.closest("a")) $("#modal").close(); });
+}
+
+// „＋“: die häufigsten Aufgaben mit einem Tipp
+function quickAdd() {
+  const tile = (ic, l, attrs) => `<button class="qtile" ${attrs}><span>${ic}</span>${l}</button>`;
+  dialog({
+    title: "Was möchtest du erfassen?",
+    body: `<div class="qgrid">
+      <label class="qtile"><span>📷</span>Beleg fotografieren<input type="file" accept="image/*" capture="environment" data-change="docScan" hidden></label>
+      <label class="qtile"><span>📄</span>PDF / Datei ablegen<input type="file" accept="image/*,application/pdf" multiple data-change="docUpload" hidden></label>
+      ${tile("🔑", "Neuer Mieter / Einzug", 'data-act="moveWizard" data-id=""')}
+      ${tile("📉", "Ausgabe erfassen", 'data-act="newExpense"')}
+      ${tile("💶", "Miete bar erhalten", 'data-act="newPayment"')}
+      ${tile("📝", "Notiz / Mangel", 'data-act="quickNote"')}
+      ${fewoUnits().length ? tile("🏖️", "Ferien-Buchung", 'data-act="newBooking"') : ""}
+      ${tile("🏢", "Haus / Wohnung", 'data-act="newObject"')}
+    </div>`,
+  });
+  $("#modal").classList.add("sheet");
+  $("#modal .qgrid").addEventListener("click", (e) => { if (e.target.closest("button.qtile")) $("#modal").close(); });
+  $("#modal .qgrid").addEventListener("change", () => setTimeout(() => $("#modal").open && $("#modal").close(), 0));
+}
+
+function quickNote() {
+  const ts = state.tenants.filter((t) => state.contracts.some((c) => c.tenantIds.includes(t.id) && (!c.end || c.end >= today())));
+  if (!ts.length) return toast("Noch keine Mieter – zuerst einen Mieter eintragen.");
+  formDialog({
+    title: "Notiz oder Mangel erfassen", data: { type: "mangel", tenantId: ts[0].id },
+    spec: [{ k: "tenantId", l: "Zu welchem Mieter?", t: "select", opts: ts.map((t) => [t.id, t.name]), full: 1 }, { k: "type", l: "Art", t: "select", opts: Object.entries(NOTE_TYPES) }],
+    onSave: (v) => { setTimeout(() => editNote(null, { type: v.type, tenantId: v.tenantId, contractId: state.contracts.find((c) => c.tenantIds.includes(v.tenantId))?.id || "" }), 50); },
+  });
+}
+
+// Alles, was gerade zu tun ist – mit einem Knopf zum Erledigen
+function buildTodos() {
+  const t = [], y = Number(today().slice(0, 4)), key = C.monthKey(today());
+  const open = state.transactions.filter((x) => !x.link);
+  if (open.length) {
+    const good = open.filter((x) => (C.suggestAssignment(x, state)?.score || 0) >= 60).length;
+    t.push({ ic: "🏦", text: `${open.length} Kontobewegung${open.length > 1 ? "en" : ""} zuordnen${good ? ` – ${good} kann die App sofort erledigen` : ""}`, btn: good ? btnRaw("acceptAll", `✓ ${good} übernehmen`) : `<a class="btn sm primary" href="#/bank">Ansehen</a>` });
+  }
+  const back = C.sollIst(state, C.addMonths(key, -11), key).filter((r) => r.diff < 0);
+  const byC = {};
+  for (const r of back) byC[r.contractId] = (byC[r.contractId] || 0) - r.diff;
+  for (const [cid, v] of Object.entries(byC).slice(0, 3)) t.push({ ic: "⚠️", text: `${esc(tenantNames(byId("contracts", cid)))} ist mit ${eur(v)} im Rückstand`, btn: btnRaw("letterFor", "Erinnerung schreiben", `zahlungserinnerung|${cid}`) });
+  for (const n of openTasks().slice(0, 3)) t.push({ ic: n.type === "mangel" ? "🔧" : "📅", text: `${esc(n.title)} – ${esc(byId("tenants", n.tenantId)?.name || "")}${n.due ? ` (fällig ${d(n.due)})` : ""}`, btn: `<a class="btn sm" href="#/mieter/${n.tenantId}" data-folder-tab="vorgaenge">Öffnen</a>` });
+  const inbox = state.documents.filter((x) => x.status === "neu").length;
+  if (inbox) t.push({ ic: "📷", text: `${inbox} Beleg${inbox > 1 ? "e" : ""} im Eingang – buchen`, btn: `<a class="btn sm primary" href="#/dokumente">Buchen</a>` });
+  const drafts = state.invoices.filter((i) => i.status === "entwurf").length;
+  if (drafts) t.push({ ic: "🧾", text: `${drafts} Rechnungsentwurf${drafts > 1 ? "e" : ""} noch festschreiben`, btn: `<a class="btn sm" href="#/rechnungen">Ansehen</a>` });
+  // Nebenkostenabrechnung des Vorjahres fällig?
+  for (const o of state.objects) {
+    const hasTenants = state.contracts.some((c) => byId("units", c.unitId)?.objectId === o.id && c.start <= `${y - 1}-12-31` && (!c.end || c.end >= `${y - 1}-01-01`));
+    const done = (state.nkStatements || []).some((st) => st.objectId === o.id && st.to.startsWith(String(y - 1)));
+    if (hasTenants && !done) t.push({ ic: "🧾", text: `Nebenkosten ${y - 1} für ${esc(o.name)} abrechnen – Frist 31.12.${y}`, btn: `<a class="btn sm primary" href="#/nkassistent">Starten</a>` });
+  }
+  const m = Number(today().slice(5, 7));
+  if (m <= 7 && state.objects.length) t.push({ ic: "🧮", text: `Steuererklärung ${y - 1} vorbereiten – Frist ohne Steuerberater 31.07.${y}`, btn: `<a class="btn sm" href="#/erklaerung/${y - 1}">Starten</a>` });
+  for (const a of state.accounts.filter((x) => x.eb?.validUntil && new Date(x.eb.validUntil) - new Date() < 14 * 864e5)) t.push({ ic: "🔐", text: `Bankfreigabe für ${esc(a.name)} ${a.eb.validUntil < new Date().toISOString() ? "ist abgelaufen" : "läuft bald ab"}`, btn: btnRaw("connectBank", "Erneuern") });
+  const inc = state.contracts.filter((c) => c.start <= today() && (!c.end || c.end >= today()) && folderChecklist(c).missing.length).length;
+  if (inc) t.push({ ic: "📁", text: `${inc} Mieterakte${inc > 1 ? "n" : ""} unvollständig (z. B. Mietvertrag fehlt)`, btn: `<a class="btn sm" href="#/mieter">Ansehen</a>` });
+  const opp = R.increaseOpportunities(state, today());
+  if (opp.length) t.push({ ic: "💡", text: `Mieterhöhung bei ${opp.length} Wohnung${opp.length > 1 ? "en" : ""} möglich`, btn: btnRaw("letterFor", "Brief vorbereiten", `mieterhoehung|${opp[0].contractId}`), chance: true });
+  return t;
+}
+const btnRaw = (act, label, id = "") => `<button class="btn sm primary" data-act="${act}" ${id ? `data-id="${esc(id)}"` : ""}>${label}</button>`;
+
+function viewStart() {
+  if (!state.objects.length) return viewSetup();
+  const h = new Date().getHours();
+  const name = (state.settings.ownerName || auth.profile?.full_name || "").split(" ")[0];
+  const key = C.monthKey(today());
+  const rows = C.sollIst(state, key, key);
+  const soll = sum(rows, (r) => r.soll), ist = sum(rows, (r) => r.ist);
+  const todos = buildTodos();
+  const tile = (ic, l, attrs) => `<a class="qtile" ${attrs}><span>${ic}</span>${l}</a>`;
+  return `<div class="hello"><h1>${h < 11 ? "Guten Morgen" : h < 18 ? "Hallo" : "Guten Abend"}${name ? `, ${esc(name)}` : ""} 👋</h1>
+      <p class="muted">${new Date().toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" })}</p></div>
+    <div class="bigstats">
+      <div><span>Miete ${C.MONTHS_DE[Number(key.slice(5)) - 1]}</span><b>${eur(ist)}</b><small>von ${eur(soll)}</small><div class="bar"><i style="width:${soll ? Math.min(100, Math.round((ist / soll) * 100)) : 0}%"></i></div></div>
+      <div><span>Offen</span><b class="${soll - ist > 0 ? "neg" : "pos"}">${eur(Math.max(0, soll - ist))}</b><small>${rows.filter((r) => r.diff < 0).length} Mieter</small></div>
+      <div><span>Einheiten</span><b>${state.units.length}</b><small>${state.units.filter((u) => u.type !== "ferienwohnung" && !currentContract(u.id)).length} frei</small></div>
+    </div>
+    <div class="card todo"><h2>✅ Heute zu tun</h2>
+      ${todos.length ? todos.map((x) => `<div class="todoitem ${x.chance ? "chance" : ""}"><span class="ic">${x.ic}</span><span class="tx">${x.text}</span>${x.btn}</div>`).join("") : '<div class="done">🎉 Alles erledigt – nichts zu tun!</div>'}
+    </div>
+    <h2 class="section">Was möchtest du tun?</h2>
+    <div class="qgrid">
+      <label class="qtile"><span>📷</span>Beleg fotografieren<input type="file" accept="image/*" capture="environment" data-change="docScan" hidden></label>
+      ${tile("🔑", "Neuer Mieter", 'href="#/mieter" data-act="moveWizard" data-id=""')}
+      ${tile("🏦", "Konto abrufen", 'href="#/bank" data-act="syncNow"')}
+      ${tile("💶", "Mieten prüfen", 'href="#/mieten"')}
+      ${tile("🧾", "Nebenkosten", 'href="#/nkassistent"')}
+      ${tile("🧮", "Steuererklärung", 'href="#/erklaerung"')}
+    </div>
+    <details class="more"><summary>📊 Alle Zahlen und Details anzeigen</summary>${viewDashboard().replace(/^<div class="head">[\s\S]*?<\/div><div class="toolbar noprint"><\/div><\/div>/, "")}</details>`;
+}
+
+// ---------------------------------------------------------------- Einrichtungs-Assistent für den ersten Start
+
+function viewSetup() {
+  const w = ui.setup || (ui.setup = { step: 1, counts: { haus: 0, wohnung: 1, garage: 0, stellplatz: 0, keller: 0, ferienwohnung: 0, gewerbe: 0 }, type: "mfh" });
+  const s = state.settings;
+  const steps = ["Über dich", "Dein Haus", "Was gehört dazu?", "Fertig"];
+  const bar = `<div class="setupbar">${steps.map((x, i) => `<span class="${w.step === i + 1 ? "on" : w.step > i + 1 ? "done" : ""}">${w.step > i + 1 ? "✓" : i + 1}<em>${x}</em></span>`).join("")}</div>`;
+  const types = [["mfh", "🏢", "Mehrfamilienhaus"], ["efh", "🏠", "Einfamilienhaus"], ["etw", "🚪", "Eigentumswohnung"], ["ferien", "🏖️", "Ferienwohnung / -haus"], ["garagenhof", "🚗", "Garagen / Stellplätze"]];
+  const counter = (k, l, ic) => `<div class="counter"><span>${ic} ${l}</span><div><button type="button" data-act="setupCount" data-id="${k}|-1">−</button><b>${w.counts[k]}</b><button type="button" data-act="setupCount" data-id="${k}|1">＋</button></div></div>`;
+  const body = {
+    1: `<form data-form="setup1" class="setup"><h1>Willkommen! 👋</h1><p class="muted">In 2 Minuten ist alles eingerichtet. Zuerst: Wer vermietet?</p>
+      <label class="f"><span>Dein Name (oder Firma)</span><input name="ownerName" value="${esc(s.ownerName || auth.profile?.full_name || "")}" required autocomplete="name"></label>
+      <label class="f"><span>Deine Straße und Hausnummer</span><input name="ownerStreet" value="${esc(s.ownerStreet || "")}" autocomplete="street-address"></label>
+      <div class="fgrid"><label class="f"><span>PLZ</span><input name="ownerZip" value="${esc(s.ownerZip || "")}" inputmode="numeric" autocomplete="postal-code"></label><label class="f"><span>Ort</span><input name="ownerCity" value="${esc(s.ownerCity || "")}" autocomplete="address-level2"></label></div>
+      <button class="btn primary big">Weiter →</button>
+      <p class="small muted" style="margin-top:14px">Erst mal nur umschauen? ${btn("loadDemo", "Demo-Daten ansehen", "sm")}</p></form>`,
+    2: `<form data-form="setup2" class="setup"><h1>Dein erstes Haus 🏠</h1><p class="muted">Weitere kannst du später jederzeit hinzufügen.</p>
+      <div class="typepick">${types.map(([k, ic, l]) => `<button type="button" data-act="setupType" data-id="${k}" class="${w.type === k ? "on" : ""}"><span>${ic}</span>${l}</button>`).join("")}</div>
+      <label class="f"><span>Straße und Hausnummer</span><input name="street" value="${esc(w.street || "")}" required></label>
+      <div class="fgrid"><label class="f"><span>PLZ</span><input name="zip" value="${esc(w.zip || "")}" inputmode="numeric"></label><label class="f"><span>Ort</span><input name="city" value="${esc(w.city || "")}"></label></div>
+      <label class="f"><span>Kurzer Name (optional)</span><input name="name" value="${esc(w.name || "")}" placeholder="z. B. Haus Lindenstraße"></label>
+      <div class="toolbar">${btn("setupBack", "← Zurück")}<button class="btn primary big">Weiter →</button></div></form>`,
+    3: `<div class="setup"><h1>Was gehört dazu? 🔢</h1><p class="muted">Einfach mit ＋ und − zählen. Namen und Größen kannst du später ändern.</p>
+      ${counter("haus", "Ganzes Haus (an eine Partei)", "🏠")}${counter("wohnung", "Wohnungen", "🚪")}${counter("garage", "Garagen", "🚗")}${counter("stellplatz", "Stellplätze", "🅿️")}${counter("keller", "Keller / Abstellräume", "📦")}${counter("ferienwohnung", "Ferienwohnungen", "🏖️")}${counter("gewerbe", "Gewerbe / Büros", "🏬")}
+      <div class="toolbar" style="margin-top:16px">${btn("setupBack", "← Zurück")}${btn("setupFinish", "Fertig – anlegen ✓", "primary big")}</div></div>`,
+    4: `<div class="setup"><h1>Geschafft! 🎉</h1><p class="muted">Dein Haus ist angelegt. Womit möchtest du weitermachen?</p>
+      <div class="qgrid">
+        <a class="qtile" href="#/mieter" data-act="moveWizard" data-id=""><span>🔑</span>Ersten Mieter eintragen</a>
+        <a class="qtile" href="#/bank" data-act="connectBank"><span>🏦</span>Bankkonto verbinden</a>
+        <label class="qtile"><span>📷</span>Ersten Beleg fotografieren<input type="file" accept="image/*" capture="environment" data-change="docScan" hidden></label>
+        <a class="qtile" href="#/" data-act="setupDone"><span>🏠</span>Zur Startseite</a>
+      </div></div>`,
+  }[w.step];
+  return `<div class="setupwrap">${bar}<div class="card">${body}</div></div>`;
+}
+
+function setupFinish() {
+  const w = ui.setup;
+  const o = { id: C.uid("o_"), name: w.name || w.street, short: (w.name || w.street || "").replace(/[^A-Za-zÄÖÜ]/g, "").slice(0, 3).toUpperCase(), type: w.type, street: w.street, zip: w.zip, city: w.city, afaRate: 2, notes: "" };
+  state.objects.push(o);
+  const labels = { haus: "Haus", wohnung: "Wohnung", garage: "Garage", stellplatz: "Stellplatz", keller: "Keller", ferienwohnung: "Ferienwohnung", gewerbe: "Gewerbe" };
+  for (const [k, n] of Object.entries(w.counts)) for (let i = 1; i <= n; i++) state.units.push({ id: C.uid("u_"), objectId: o.id, name: n > 1 ? `${labels[k]} ${i}` : labels[k], type: k, area: 0, rooms: 0, floor: "", vat: k === "ferienwohnung" ? 7 : 0 });
+  w.step = 4;
+  commit(`${o.name} mit ${state.units.filter((u) => u.objectId === o.id).length} Einheiten angelegt`);
+}
+
 // ---------------------------------------------------------------- Konten, Cloud-Sync & Admin
 
 const auth = { mode: "local", user: null, profile: null, settings: null, plans: [], version: 0, sync: "ok", syncTimer: null, pending: false };
@@ -2995,13 +3172,14 @@ function render() {
   if (route === "kuendigen" && !auth.user) { document.body.classList.add("authscreen"); $("#view").innerHTML = `<div style="padding:24px 16px">${viewCancelForm()}</div>`; return; }
   document.body.classList.toggle("authscreen", gate);
   if (gate) { $("#view").innerHTML = auth.user && auth.profile?.status === "blocked" && ui.authTab !== "newpw" ? viewBlocked() : viewAuth(); return; }
-  const nav = [...NAV.slice(0, -1), ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡", "Admin"]] : []), NAV[NAV.length - 1]];
   $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${esc(planOf()?.name || "")}<br><span id="sync">${syncLabel()}</span><br><span id="livesync"></span>` : `Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.<br><span id="livesync"></span>`;
   setTimeout(setSyncBadge, 0);
   if (!$("#gsearch")) $("#nav").insertAdjacentHTML("beforebegin", `<input id="gsearch" type="search" placeholder="🔎 Suchen … ( / )" autocomplete="off">`);
   if (route === "mieter" && arg && ui.folderTenant !== arg) { ui.folderTenant = arg; ui.folderTab = ui.nextFolderTab || "ueberblick"; ui.nextFolderTab = null; }
-  $("#nav").innerHTML = nav.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket", "erklaerung"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") || (r === "mieter" && ["protokoll", "auskunft"].includes(route)) || (r === "nebenkosten" && route === "nkassistent") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
-  const views = { "": viewDashboard, objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
+  $("#nav").innerHTML = navHtml(route);
+  if (!$("#tabbar")) document.body.insertAdjacentHTML("beforeend", '<nav id="tabbar" class="noprint"></nav>');
+  $("#tabbar").innerHTML = tabbarHtml(route);
+  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
     $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
@@ -3014,6 +3192,14 @@ function render() {
 const actions = {
   newObject: () => editObject(), editObject,
   moveWizard: (unitId) => moveWizard(unitId || null),
+  quickAdd: () => quickAdd(),
+  openMenu: () => openMenu(),
+  quickNote: () => quickNote(),
+  setupCount: (v) => { const [k, dlt] = v.split("|"); ui.setup.counts[k] = Math.max(0, Math.min(99, ui.setup.counts[k] + Number(dlt))); render(); },
+  setupType: (t) => { ui.setup.type = t; if (t === "ferien") Object.assign(ui.setup.counts, { wohnung: 0, ferienwohnung: Math.max(1, ui.setup.counts.ferienwohnung) }); if (t === "garagenhof") Object.assign(ui.setup.counts, { wohnung: 0, garage: Math.max(1, ui.setup.counts.garage) }); if (t === "efh") Object.assign(ui.setup.counts, { wohnung: 0, haus: 1 }); render(); },
+  setupBack: () => { ui.setup.step = Math.max(1, ui.setup.step - 1); render(); },
+  setupFinish: () => setupFinish(),
+  setupDone: () => { ui.setup = null; location.hash = "#/"; render(); },
   erklTab: (t) => { ui.erklTab = t; render(); },
   erklYear: (y) => { location.hash = `#/erklaerung/${y}`; },
   copyVal: (v) => copyField(v),
@@ -3131,7 +3317,7 @@ const actions = {
     download(`hausops-immobilien-sicherung-mit-belegen-${today()}.json`, JSON.stringify({ ...state, _files: out }), "application/json");
   },
   backup: () => download(`hausops-immobilien-sicherung-${today()}.json`, JSON.stringify(state, null, 1), "application/json"),
-  loadDemo: () => { if (state.objects.length && !confirm("Vorhandene Daten werden durch Demo-Daten ersetzt. Fortfahren?")) return; state = S.demoState(); commit("Demo-Daten geladen – probiere „Bank“ → Vorschläge übernehmen"); },
+  loadDemo: () => { ui.setup = null; if (state.objects.length && !confirm("Vorhandene Daten werden durch Demo-Daten ersetzt. Fortfahren?")) return; state = S.demoState(); commit("Demo-Daten geladen – probiere „Bank“ → Vorschläge übernehmen"); },
   reset: () => { if (confirm("Wirklich ALLE Daten löschen? Vorher Sicherung herunterladen!") && confirm("Letzte Bestätigung: alles löschen?")) { state = S.emptyState(); commit("Alle Daten gelöscht"); } },
 };
 
@@ -3281,6 +3467,8 @@ document.addEventListener("submit", (e) => {
   if (!f) return;
   e.preventDefault();
   if (f === "ki") { kiAsk(e.target.q.value); return; }
+  if (f === "setup1") { const v = Object.fromEntries(new FormData(e.target)); Object.assign(state.settings, v); persist(); ui.setup.step = 2; render(); window.scrollTo(0, 0); return; }
+  if (f === "setup2") { const v = Object.fromEntries(new FormData(e.target)); Object.assign(ui.setup, v); ui.setup.step = 3; render(); window.scrollTo(0, 0); return; }
   if (f === "nkwiz1") {
     const fd = new FormData(e.target), w = nkWizState();
     const objChanged = fd.get("objectId") !== w.objectId || fd.get("from") !== w.from || fd.get("to") !== w.to;
