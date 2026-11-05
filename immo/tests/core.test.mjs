@@ -172,3 +172,80 @@ test("CAMT.053 Import", () => {
   assert.deepEqual([txs[0].amount, txs[0].name, txs[0].iban, txs[0].purpose], [100000, "Anna Schmidt", "DE89370400440532013000", "Miete November"]);
   assert.deepEqual([txs[1].amount, txs[1].name], [-21500, "Stadtwerke & Co"]);
 });
+
+import { nkAbrechnung, fewoStats, parseOwners, incomeByUnitMonth, taxOpenPoints } from "../js/core.js";
+
+test("Nebenkostenabrechnung tagegenau mit Leerstand und Personen", () => {
+  const s = emptyState();
+  s.settings.sollStart = "";
+  s.units = [
+    { id: "a", objectId: "o", name: "WE 1", area: 60 },
+    { id: "b", objectId: "o", name: "WE 2", area: 40 },
+  ];
+  s.contracts = [
+    { id: "c1", unitId: "a", tenantIds: [], start: "2020-01-01", end: "", kalt: 50000, nk: 10000, persons: 2 },
+    // WE 2 erst ab 1.7. vermietet → Leerstand 1.1.–30.6. trägt der Vermieter
+    { id: "c2", unitId: "b", tenantIds: [], start: "2025-07-01", end: "", kalt: 40000, nk: 8000, persons: 1 },
+  ];
+  s.payments = [{ id: "p", kind: "miete", contractId: "c1", period: "2025-03", amount: 60000, date: "2025-03-01" }];
+  const r = nkAbrechnung(s, { objectId: "o", from: "2025-01-01", to: "2025-12-31", items: [
+    { label: "Grundsteuer", amount: 36500, key: "flaeche" },
+    { label: "Wasser", amount: 10000, key: "personen" },
+  ] });
+  assert.equal(r.check, r.total);
+  assert.equal(r.total, 46500);
+  const c1 = r.contracts.find((x) => x.contractId === "c1");
+  const c2 = r.contracts.find((x) => x.contractId === "c2");
+  assert.equal(c1.items[0].amount, 21900); // 60 % von 365 €
+  assert.equal(c2.items[0].amount, Math.round(14600 * 184 / 365));
+  assert.ok(r.owner.total > 0); // Leerstandsanteil
+  // Wasser nach Personentagen: 2×365 vs. 1×184
+  assert.equal(c1.items[1].amount, Math.round(10000 * 730 / 914));
+  assert.equal(c1.prepaid, 10000);
+  assert.equal(c1.saldo, c1.total - 10000);
+  assert.equal(r.deadline, "2026-12-31");
+});
+
+test("Heizkosten nach HeizkostenV 70 % Verbrauch", () => {
+  const s = emptyState();
+  s.units = [{ id: "a", objectId: "o", area: 50 }, { id: "b", objectId: "o", area: 50 }];
+  s.contracts = [
+    { id: "c1", unitId: "a", start: "2020-01-01", nk: 0 }, { id: "c2", unitId: "b", start: "2020-01-01", nk: 0 },
+  ];
+  const r = nkAbrechnung(s, { objectId: "o", from: "2025-01-01", to: "2025-12-31", items: [
+    { label: "Heizung", amount: 100000, key: "heizkosten", pct: 70, shares: { a: 3, b: 1 } },
+  ] });
+  assert.equal(r.contracts[0].total, 15000 + 52500);
+  assert.equal(r.contracts[1].total, 15000 + 17500);
+});
+
+test("FeWo-Kennzahlen ADR / RevPAR / Stornoquote", () => {
+  const s = emptyState();
+  s.bookings = [
+    { id: 1, unitId: "f", from: "2026-07-01", to: "2026-07-08", total: 70000, status: "bestaetigt", channel: "Direkt" },
+    { id: 2, unitId: "f", from: "2026-07-10", to: "2026-07-13", total: 36000, status: "bestaetigt", channel: "Airbnb" },
+    { id: 3, unitId: "f", from: "2026-07-20", to: "2026-07-25", total: 50000, status: "storniert", channel: "Airbnb" },
+    { id: 4, unitId: "f", from: "2026-07-28", to: "2026-08-01", status: "eigennutzung" },
+  ];
+  const k = fewoStats(s, ["f"], "2026-07-01", "2026-08-01");
+  assert.equal(k.nights, 10);
+  assert.equal(k.available, 31 - 4);
+  assert.equal(k.adr, 10600);
+  assert.equal(k.revpar, Math.round(106000 / 27));
+  assert.equal(k.cancelRate, 1 / 3);
+  assert.equal(k.directShare, 0.5);
+});
+
+test("Miteigentum, Monatstabelle, offene Punkte", () => {
+  assert.deepEqual(parseOwners("Murat 50; Yasemin 50 %"), [{ name: "Murat", share: 50 }, { name: "Yasemin", share: 50 }]);
+  const s = emptyState();
+  s.units = [{ id: "u", objectId: "o", name: "WE", vat: 0 }];
+  s.contracts = [{ id: "c", unitId: "u", start: "2025-01-01", kalt: 80000, nk: 20000 }];
+  s.payments = [{ id: "p", kind: "miete", contractId: "c", period: "2025-02", amount: 100000, date: "2025-01-30" }];
+  const t = incomeByUnitMonth(s, 2025);
+  assert.deepEqual(t.u[1], { kalt: 80000, umlage: 20000, fewo: 0, sonstige: 0 });
+  s.objects = [{ id: "o", name: "Haus", owners: "A 50; B 40" }];
+  const pts = taxOpenPoints(s, 2025).join(" ");
+  assert.match(pts, /100 %/);
+  assert.match(pts, /AfA/);
+});

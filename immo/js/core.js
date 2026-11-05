@@ -140,6 +140,7 @@ export const EXPENSE_CATEGORIES = {
   fewo_ausstattung:{ label: "Ferienwohnung: Verbrauch / Ausstattung", av: "sonstige", skr03: "4980", skr04: "6850" },
   fahrt:         { label: "Fahrtkosten",                        av: "sonstige",    skr03: "4670", skr04: "6670" },
   sonstiges:     { label: "Sonstige Werbungskosten",            av: "sonstige",    skr03: "4900", skr04: "6300" },
+  herstellung:   { label: "Anschaffung / Herstellung (AfA – mit StB klären)", av: null, skr03: "0090", skr04: "0240" },
   tilgung:       { label: "Darlehenstilgung (nicht abziehbar)", av: null,          skr03: "0630", skr04: "3150" },
   privat:        { label: "Privat / nicht relevant",            av: null,          skr03: null,   skr04: null },
 };
@@ -681,4 +682,250 @@ export function parseCamt(xml, accountId) {
     out.push(makeTx({ accountId, date, amount: credit ? Math.abs(amt) : -Math.abs(amt), name, iban, purpose }));
   }
   return out;
+}
+
+// ---------------------------------------------------------------- Hilfen Zeiträume
+
+export function addDaysIso(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+export const daysIncl = (from, to) => (from && to && to >= from ? nightsBetween(from, to) + 1 : 0);
+
+export function overlapNights(b, fromIso, toIso) {
+  const a = b.from > fromIso ? b.from : fromIso, z = b.to < toIso ? b.to : toIso;
+  return a < z ? nightsBetween(a, z) : 0;
+}
+
+// Tage, die ein Vertrag im Zeitraum [from, to] (inkl.) läuft
+export function contractDays(c, from, to) {
+  const a = c.start > from ? c.start : from;
+  const z = c.end && c.end < to ? c.end : to;
+  return daysIncl(a, z);
+}
+
+// ---------------------------------------------------------------- Nebenkostenabrechnung (BetrKV)
+
+export const NK_KEYS = {
+  flaeche: "Wohnfläche (m²)",
+  personen: "Personen (Personentage)",
+  einheiten: "Wohneinheiten",
+  verbrauch: "Verbrauch (Zähler)",
+  heizkosten: "Heizkosten-VO (Grund-/Verbrauchsanteil)",
+  direkt: "Direkt je Einheit",
+};
+
+// Kostenarten nach § 2 BetrKV (nur umlegbar, wenn im Mietvertrag vereinbart)
+export const BETRKV = [
+  ["grundsteuer", "Grundsteuer", "flaeche"],
+  ["wasser", "Wasserversorgung", "personen"],
+  ["abwasser", "Entwässerung / Abwasser", "personen"],
+  ["heizung", "Heizung (Brennstoff, Wartung, Betriebsstrom, Messung)", "heizkosten"],
+  ["warmwasser", "Warmwasser", "heizkosten"],
+  ["aufzug", "Aufzug", "flaeche"],
+  ["strassenreinigung", "Straßenreinigung", "flaeche"],
+  ["muell", "Müllbeseitigung", "personen"],
+  ["gebaeudereinigung", "Gebäudereinigung / Ungezieferbekämpfung", "flaeche"],
+  ["garten", "Gartenpflege", "flaeche"],
+  ["allgemeinstrom", "Beleuchtung / Allgemeinstrom", "flaeche"],
+  ["schornstein", "Schornsteinreinigung", "flaeche"],
+  ["versicherung", "Sach- und Haftpflichtversicherung", "flaeche"],
+  ["hauswart", "Hauswart", "flaeche"],
+  ["antenne", "Gemeinschaftsantenne / Kabel", "einheiten"],
+  ["waesche", "Einrichtungen der Wäschepflege", "einheiten"],
+  ["sonstige", "Sonstige Betriebskosten (im Vertrag benannt)", "flaeche"],
+];
+
+// Vorschlag für die Kostenpositionen aus den erfassten Ausgaben
+export function nkItemsFromExpenses(state, objectId, from, to) {
+  const map = { grundsteuer: "grundsteuer", versorgung: "wasser", muell: "muell", reinigung: "gebaeudereinigung", versicherung: "versicherung" };
+  const items = {};
+  for (const e of state.expenses || []) {
+    if (e.objectId !== objectId || e.date < from || e.date > to) continue;
+    const kind = map[e.category];
+    if (!kind) continue;
+    const def = BETRKV.find((x) => x[0] === kind);
+    items[kind] = items[kind] || { kind, label: def[1], amount: 0, key: def[2], pct: 70, shares: {}, umlage: true };
+    items[kind].amount += e.amount;
+  }
+  return Object.values(items);
+}
+
+// Berechnet die Abrechnung tagegenau je Mietvertrag; Leerstand trägt der Vermieter.
+export const NK_UNIT_TYPES = (u) => !["garage", "stellplatz"].includes(u.type); // Garagen/Stellplätze tragen keine Betriebskosten des Hauses
+
+export function nkAbrechnung(state, { objectId, from, to, items }) {
+  const units = (state.units || []).filter((u) => u.objectId === objectId && NK_UNIT_TYPES(u));
+  const P = daysIncl(from, to);
+  const segs = []; // {unitId, contractId|null, days, persons}
+  for (const u of units) {
+    let used = 0;
+    for (const c of state.contracts || []) {
+      if (c.unitId !== u.id) continue;
+      const days = contractDays(c, from, to);
+      if (!days) continue;
+      segs.push({ unitId: u.id, contractId: c.id, days, persons: Number(c.persons) || 1 });
+      used += days;
+    }
+    if (used < P) segs.push({ unitId: u.id, contractId: null, days: P - used, persons: 0 });
+  }
+  const unitWeight = (key, item) => {
+    const w = {};
+    for (const u of units) {
+      if (key === "flaeche") w[u.id] = Number(u.area) || 0;
+      else if (key === "einheiten") w[u.id] = 1;
+      else w[u.id] = Number(item.shares?.[u.id]) || 0; // verbrauch / direkt
+    }
+    return w;
+  };
+  // verteilt einen Betrag nach Einheiten-Gewicht und innerhalb der Einheit nach Tagen
+  const distribute = (amount, key, item) => {
+    const raw = segs.map(() => 0);
+    if (!amount) return raw;
+    if (key === "personen") {
+      const W = segs.reduce((s, x) => s + x.persons * x.days, 0);
+      if (W) segs.forEach((x, i) => { raw[i] = amount * x.persons * x.days / W; });
+      return raw;
+    }
+    if (key === "direkt") {
+      segs.forEach((x, i) => { raw[i] = (Number(item.shares?.[x.unitId]) || 0) * x.days / P; });
+      return raw;
+    }
+    const w = unitWeight(key, item);
+    const W = Object.values(w).reduce((a, b) => a + b, 0);
+    if (!W) return raw;
+    segs.forEach((x, i) => { raw[i] = amount * (w[x.unitId] / W) * (x.days / P); });
+    return raw;
+  };
+  const perSeg = segs.map(() => []);
+  const warnings = [];
+  for (const item of items) {
+    const amount = item.key === "direkt" ? units.reduce((s, u) => s + (Number(item.shares?.[u.id]) || 0), 0) : item.amount;
+    let raw;
+    if (item.key === "heizkosten") {
+      const pct = Math.min(70, Math.max(50, Number(item.pct) || 70));
+      const a = distribute(amount * (100 - pct) / 100, "flaeche", item);
+      const b = distribute(amount * pct / 100, "verbrauch", item);
+      raw = a.map((v, i) => v + b[i]);
+      if (!Object.values(item.shares || {}).some(Number)) warnings.push(`${item.label}: Verbrauchswerte fehlen – Verbrauchsanteil ${pct} % wird niemandem zugeordnet.`);
+    } else raw = distribute(amount, item.key, item);
+    if (item.key === "flaeche" && !units.some((u) => Number(u.area))) warnings.push(`${item.label}: Bei den Einheiten fehlen die Wohnflächen.`);
+    if (item.key === "verbrauch" && !Object.values(item.shares || {}).some(Number)) warnings.push(`${item.label}: Verbrauchswerte fehlen.`);
+    // runden; Rundungsdifferenz trägt der Vermieter
+    const rounded = raw.map((v) => Math.round(v));
+    const diff = amount - rounded.reduce((a, b) => a + b, 0);
+    const ownerIdx = segs.findIndex((x) => !x.contractId);
+    if (ownerIdx > -1) rounded[ownerIdx] += diff;
+    else if (rounded.length) rounded[rounded.length - 1] += diff;
+    rounded.forEach((v, i) => perSeg[i].push({ label: item.label, key: item.key, amount: v }));
+  }
+  const months = monthRange(monthKey(from), monthKey(to));
+  const contracts = [];
+  let owner = { items: items.map((it) => ({ label: it.label, amount: 0 })), total: 0, days: 0 };
+  segs.forEach((x, i) => {
+    const total = perSeg[i].reduce((s, it) => s + it.amount, 0);
+    if (!x.contractId) {
+      perSeg[i].forEach((it, k) => { owner.items[k].amount += it.amount; });
+      owner.total += total; owner.days += x.days;
+      return;
+    }
+    const c = (state.contracts || []).find((cc) => cc.id === x.contractId);
+    const prepaid = (state.payments || [])
+      .filter((p) => p.kind === "miete" && p.contractId === c.id && months.includes(p.period))
+      .reduce((s, p) => s + splitPayment(state, p).filter((pt) => pt.type === "umlage").reduce((a, pt) => a + pt.amount, 0), 0);
+    const activeMonths = months.filter((m) => contractActiveIn(c, m)).length || 1;
+    contracts.push({
+      contractId: c.id, unitId: x.unitId, days: x.days, persons: x.persons,
+      items: perSeg[i], total, prepaid, saldo: total - prepaid, // > 0 Nachzahlung, < 0 Guthaben
+      newMonthly: Math.ceil(total / activeMonths / 100) * 100,
+      prepaidSoll: months.filter((m) => contractActiveIn(c, m)).reduce((s, m) => s + rentForMonth(c, m).nk, 0),
+    });
+  });
+  const total = items.reduce((s, it) => s + (it.key === "direkt" ? units.reduce((a, u) => a + (Number(it.shares?.[u.id]) || 0), 0) : it.amount), 0);
+  // § 556 Abs. 3 BGB: Zugang beim Mieter spätestens 12 Monate nach Ende des Abrechnungszeitraums
+  const dk = addMonths(monthKey(to), 12);
+  const deadline = `${dk}-${String(Math.min(Number(to.slice(8, 10)), daysInMonth(dk))).padStart(2, "0")}`;
+  const check = contracts.reduce((s, c) => s + c.total, 0) + owner.total;
+  return { from, to, days: P, contracts, owner, total, check, deadline, warnings };
+}
+
+// ---------------------------------------------------------------- Ferienwohnung-Kennzahlen
+
+export function fewoStats(state, unitIds, from, to) {
+  const ids = new Set(unitIds);
+  const all = (state.bookings || []).filter((b) => ids.has(b.unitId));
+  const days = nightsBetween(from, to);
+  const blocked = all.filter((b) => b.status === "eigennutzung").reduce((s, b) => s + overlapNights(b, from, to), 0);
+  const active = all.filter((b) => !["storniert", "eigennutzung"].includes(b.status));
+  const nights = active.reduce((s, b) => s + overlapNights(b, from, to), 0);
+  const lodging = active.reduce((s, b) => { const n = nightsBetween(b.from, b.to); return s + (n ? Math.round((b.total || 0) * overlapNights(b, from, to) / n) : 0); }, 0);
+  const available = Math.max(0, days * ids.size - blocked);
+  const starting = all.filter((b) => b.from >= from && b.from < to && b.status !== "eigennutzung");
+  const startActive = starting.filter((b) => b.status !== "storniert");
+  return {
+    nights, available, lodging,
+    occupancy: available ? nights / available : 0,
+    adr: nights ? Math.round(lodging / nights) : 0,
+    revpar: available ? Math.round(lodging / available) : 0,
+    avgStay: startActive.length ? startActive.reduce((s, b) => s + nightsBetween(b.from, b.to), 0) / startActive.length : 0,
+    cancelRate: starting.length ? (starting.length - startActive.length) / starting.length : 0,
+    directShare: startActive.length ? startActive.filter((b) => (b.channel || "Direkt") === "Direkt").length / startActive.length : 0,
+    bookings: startActive.length,
+  };
+}
+
+// ---------------------------------------------------------------- Steuerberater-Jahrespaket
+
+export function parseOwners(text) {
+  return String(text || "").split(/[;\n]/).map((x) => x.trim()).filter(Boolean).map((x) => {
+    const m = x.match(/^(.*?)[\s:]+(\d+(?:[.,]\d+)?)\s*%?$/);
+    return m ? { name: m[1].trim(), share: Number(m[2].replace(",", ".")) } : { name: x, share: 100 };
+  });
+}
+
+// Zuflüsse je Einheit und Kalendermonat (Kalt / Umlagen / FeWo netto)
+export function incomeByUnitMonth(state, year) {
+  const out = {};
+  for (const p of state.payments || []) {
+    if (!inYear(p.date, year)) continue;
+    let unitId = null;
+    if (p.contractId) unitId = (state.contracts || []).find((c) => c.id === p.contractId)?.unitId;
+    else if (p.invoiceId) { const inv = (state.invoices || []).find((i) => i.id === p.invoiceId); unitId = inv?.unitId || (state.bookings || []).find((b) => b.id === inv?.bookingId)?.unitId; }
+    const key = unitId || "_";
+    const m = Number(p.date.slice(5, 7));
+    out[key] = out[key] || {};
+    out[key][m] = out[key][m] || { kalt: 0, umlage: 0, fewo: 0, sonstige: 0 };
+    for (const part of splitPayment(state, p)) {
+      const net = part.vat && !part.kleinunternehmer ? Math.round(part.amount / (1 + part.vat / 100)) : part.amount;
+      if (out[key][m][part.type] !== undefined) out[key][m][part.type] += net;
+    }
+  }
+  return out;
+}
+
+// Offene Punkte, die der Steuerberater sonst nachfragen würde
+export function taxOpenPoints(state, year) {
+  const pts = [];
+  const y = String(year);
+  const openTx = (state.transactions || []).filter((t) => !t.link && t.date.startsWith(y));
+  if (openTx.length) pts.push(`${openTx.length} Bankumsätze ${y} sind noch nicht zugeordnet.`);
+  const noObj = (state.expenses || []).filter((e) => e.date.startsWith(y) && !e.objectId && EXPENSE_CATEGORIES[e.category]?.av);
+  if (noObj.length) pts.push(`${noObj.length} Ausgaben ohne Objektzuordnung.`);
+  const noBeleg = (state.expenses || []).filter((e) => e.date.startsWith(y) && !e.belegNr && EXPENSE_CATEGORIES[e.category]?.av);
+  if (noBeleg.length) pts.push(`${noBeleg.length} Ausgaben ohne Belegnummer – Belege beilegen bzw. nachreichen.`);
+  const hk = (state.expenses || []).filter((e) => e.date.startsWith(y) && e.category === "herstellung");
+  if (hk.length) pts.push(`${hk.length} Positionen als Anschaffung/Herstellung markiert – Erhaltungsaufwand oder AfA? (anschaffungsnaher Aufwand: 15 %-Grenze in 3 Jahren prüfen)`);
+  for (const o of state.objects || []) {
+    if (!o.buildingShare || !o.purchaseDate) pts.push(`${o.name}: Kaufdatum/Gebäudeanteil fehlt – AfA kann nicht berechnet werden.`);
+    const owners = parseOwners(o.owners);
+    if (owners.length > 1 && Math.round(owners.reduce((s, x) => s + x.share, 0)) !== 100) pts.push(`${o.name}: Miteigentumsanteile ergeben nicht 100 %.`);
+  }
+  for (const u of state.units || []) {
+    const cs = (state.contracts || []).filter((c) => c.unitId === u.id).sort((a, b) => (a.start < b.start ? -1 : 1));
+    for (let i = 1; i < cs.length; i++) {
+      if (!cs[i - 1].end || cs[i - 1].end >= cs[i].start) pts.push(`${u.name}: Mietverträge überschneiden sich (Mieterwechsel prüfen).`);
+    }
+  }
+  if ((state.units || []).some((u) => u.type === "ferienwohnung")) pts.push("Ferienwohnung: Einordnung gewerblich oder Vermögensverwaltung und Umsatzsteuer (Kleinunternehmer?) mit dem Steuerberater klären; Plattformen melden Umsätze (DAC7).");
+  return pts;
 }

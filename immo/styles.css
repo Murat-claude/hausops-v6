@@ -31,7 +31,7 @@ main { flex: 1; padding: 24px 28px 60px; max-width: 1280px; min-width: 0; }
 .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); margin-bottom: 16px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); margin-bottom: 16px; min-width: 0; overflow-x: auto; }
 .grid { display: grid; gap: 16px; }
 .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -109,6 +109,7 @@ dialog .df .grow { flex: 1; }
 .cal td.d.we { background: #e6eae8; }
 .cal td.d.b { background: var(--brand); color: #fff; cursor: pointer; }
 .cal td.d.b.req { background: var(--accent); }
+.cal td.d.b.own { background: #9aa5a8; }
 .cal td.d.today { outline: 2px solid var(--accent); }
 .cal td.u { text-align: left; padding-right: 10px; white-space: nowrap; font-weight: 600; font-size: 12px; }
 
@@ -154,6 +155,6 @@ dialog .df .grow { flex: 1; }
   main { padding: 0; max-width: none; }
   .card, .paper { box-shadow: none; border: 0; padding: 0; }
   .paper { max-width: none; }
-  .table-wrap { overflow: visible; }
+  .table-wrap, .card { overflow: visible; }
   a { color: inherit; text-decoration: none; }
 }

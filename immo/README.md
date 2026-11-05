@@ -13,11 +13,17 @@ Läuft als eigenständige Web-App unter **`/immo/`** auf derselben Netlify-Seite
 | **Automatische Zuordnung** | Mieteingänge werden über Mieter-IBAN, Name, Betrag (= Warmmiete), Einheit im Verwendungszweck und **gelernte Regeln** erkannt. Der Soll-Monat kommt aus dem Verwendungszweck („Miete 11/2026“, „Dezember“), sonst gilt: Zahlung ab dem 20. zählt für den Folgemonat. Ausgaben (Stadtwerke, Grundsteuer, Versicherung, Zinsen …) erkennt die App über Stichwörter und Regeln |
 | **Mieteingänge** | Soll/Ist je Monat, Jahresmatrix (✓ / ½ / ✗), Rückstände, Barzahlungen |
 | **Ausgaben** | Werbungskosten nach Kategorien, je Objekt, aus Bankumsätzen oder manuell (bar/Karte) |
-| **Ferienwohnung** | Belegungskalender, Buchungen mit Kanal (Airbnb, Booking …), Prüfung auf Überschneidungen, **Smoobu-Import** über die vorhandene Netlify-Function |
+| **Ferienwohnung** | Belegungskalender inkl. Eigennutzung, Buchungen mit Kanal (Airbnb, Booking …), Prüfung auf Überschneidungen, **Smoobu-Import** über die vorhandene Netlify-Function. Kennzahlen **Auslastung, ADR, RevPAR** mit Vorjahresvergleich, Ø Aufenthaltsdauer, **Stornoquote**, **Direktbuchungsanteil**, Netto-Ertrag. **Reinigungsplan** mit Hinweis auf Wechsel am selben Tag und Auftrag zum Kopieren. **Gäste-Nachrichten** (Bestätigung, 3 Tage vor Anreise, während des Aufenthalts, Abreise/Bewertung). Hinweis auf den **Meldeschein** bei ausländischen Gästen, **Registrierungsnummer** auf Rechnungen |
 | **Rechnungen** | Fortlaufende Nummern (`RE-2026-0001`), 7 % USt auf Übernachtung und Endreinigung, 19 % auf Extras, **Kurtaxe als durchlaufender Posten**, Kleinunternehmer-Option (§ 19 UStG), Pflichtangaben nach § 14 UStG, Druck/PDF, Storno mit Stornorechnung, Zahlungsstatus |
-| **Steuer** | **Anlage-V-Zusammenstellung** je Objekt (Zuflussprinzip, AfA automatisch zeitanteilig) |
+| **Nebenkostenabrechnung** | Kostenarten nach § 2 BetrKV, Umlageschlüssel Fläche, Personen(-tage), Einheiten, Verbrauch, **Heizkosten-VO (50–70 % Verbrauch)** oder direkt je Einheit. Abrechnung **tagegenau** bei Mieterwechsel; den Leerstandsanteil trägt der Vermieter. Vorauszahlungen werden aus den echten Zahlungseingängen übernommen. Die App prüft die **12-Monats-Frist** (§ 556 Abs. 3 BGB), schlägt eine neue Vorauszahlung vor und erstellt ein druckbares **Anschreiben** je Mieter mit Hinweis auf Belegeinsicht. Garagen und Stellplätze tragen keine Hauskosten |
+| **Steuer** | **Anlage-V-Zusammenstellung** je Objekt (Zuflussprinzip, AfA automatisch zeitanteilig) mit Aufteilung bei **Miteigentum** |
+| **Jahrespaket Steuerberater** | Querformat-PDF mit Deckblatt, Übersicht, **Monatstabellen je Einheit** (Kalt/NK/FeWo), Werbungskosten, separat markierten **Anschaffungs-/Herstellungskosten**, Nebenkostenabrechnungen, **Beleg-Checkliste** (fehlende Belege markiert) und **offenen Fragen** (unzugeordnete Umsätze, fehlende AfA-Daten, überlappende Mietverträge, Einordnung der Ferienwohnung) |
 | **DATEV** | **DATEV-Buchungsstapel (EXTF 700, Windows-1252)** für Monat, Quartal oder Jahr, SKR 03/04, Konten anpassbar. Dazu Buchungsliste (Excel) und druckbarer Monatsbericht für den Steuerberater |
 | **Daten** | Speicherung lokal im Browser. Sicherung/Wiederherstellung als JSON-Datei, Demo-Daten zum Ausprobieren |
+
+## Fachliche Grundlage
+
+Die Regeln stammen aus den Fach-Skills *Nebenkostenabrechnung* (BetrKV, HeizkostenV, § 556 BGB), *Ferienwohnung-Profi* (Revenue-Kennzahlen, Gästekommunikation, Pflichten in Deutschland) und *Steuerberater-Unterlagen* (Aufbau des Jahrespakets). Alles ist als Vorbereitung gedacht, nicht als Rechts- oder Steuerberatung.
 
 ## Nutzung
 
@@ -38,9 +44,8 @@ Läuft als eigenständige Web-App unter **`/immo/`** auf derselben Netlify-Seite
 
 1. **Live-Bankanbindung** (PSD2 über einen lizenzierten Kontoinformationsdienst wie finAPI, Tink oder Salt Edge, oder FinTS mit DK-Produktregistrierung) als Netlify-Function, die die Umsätze dann automatisch statt per Datei abholt. Das braucht einen Vertrag oder eine Registrierung beim Anbieter.
 2. **Cloud-Sync** über Supabase (wie bei Livora Clean), damit die Daten auf mehreren Geräten verfügbar sind und ein Login möglich ist.
-3. **Nebenkostenabrechnung** mit Umlageschlüsseln (Fläche, Personen, Verbrauch).
-4. **Belege hochladen** (Foto/PDF) mit Weitergabe an DATEV Unternehmen online.
-5. **E-Rechnung (XRechnung/ZUGFeRD)** für Geschäftskunden (Pflicht für alle ab 2028).
+3. **Belege hochladen** (Foto/PDF) mit Weitergabe an DATEV Unternehmen online.
+4. **E-Rechnung (XRechnung/ZUGFeRD)** für Geschäftskunden (Pflicht für alle ab 2028).
 
 ## Entwicklung
 

@@ -166,6 +166,7 @@ const SPEC = {
     { k: "purchasePrice", l: "Kaufpreis inkl. Nebenkosten (€)", t: "money" },
     { k: "buildingShare", l: "Davon Gebäudeanteil = AfA-Basis (€)", t: "money" },
     { k: "afaRate", l: "AfA-Satz in %", t: "number", step: 0.01, hint: "2 % (Baujahr 1925–2022), 2,5 % (vor 1925), 3 % (ab 2023)" },
+    { k: "owners", l: "Eigentümer & Anteile (bei Miteigentum)", ph: "Max Mustermann 50; Erika Mustermann 50", full: 1, hint: "Für die Aufteilung der Anlage V je Person" },
     { k: "notes", l: "Notizen (Hausverwaltung, Grundbuch, Darlehen …)", t: "textarea" },
   ],
   unit: [
@@ -178,6 +179,7 @@ const SPEC = {
     { k: "vat", l: "Umsatzsteuer auf Miete", t: "select", opts: [["0", "steuerfrei (§ 4 Nr. 12 UStG)"], ["7", "7 % (Beherbergung / Ferienwohnung)"], ["19", "19 % (Option / separater Stellplatz)"]] },
     { k: "maxGuests", l: "Max. Gäste (Ferienwohnung)", t: "number" },
     { k: "smoobuName", l: "Name in Smoobu (für Import)", hint: "Nur für Ferienwohnungen, falls abweichend" },
+    { k: "registrationNo", l: "Registrierungsnummer (Ferienwohnung)", hint: "Falls die Kommune eine Registrierung verlangt (EU-VO 2024/1028) – erscheint auf Rechnungen" },
     { k: "meters", l: "Zähler (Strom, Wasser, Gas …)", t: "textarea", ph: "Strom 12345678, Wasser kalt 99887" },
     { k: "features", l: "Ausstattung / Details", t: "textarea", ph: "Balkon, EBK, Keller Nr. 3, Bad mit Fenster …" },
   ],
@@ -194,6 +196,7 @@ const SPEC = {
     { k: "start", l: "Mietbeginn", t: "date", req: 1 }, { k: "end", l: "Mietende (leer = unbefristet)", t: "date" },
     { k: "kalt", l: "Kaltmiete (€/Monat)", t: "money" }, { k: "nk", l: "NK-/Heizkosten-Vorauszahlung (€/Monat)", t: "money" },
     { k: "extra", l: "Zuschläge (Stellplatz, Möblierung …)", t: "money" }, { k: "kaution", l: "Kaution (€)", t: "money" },
+    { k: "persons", l: "Personen im Haushalt (für Umlage nach Personen)", t: "number" },
     { k: "notes", l: "Notizen (Index-/Staffelmiete, Kündigungsfrist …)", t: "textarea" },
   ],
   step: [
@@ -217,12 +220,13 @@ const SPEC = {
     { k: "unitId", l: "Ferienwohnung", t: "select", opts: () => unitOpts((u) => u.type === "ferienwohnung"), req: 1, full: 1 },
     { k: "from", l: "Anreise", t: "date", req: 1 }, { k: "to", l: "Abreise", t: "date", req: 1 },
     { k: "guest", l: "Gast (Rechnungsempfänger)", req: 1 }, { k: "email", l: "E-Mail", t: "email" },
+    { k: "nationality", l: "Staatsangehörigkeit", ph: "deutsch", hint: "Ausländische Gäste: Meldeschein ausfüllen und 12 Monate aufbewahren" },
     { k: "guestStreet", l: "Straße" }, { k: "guestZip", l: "PLZ" }, { k: "guestCity", l: "Ort" }, { k: "phone", l: "Telefon" },
     { k: "adults", l: "Erwachsene", t: "number" }, { k: "children", l: "Kinder", t: "number" },
     { k: "total", l: "Übernachtungspreis gesamt brutto (€)", t: "money" }, { k: "cleaning", l: "Endreinigung brutto (€)", t: "money" },
     { k: "kurtaxe", l: "Kurtaxe pro Erwachsenem & Nacht (€)", t: "money" },
     { k: "channel", l: "Kanal", t: "select", opts: ["Direkt", "Airbnb", "Booking.com", "FeWo-direkt / Vrbo", "Traum-Ferienwohnungen", "Sonstige"].map((x) => [x, x]) },
-    { k: "status", l: "Status", t: "select", opts: [["bestaetigt", "bestätigt"], ["angefragt", "angefragt / Option"], ["storniert", "storniert"]] },
+    { k: "status", l: "Status", t: "select", opts: [["bestaetigt", "bestätigt"], ["angefragt", "angefragt / Option"], ["storniert", "storniert"], ["eigennutzung", "Eigennutzung / gesperrt"]] },
     { k: "note", l: "Notiz", t: "textarea" },
   ],
   account: [
@@ -595,7 +599,7 @@ function journalCsv(from, to) {
 
 const NAV = [
   ["", "▦", "Übersicht"], ["objekte", "⌂", "Objekte & Einheiten"], ["mieter", "☺", "Mieter & Verträge"],
-  ["mieten", "€", "Mieteingänge"], ["bank", "⇄", "Bank"], ["ausgaben", "✎", "Ausgaben"],
+  ["mieten", "€", "Mieteingänge"], ["bank", "⇄", "Bank"], ["ausgaben", "✎", "Ausgaben"], ["nebenkosten", "⚖", "Nebenkosten"],
   ["ferien", "☀", "Ferienwohnung"], ["rechnungen", "▤", "Rechnungen"], ["steuer", "§", "Steuer & DATEV"], ["einstellungen", "⚙", "Einstellungen"],
 ];
 
@@ -645,11 +649,8 @@ function viewDashboard() {
     </div>`;
 }
 
-function addDays(iso, n) { const x = new Date(iso); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); }
-function overlapNights(b, fromIso, toIso) {
-  const a = b.from > fromIso ? b.from : fromIso, z = b.to < toIso ? b.to : toIso;
-  return a < z ? C.nightsBetween(a, z) : 0;
-}
+const addDays = C.addDaysIso;
+const overlapNights = C.overlapNights;
 
 function viewObjects() {
   const key = C.monthKey(today());
@@ -792,30 +793,141 @@ function viewFewo() {
   if (!units.length) return head("Ferienwohnung") + `<div class="card empty"><div class="big">☀️</div><p>Lege unter „Objekte & Einheiten“ eine Einheit vom Typ <b>Ferienwohnung</b> an, um Buchungen, Belegungskalender und Gäste-Rechnungen zu nutzen.</p><br>${btn("newUnit", "+ Einheit anlegen", "primary")}</div>`;
   const key = ui.month, days = C.daysInMonth(key);
   const from = `${key}-01`, to = `${C.addMonths(key, 1)}-01`;
-  const active = state.bookings.filter((b) => b.status !== "storniert");
+  const ids = units.map((u) => u.id);
+  const k = C.fewoStats(state, ids, from, to);
+  const kPrev = C.fewoStats(state, ids, `${C.addMonths(key, -12)}-01`, `${C.addMonths(key, -11)}-01`);
+  const y = key.slice(0, 4);
+  const kYear = C.fewoStats(state, ids, `${y}-01-01`, `${Number(y) + 1}-01-01`);
+  const pct = (v) => `${Math.round(v * 100)} %`;
+  const vs = (a, b, f) => (b ? `<span class="${a >= b ? "pos" : "neg"}">Vorjahr ${f(b)}</span>` : "Vorjahr –");
+  const active = state.bookings.filter((b) => !["storniert"].includes(b.status));
   const monthB = state.bookings.filter((b) => b.from < to && b.to > from).sort((a, b) => (a.from < b.from ? -1 : 1));
-  const nights = sum(active, (b) => overlapNights(b, from, to));
-  const revenue = sum(active, (b) => { const n = C.nightsBetween(b.from, b.to); return n ? Math.round(((b.total || 0) * overlapNights(b, from, to)) / n) : 0; });
-  const yearB = active.filter((b) => b.from.startsWith(String(key.slice(0, 4))));
+  // Netto-Ertrag im Jahr: Logis-Umsatz minus FeWo-Kosten der betroffenen Objekte
+  const objIds = new Set(units.map((u) => u.objectId));
+  const fewoCosts = sum(state.expenses.filter((e) => e.date.startsWith(y) && objIds.has(e.objectId) && C.EXPENSE_CATEGORIES[e.category]?.av), (e) => e.amount);
+  // Reinigungsplan: Abreisen der nächsten 14 Tage
+  const horizon = addDays(today(), 14);
+  const departures = active.filter((b) => b.status !== "eigennutzung" && b.to >= today() && b.to <= horizon).sort((a, b) => (a.to < b.to ? -1 : 1));
   const cal = `<table class="cal"><tr><th></th>${Array.from({ length: days }, (_, i) => `<th>${i + 1}</th>`).join("")}</tr>
     ${units.map((u) => `<tr><td class="u">${esc(u.name)}</td>${Array.from({ length: days }, (_, i) => {
       const day = `${key}-${String(i + 1).padStart(2, "0")}`;
       const b = active.find((x) => x.unitId === u.id && x.from <= day && x.to > day);
       const wd = new Date(day).getDay();
-      return `<td class="d ${wd === 0 || wd === 6 ? "we" : ""} ${b ? "b" : ""} ${b?.status === "angefragt" ? "req" : ""} ${day === today() ? "today" : ""}" ${b ? `data-act="editBooking" data-id="${b.id}" title="${esc(b.guest)} · ${d(b.from)}–${d(b.to)}"` : `data-act="newBookingAt" data-id="${u.id}|${day}" title="Neue Buchung ab ${d(day)}"`}>${b && b.from === day ? esc(b.guest.slice(0, 2)) : ""}</td>`;
+      return `<td class="d ${wd === 0 || wd === 6 ? "we" : ""} ${b ? "b" : ""} ${b?.status === "angefragt" ? "req" : ""} ${b?.status === "eigennutzung" ? "own" : ""} ${day === today() ? "today" : ""}" ${b ? `data-act="editBooking" data-id="${b.id}" title="${esc(b.guest)} · ${d(b.from)}–${d(b.to)}"` : `data-act="newBookingAt" data-id="${u.id}|${day}" title="Neue Buchung ab ${d(day)}"`}>${b && b.from === day ? esc((b.guest || "").slice(0, 2)) : ""}</td>`;
     }).join("")}</tr>`).join("")}</table>`;
-  return head("Ferienwohnung", "Belegung, Buchungen & Gäste-Rechnungen", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("smoobu", "⟳ Smoobu-Import") + btn("newBooking", "+ Buchung", "primary")) + `
+  const statusB = (b) => ({ storniert: '<span class="badge bad">storniert</span>', angefragt: '<span class="badge warn">angefragt</span>', eigennutzung: '<span class="badge grey">Eigennutzung</span>' }[b.status] || '<span class="badge ok">bestätigt</span>');
+  return head("Ferienwohnung", "Belegung, Kennzahlen, Buchungen & Gäste-Rechnungen", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("smoobu", "⟳ Smoobu-Import") + btn("newBooking", "+ Buchung", "primary")) + `
     <div class="kpis">
-      <div class="kpi"><div class="l">Belegte Nächte</div><div class="v">${nights}</div><div class="s">${Math.round((nights / (days * units.length)) * 100)} % Auslastung</div></div>
-      <div class="kpi"><div class="l">Übernachtungsumsatz ${C.MONTHS_DE[Number(key.slice(5)) - 1]}</div><div class="v">${eur(revenue)}</div><div class="s">Ø ${nights ? eur(Math.round(revenue / nights)) : "–"} / Nacht</div></div>
-      <div class="kpi"><div class="l">Buchungen ${key.slice(0, 4)}</div><div class="v">${yearB.length}</div><div class="s">${eur(sum(yearB, (b) => (b.total || 0) + (b.cleaning || 0)))} brutto</div></div>
+      <div class="kpi"><div class="l">Auslastung ${C.MONTHS_DE[Number(key.slice(5)) - 1]}</div><div class="v">${pct(k.occupancy)}</div><div class="s">${k.nights} / ${k.available} Nächte · ${vs(k.occupancy, kPrev.occupancy, pct)}</div></div>
+      <div class="kpi"><div class="l">ADR (Ø Preis / Nacht)</div><div class="v">${k.adr ? eur(k.adr) : "–"}</div><div class="s">${vs(k.adr, kPrev.adr, eur)}</div></div>
+      <div class="kpi"><div class="l">RevPAR</div><div class="v">${eur(k.revpar)}</div><div class="s">${vs(k.revpar, kPrev.revpar, eur)}</div></div>
+      <div class="kpi"><div class="l">Logis-Umsatz</div><div class="v">${eur(k.lodging)}</div><div class="s">${vs(k.lodging, kPrev.lodging, eur)}</div></div>
     </div>
-    <div class="card"><h2>Belegungskalender ${C.fmtMonth(key)}</h2><div class="table-wrap">${cal}</div><p class="small muted" style="margin-top:6px">Freien Tag anklicken = neue Buchung. Gold = angefragt.</p></div>
-    <div class="card"><h2>Buchungen im ${C.fmtMonth(key)}</h2>${monthB.length ? `<div class="table-wrap"><table><thead><tr><th>Zeitraum</th><th>Gast</th><th>Wohnung</th><th>Kanal</th><th class="num">Preis</th><th>Status</th><th>Rechnung</th></tr></thead><tbody>
+    <div class="kpis">
+      <div class="kpi"><div class="l">Jahr ${y}: Logis-Umsatz</div><div class="v">${eur(kYear.lodging)}</div><div class="s">${kYear.bookings} Buchungen · Ø ${kYear.avgStay.toFixed(1).replace(".", ",")} Nächte</div></div>
+      <div class="kpi"><div class="l">Kosten ${y} (Objekt)</div><div class="v">${eur(fewoCosts)}</div><div class="s">Netto-Ertrag ≈ ${eur(kYear.lodging - fewoCosts)}</div></div>
+      <div class="kpi"><div class="l">Stornoquote ${y}</div><div class="v">${pct(kYear.cancelRate)}</div></div>
+      <div class="kpi"><div class="l">Direktbuchungen ${y}</div><div class="v">${pct(kYear.directShare)}</div><div class="s">ohne Portal-Provision</div></div>
+    </div>
+    <div class="card"><h2>Belegungskalender ${C.fmtMonth(key)}</h2><div class="table-wrap">${cal}</div><p class="small muted" style="margin-top:6px">Freien Tag anklicken = neue Buchung. Gold = angefragt, grau = Eigennutzung/gesperrt.</p></div>
+    <div class="card"><h2>Reinigungsplan (nächste 14 Tage)</h2>${departures.length ? `<div class="table-wrap"><table><thead><tr><th>Abreise</th><th>Wohnung</th><th>Gast</th><th>Nächste Anreise</th><th></th></tr></thead><tbody>
+      ${departures.map((b) => { const next = active.filter((x) => x.unitId === b.unitId && x.from >= b.to && x.id !== b.id).sort((a, c) => (a.from < c.from ? -1 : 1))[0];
+        const same = next && next.from === b.to;
+        return `<tr><td class="nowrap">${d(b.to)}</td><td>${esc(byId("units", b.unitId)?.name)}</td><td>${esc(b.guest)}</td><td>${next ? `${d(next.from)} · ${esc(next.guest)} (${Number(next.adults || 0) + Number(next.children || 0)} Pers.) ${same ? '<span class="badge warn">Wechsel am selben Tag</span>' : ""}` : '<span class="muted">keine</span>'}</td>
+        <td>${btn("cleaningMsg", "📋 Auftrag kopieren", "sm", b.id)}</td></tr>`; }).join("")}</tbody></table></div>` : '<p class="muted">Keine Abreisen in den nächsten 14 Tagen.</p>'}</div>
+    <div class="card"><h2>Buchungen im ${C.fmtMonth(key)}</h2>${monthB.length ? `<div class="table-wrap"><table><thead><tr><th>Zeitraum</th><th>Gast</th><th>Wohnung</th><th>Kanal</th><th class="num">Preis</th><th>Status</th><th>Rechnung</th><th></th></tr></thead><tbody>
       ${monthB.map((b) => { const inv = byId("invoices", b.invoiceId);
-        return `<tr><td class="nowrap">${d(b.from)} – ${d(b.to)}<div class="small muted">${C.nightsBetween(b.from, b.to)} Nächte · ${Number(b.adults || 0) + Number(b.children || 0)} Pers.</div></td><td class="click" data-act="editBooking" data-id="${b.id}"><b>${esc(b.guest)}</b></td><td class="small">${esc(byId("units", b.unitId)?.name)}</td><td class="small">${esc(b.channel)}</td>
-        <td class="num">${eur((b.total || 0) + (b.cleaning || 0))}</td><td>${b.status === "storniert" ? '<span class="badge bad">storniert</span>' : b.status === "angefragt" ? '<span class="badge warn">angefragt</span>' : '<span class="badge ok">bestätigt</span>'}</td>
-        <td>${inv ? `<a href="#/rechnung/${inv.id}">${esc(inv.number)}</a> ${invBadge(inv)}` : b.status !== "storniert" ? btn("invoiceFromBooking", "Rechnung erstellen", "sm", b.id) : ""}</td></tr>`; }).join("")}</tbody></table></div>` : '<p class="muted">Keine Buchungen in diesem Monat.</p>'}</div>`;
+        const foreign = b.nationality && !/^(de|deu|deutsch|deutschland|german)/i.test(b.nationality.trim());
+        return `<tr><td class="nowrap">${d(b.from)} – ${d(b.to)}<div class="small muted">${C.nightsBetween(b.from, b.to)} Nächte · ${Number(b.adults || 0) + Number(b.children || 0)} Pers.</div></td><td class="click" data-act="editBooking" data-id="${b.id}"><b>${esc(b.guest)}</b>${foreign ? ' <span class="badge warn" title="Ausländische Gäste: Meldeschein ausfüllen, 12 Monate aufbewahren">Meldeschein</span>' : ""}</td><td class="small">${esc(byId("units", b.unitId)?.name)}</td><td class="small">${esc(b.channel)}</td>
+        <td class="num">${eur((b.total || 0) + (b.cleaning || 0))}</td><td>${statusB(b)}</td>
+        <td>${inv ? `<a href="#/rechnung/${inv.id}">${esc(inv.number)}</a> ${invBadge(inv)}` : !["storniert", "eigennutzung"].includes(b.status) ? btn("invoiceFromBooking", "Rechnung erstellen", "sm", b.id) : ""}</td>
+        <td>${b.status !== "eigennutzung" ? btn("guestMsg", "✉", "sm", b.id) : ""}</td></tr>`; }).join("")}</tbody></table></div>` : '<p class="muted">Keine Buchungen in diesem Monat.</p>'}</div>
+    <p class="small muted">Pflichten prüfen: Meldeschein nur noch für ausländische Gäste (seit 1.1.2025), Registrierungsnummer falls die Kommune sie verlangt, Kurbeitrag/Beherbergungssteuer je Gemeinde, Rauchwarnmelder. Kein Rechts- oder Steuerrat.</p>`;
+}
+
+const GUEST_TEMPLATES = {
+  bestaetigung: ["Buchungsbestätigung", (b, u, s) => `Hallo ${b.guest},
+
+vielen Dank für Ihre Buchung! Hiermit bestätigen wir Ihren Aufenthalt in „${u?.name || "unserer Ferienwohnung"}“:
+
+Anreise: ${d(b.from)} (ab 15:00 Uhr)
+Abreise: ${d(b.to)} (bis 10:00 Uhr)
+Personen: ${Number(b.adults || 0) + Number(b.children || 0)}
+Gesamtpreis: ${eur((b.total || 0) + (b.cleaning || 0))} zzgl. Kurtaxe laut Satzung
+
+Ein paar Tage vor der Anreise schicken wir Ihnen alle Infos zu Anfahrt, Parken und Schlüsselübergabe.
+
+Herzliche Grüße
+${s.ownerName}`],
+  anreise: ["3 Tage vor Anreise", (b, u, s) => `Hallo ${b.guest},
+
+in wenigen Tagen ist es so weit – wir freuen uns auf Sie!
+
+Adresse: ${addrOf(u)}
+Check-in: ${d(b.from)} ab 15:00 Uhr
+Parken: [Parkmöglichkeit eintragen]
+Schlüssel: [Schlüsselbox-Code / Übergabe eintragen]
+WLAN: [Netzwerk / Passwort]
+
+Bei Fragen erreichen Sie uns unter ${s.ownerPhone || "[Telefon]"}.
+
+Gute Anreise!
+${s.ownerName}`],
+  waehrend: ["Während des Aufenthalts", (b, u, s) => `Hallo ${b.guest},
+
+wir hoffen, Sie haben sich gut eingelebt! Ist alles in Ordnung oder fehlt Ihnen etwas? Melden Sie sich gern jederzeit.
+
+Viele Grüße
+${s.ownerName}`],
+  abreise: ["Abreise & Bewertung", (b, u, s) => `Hallo ${b.guest},
+
+vielen Dank, dass Sie bei uns zu Gast waren! Zur Abreise am ${d(b.to)} bitte bis 10:00 Uhr: Geschirr in die Spülmaschine, Müll in die Tonnen, Fenster schließen und Schlüssel [Rückgabe eintragen].
+
+Wenn es Ihnen gefallen hat, freuen wir uns sehr über eine kurze Bewertung${b.channel && b.channel !== "Direkt" ? ` auf ${b.channel}` : ""}. Beim nächsten Mal können Sie auch gern direkt bei uns buchen.
+
+Herzliche Grüße
+${s.ownerName}`],
+};
+
+function addrOf(u) {
+  const o = byId("objects", u?.objectId);
+  return o ? [o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";
+}
+
+function guestMsg(id) {
+  const b = byId("bookings", id), u = byId("units", b.unitId);
+  const first = Object.keys(GUEST_TEMPLATES)[0];
+  dialog({
+    title: `Nachricht an ${b.guest}`, wide: true, submit: "Kopieren",
+    body: `<label class="f"><span>Vorlage</span><select name="tpl">${opt(Object.entries(GUEST_TEMPLATES).map(([k, v]) => [k, v[0]]), first)}</select></label>
+      <label class="f"><span>Text (anpassbar)</span><textarea name="text" style="min-height:280px">${esc(GUEST_TEMPLATES[first][1](b, u, state.settings))}</textarea></label>
+      ${b.email ? `<a class="btn" id="mailto">✉ In E-Mail-Programm öffnen</a>` : '<p class="small muted">Keine E-Mail hinterlegt – Text kopieren und z. B. in Airbnb/Booking-Postfach einfügen.</p>'}
+      <p class="small muted">Antwort auf Anfragen möglichst innerhalb einer Stunde. Werbung an frühere Gäste nur mit Einwilligung (§ 7 UWG).</p>`,
+    onOpen: (form) => {
+      const upd = () => {
+        const [subject] = GUEST_TEMPLATES[form.tpl.value];
+        const m = form.querySelector("#mailto");
+        if (m) m.href = `mailto:${encodeURIComponent(b.email)}?subject=${encodeURIComponent(subject + " – " + (u?.name || ""))}&body=${encodeURIComponent(form.text.value)}`;
+      };
+      form.tpl.addEventListener("change", () => { form.text.value = GUEST_TEMPLATES[form.tpl.value][1](b, u, state.settings); upd(); });
+      form.text.addEventListener("input", upd); upd();
+    },
+    onSubmit: (form) => { copyText(form.text.value); return false; },
+  });
+}
+
+function cleaningMsg(id) {
+  const b = byId("bookings", id), u = byId("units", b.unitId);
+  const next = state.bookings.filter((x) => x.unitId === b.unitId && x.from >= b.to && x.id !== b.id && x.status !== "storniert").sort((a, c) => (a.from < c.from ? -1 : 1))[0];
+  copyText(`Reinigungsauftrag ${u?.name || ""}
+Adresse: ${addrOf(u)}
+Abreise Gast: ${d(b.to)} bis 10:00 Uhr (${b.guest})
+${next ? `Nächste Anreise: ${d(next.from)} ab 15:00 Uhr – ${Number(next.adults || 0) + Number(next.children || 0)} Personen${next.from === b.to ? " (WECHSEL AM SELBEN TAG!)" : ""}` : "Keine Folgebuchung."}
+Bitte Schäden mit Foto melden.`);
+}
+
+function copyText(t) {
+  (navigator.clipboard?.writeText(t) || Promise.reject()).then(() => toast("In die Zwischenablage kopiert"), () => { prompt("Text kopieren:", t); });
 }
 
 const invBadge = (i) => ({ offen: '<span class="badge warn">offen</span>', teilbezahlt: '<span class="badge warn">teilbezahlt</span>', bezahlt: '<span class="badge ok">bezahlt</span>', storniert: '<span class="badge grey">storniert</span>', storno: '<span class="badge grey">Storno</span>' }[i.status] || "");
@@ -848,7 +960,7 @@ function viewInvoice(id) {
           ${inv.serviceFrom ? `<tr><td class="muted">Leistungszeitraum</td><td>${d(inv.serviceFrom)} – ${d(inv.serviceTo)}</td></tr>` : ""}
           ${s.taxNumber ? `<tr><td class="muted">Steuernummer</td><td>${esc(s.taxNumber)}</td></tr>` : ""}${s.vatId ? `<tr><td class="muted">USt-IdNr.</td><td>${esc(s.vatId)}</td></tr>` : ""}</table></div></div>
       <h1>${inv.type === "storno" ? "Stornorechnung" : "Rechnung"} ${esc(inv.number)}</h1>
-      ${unit ? `<p style="margin-bottom:12px">Unterkunft: ${esc(unit.name)}${obj ? `, ${esc([obj.street, [obj.zip, obj.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}` : ""}</p>` : ""}
+      ${unit ? `<p style="margin-bottom:12px">Unterkunft: ${esc(unit.name)}${obj ? `, ${esc([obj.street, [obj.zip, obj.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}` : ""}${unit.registrationNo ? ` · Registrierungsnr. ${esc(unit.registrationNo)}` : ""}</p>` : ""}
       <table class="lines"><thead><tr><th>Pos.</th><th>Beschreibung</th><th class="num">Menge</th><th class="num">Einzelpreis</th>${inv.kleinunternehmer ? "" : '<th class="num">USt</th>'}<th class="num">Gesamt</th></tr></thead><tbody>
         ${inv.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.desc)}${l.passThrough ? '<div class="small muted">durchlaufender Posten, nicht umsatzsteuerbar</div>' : ""}</td><td class="num">${String(l.qty).replace(".", ",")}</td><td class="num">${eur(l.price)}</td>${inv.kleinunternehmer ? "" : `<td class="num">${l.passThrough ? "–" : l.vat + " %"}</td>`}<td class="num">${eur(Math.round(l.qty * l.price))}</td></tr>`).join("")}
       </tbody></table>
@@ -888,7 +1000,7 @@ function viewTax() {
       </div>
       ${!s.datevBerater || !s.datevMandant ? `<div class="note warn">Berater- und Mandantennummer fehlen – bitte unter <a href="#/einstellungen">Einstellungen</a> eintragen (bekommst du vom Steuerberater).</div>` : ""}
       ${openTx ? `<div class="note warn">${openTx} Bankumsätze im Zeitraum sind noch nicht zugeordnet und fehlen im Export. <a href="#/bank">Jetzt zuordnen →</a></div>` : ""}
-      <div class="toolbar">${btn("datev", "⬇ DATEV-Buchungsstapel (EXTF)", "primary")}${btn("journal", "⬇ Buchungsliste (Excel)")}<a class="btn" href="#/bericht/${from}_${to}">🖨 Bericht drucken</a></div>
+      <div class="toolbar">${btn("datev", "⬇ DATEV-Buchungsstapel (EXTF)", "primary")}${btn("journal", "⬇ Buchungsliste (Excel)")}<a class="btn" href="#/bericht/${from}_${to}">🖨 Bericht drucken</a><a class="btn" href="#/paket/${y}">📦 Jahrespaket ${y} für Steuerberater</a></div>
       <p class="small muted" style="margin-top:8px">${rows.length} Buchungssätze · SKR ${s.skr} · Bank ${C.accountsFor(s).bank}. Der Buchungsstapel kann vom Steuerberater direkt in DATEV Rechnungswesen importiert werden (Format EXTF 700). Kontenzuordnung unter Einstellungen anpassbar.</p>
       ${rows.length ? `<details style="margin-top:8px"><summary class="small">Vorschau Buchungssätze</summary><div class="table-wrap"><table><thead><tr><th>Datum</th><th class="num">Betrag</th><th>S/H</th><th>Konto</th><th>Gegenkonto</th><th>Beleg</th><th>Text</th></tr></thead><tbody>
         ${rows.slice(0, 100).map((r) => `<tr><td>${d(r.date)}</td><td class="num">${C.fmtNum(r.amount)}</td><td>${r.sh}</td><td>${r.konto}</td><td>${r.gegen}</td><td class="small">${esc(r.beleg)}</td><td class="small">${esc(r.text)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}
@@ -902,6 +1014,7 @@ function viewTax() {
         ${Object.entries(C.AV_GROUPS).map(([k, l]) => `<tr><td>${l}</td>${col(null, (x) => x.costs[k])}</tr>`).join("")}
         <tr><td><b>Summe Werbungskosten</b></td>${col(null, (x) => x.costTotal)}</tr>
       </tbody><tfoot><tr><td>Überschuss / Verlust</td>${col(null, (x) => x.result)}</tr></tfoot></table></div>
+      ${av.filter((x) => C.parseOwners(byId("objects", x.objectId)?.owners).length > 1).map((x) => `<p class="small" style="margin-top:6px"><b>${esc(x.name)}</b> – Aufteilung Miteigentum: ${C.parseOwners(byId("objects", x.objectId).owners).map((o) => `${esc(o.name)} (${o.share} %) ${eur(Math.round(x.result * o.share / 100))}`).join(" · ")}</p>`).join("")}
       <p class="small muted" style="margin-top:8px">Zusammenstellung als Vorbereitung für die Anlage V bzw. den Steuerberater – keine Steuerberatung. Ferienwohnungen mit hotelähnlichen Leistungen können gewerblich sein; bei Regelbesteuerung ist zusätzlich die Umsatzsteuer-Voranmeldung zu beachten. Nicht abziehbar: Tilgung, Privat.</p>
     </div>`;
 }
@@ -925,6 +1038,145 @@ function viewReport(range) {
       ${invs.length ? `<h3>Ausgestellte Rechnungen</h3><table><thead><tr><th>Nr.</th><th>Datum</th><th>Empfänger</th><th class="num">Netto</th><th class="num">USt</th><th class="num">Brutto</th><th>Status</th></tr></thead><tbody>${invs.map((i) => { const t = C.invoiceTotals(i); return `<tr><td>${esc(i.number)}</td><td>${d(i.date)}</td><td>${esc(i.recipient?.name)}</td><td class="num">${eur(t.net)}</td><td class="num">${eur(t.vat)}</td><td class="num">${eur(t.gross)}</td><td>${esc(i.status)}</td></tr>`; }).join("")}</tbody></table>` : ""}
       <h3>Offene Mieten</h3><table>${si.filter((r) => r.diff < 0).map((r) => `<tr><td>${C.fmtMonth(r.key)}</td><td>${esc(contractLabel(byId("contracts", r.contractId)))}</td><td class="num neg">${eur(r.diff)}</td></tr>`).join("") || '<tr><td class="muted">keine</td></tr>'}</table>
     </div>`;
+}
+
+// ---------------------------------------------------------------- Nebenkostenabrechnung
+
+function nkDraft() {
+  if (!ui.nk || !byId("objects", ui.nk.objectId)) {
+    const ly = Number(today().slice(0, 4)) - 1;
+    const objectId = state.objects[0]?.id;
+    ui.nk = { id: null, objectId, from: `${ly}-01-01`, to: `${ly}-12-31`, items: objectId ? C.nkItemsFromExpenses(state, objectId, `${ly}-01-01`, `${ly}-12-31`) : [] };
+  }
+  return ui.nk;
+}
+
+function viewNk() {
+  if (!state.objects.length) return head("Nebenkostenabrechnung") + `<div class="card empty">Bitte zuerst ein Objekt mit Einheiten und Mietverträgen anlegen.</div>`;
+  const nk = nkDraft();
+  const units = state.units.filter((u) => u.objectId === nk.objectId && C.NK_UNIT_TYPES(u));
+  const r = C.nkAbrechnung(state, nk);
+  const saved = (state.nkStatements || []).filter((x) => x.objectId === nk.objectId).sort((a, b) => (a.to < b.to ? 1 : -1));
+  const late = today() > r.deadline;
+  const nonUml = state.expenses.filter((e) => e.objectId === nk.objectId && e.date >= nk.from && e.date <= nk.to && !C.EXPENSE_CATEGORIES[e.category]?.umlage && C.EXPENSE_CATEGORIES[e.category]?.av);
+  const needsShares = (it) => ["verbrauch", "heizkosten", "direkt"].includes(it.key);
+  const itemRow = (it, i) => `<tr>
+    <td><input list="betrkv" value="${esc(it.label)}" data-nk="label" data-i="${i}"></td>
+    <td style="width:130px"><input inputmode="decimal" value="${it.key === "direkt" ? "" : esc(C.fmtNum(it.amount))}" data-nk="amount" data-i="${i}" ${it.key === "direkt" ? 'disabled placeholder="je Einheit"' : ""}></td>
+    <td style="width:230px"><select data-nk="key" data-i="${i}">${opt(Object.entries(C.NK_KEYS), it.key)}</select>
+      ${it.key === "heizkosten" ? `<div class="inline small" style="margin-top:4px">Verbrauchsanteil <input type="number" min="50" max="70" value="${esc(it.pct ?? 70)}" data-nk="pct" data-i="${i}" style="width:70px"> %</div>` : ""}</td>
+    <td><button class="btn sm link" data-act="nkDel" data-id="${i}">✕</button></td></tr>
+    ${needsShares(it) ? `<tr><td colspan="4" style="background:#fafbfa"><div class="small muted" style="margin-bottom:4px">${it.key === "direkt" ? "Betrag je Einheit (€)" : "Verbrauch je Einheit (Zählerdifferenz, z. B. m³ / kWh / Einheiten Heizkostenverteiler)"}</div><div class="inline">
+      ${units.map((u) => `<label class="small">${esc(u.name)} <input style="width:100px" inputmode="decimal" value="${esc(it.key === "direkt" ? C.fmtNum(it.shares?.[u.id] || 0) : (it.shares?.[u.id] ?? ""))}" data-nk="share" data-i="${i}" data-u="${u.id}"></label>`).join("")}</div></td></tr>` : ""}`;
+  return head("Nebenkostenabrechnung", "Betriebskosten nach BetrKV – tagegenau, mit Leerstandsanteil des Vermieters", "") + `
+    <datalist id="betrkv">${C.BETRKV.map(([, l]) => `<option value="${esc(l)}">`).join("")}</datalist>
+    <div class="card noprint"><div class="fgrid">
+      <label class="f"><span>Objekt</span><select data-nk="objectId">${opt(state.objects.map((o) => [o.id, o.name]), nk.objectId)}</select></label>
+      <div class="inline"><label class="f"><span>Abrechnungszeitraum von</span><input type="date" value="${nk.from}" data-nk="from"></label><label class="f"><span>bis</span><input type="date" value="${nk.to}" data-nk="to"></label></div>
+    </div>
+    ${saved.length ? `<div class="small">Gespeicherte Abrechnungen: ${saved.map((x) => `<button class="btn sm link" data-act="nkLoad" data-id="${x.id}">${d(x.from)}–${d(x.to)}</button>`).join(" · ")}</div>` : ""}
+    </div>
+    <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Umlagefähige Kosten (§ 2 BetrKV)</h2>
+      <div class="toolbar">${btn("nkFromExpenses", "Aus Ausgaben übernehmen", "sm")}${btn("nkAdd", "+ Kostenart", "sm")}</div></div>
+      <div class="table-wrap"><table><thead><tr><th>Kostenart</th><th class="num">Gesamtkosten Haus</th><th>Umlageschlüssel</th><th></th></tr></thead><tbody>
+      ${nk.items.map(itemRow).join("") || '<tr><td colspan="4" class="muted">Noch keine Kosten – „Aus Ausgaben übernehmen“ oder „+ Kostenart“.</td></tr>'}</tbody>
+      <tfoot><tr><td>Summe</td><td class="num">${eur(r.total)}</td><td colspan="2"></td></tr></tfoot></table></div>
+      <p class="small muted" style="margin-top:6px">Nur Kosten umlegen, die im Mietvertrag vereinbart sind. Heizöl: Verbrauch = Anfangsbestand + Lieferungen − Endbestand. Heizkosten bei mehreren Parteien: 50–70 % nach Verbrauch (HeizkostenV). Belege außerhalb des Zeitraums gehören ins nächste Jahr.</p>
+    </div>
+    ${r.warnings.length || late ? `<div class="note warn">${late ? `<b>Frist abgelaufen:</b> Die Abrechnung musste bis ${d(r.deadline)} beim Mieter sein (§ 556 Abs. 3 BGB) – Nachforderungen sind ausgeschlossen, Guthaben müssen trotzdem ausgezahlt werden.<br>` : ""}${r.warnings.map(esc).join("<br>")}</div>` : `<div class="note">Frist: Die Abrechnung muss spätestens am <b>${d(r.deadline)}</b> beim Mieter sein (§ 556 Abs. 3 BGB).</div>`}
+    <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Ergebnis je Mieter</h2><div class="toolbar">${btn("nkSave", nk.id ? "Änderungen speichern" : "Abrechnung speichern", "primary")}</div></div>
+      ${r.contracts.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit · Mieter</th><th class="num">Tage</th><th class="num">Kostenanteil</th><th class="num">Vorauszahlungen</th><th class="num">Ergebnis</th><th class="num">Vorschlag VZ/Monat</th><th></th></tr></thead><tbody>
+      ${r.contracts.map((c) => `<tr><td>${esc(contractLabel(byId("contracts", c.contractId)))}</td><td class="num">${c.days}</td><td class="num">${eur(c.total)}</td><td class="num">${eur(c.prepaid)}${c.prepaid !== c.prepaidSoll ? `<div class="small muted">Soll ${eur(c.prepaidSoll)}</div>` : ""}</td>
+        <td class="num ${c.saldo > 0 ? "neg" : "pos"}"><b>${c.saldo > 0 ? "Nachzahlung " + eur(c.saldo) : "Guthaben " + eur(-c.saldo)}</b></td><td class="num">${eur(c.newMonthly)}</td>
+        <td>${nk.id ? `<a class="btn sm" href="#/nkbrief/${nk.id}/${c.contractId}">🖨 Anschreiben</a>` : '<span class="small muted">erst speichern</span>'}</td></tr>`).join("")}</tbody>
+      <tfoot><tr><td>Vermieter (Leerstand / Rundung)</td><td class="num">${r.owner.days}</td><td class="num">${eur(r.owner.total)}</td><td colspan="4"></td></tr></tfoot></table></div>
+      <p class="small muted" style="margin-top:6px">Kontrolle: Summe aller Anteile ${eur(r.check)} ${r.check === r.total ? "= Gesamtkosten ✓" : `≠ Gesamtkosten ${eur(r.total)} ✗`}. Vorauszahlungen = tatsächlich eingegangene NK-Anteile der Mietzahlungen.</p>` : '<p class="muted">Keine Mietverträge im Zeitraum.</p>'}
+    </div>
+    <div class="card"><h2>Nicht umlagefähig (für den Steuerberater)</h2>${nonUml.length ? `<table>${nonUml.map((e) => `<tr><td>${d(e.date)}</td><td>${esc(e.vendor)}</td><td class="small">${esc(C.EXPENSE_CATEGORIES[e.category].label)}</td><td class="num">${eur(e.amount)}</td></tr>`).join("")}</table>` : '<p class="muted">Keine im Zeitraum.</p>'}
+      <p class="small muted">Instandhaltung, Verwaltung, Zinsen, Bankgebühren, Rücklagen und Herstellungskosten dürfen nicht umgelegt werden.</p></div>`;
+}
+
+function viewNkLetter(stId, contractId) {
+  const st = (state.nkStatements || []).find((x) => x.id === stId);
+  if (!st) return head("Abrechnung nicht gefunden");
+  const r = C.nkAbrechnung(state, st);
+  const c = r.contracts.find((x) => x.contractId === contractId);
+  const contract = byId("contracts", contractId);
+  if (!c || !contract) return head("Mieter nicht in dieser Abrechnung");
+  const u = byId("units", c.unitId), o = byId("objects", u?.objectId), s = state.settings;
+  const tenants = contract.tenantIds.map((id) => byId("tenants", id)).filter(Boolean);
+  const units = state.units.filter((x) => x.objectId === st.objectId && C.NK_UNIT_TYPES(x));
+  const area = sum(units, (x) => Number(x.area));
+  const sender = [s.ownerName, s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean);
+  const due = addDays(today(), 30);
+  return `<div class="head noprint"><a href="#/nebenkosten">← Nebenkosten</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
+  <div class="paper">
+    <div class="top"><div><div class="sender">${esc(sender.join(" · "))}</div>
+      <div><b>${esc(tenants.map((t) => t.name).join(", "))}</b><br>${esc(tenants[0]?.address || addrOf(u))}</div></div>
+      <div><b>${esc(s.ownerName)}</b><br>${sender.slice(1).map(esc).join("<br>")}${s.ownerPhone ? `<br>Tel. ${esc(s.ownerPhone)}` : ""}${s.ownerEmail ? `<br>${esc(s.ownerEmail)}` : ""}<br><br>${d(today())}</div></div>
+    <h1>Betriebskostenabrechnung ${d(st.from)} – ${d(st.to)}</h1>
+    <p>Mietobjekt: ${esc(addrOf(u))}, ${esc(u?.name)}${u?.area ? ` (${String(u.area).replace(".", ",")} m² von ${String(area).replace(".", ",")} m²)` : ""}<br>
+    Ihr Nutzungszeitraum: ${c.days} von ${r.days} Tagen${c.persons ? ` · ${c.persons} Person(en)` : ""}</p>
+    <p style="margin:12px 0">${tenants.length > 1 ? "Sehr geehrte Damen und Herren" : `Guten Tag ${esc(tenants[0]?.name || "")}`},<br>
+    hiermit erhalten Sie die Abrechnung der Betriebskosten. Die Gesamtkosten des Hauses werden nach dem jeweils genannten Schlüssel auf alle Wohnungen verteilt; für Ihren Anteil zählen nur die Tage, in denen Sie gemietet haben. Davon ziehen wir Ihre geleisteten Vorauszahlungen ab.</p>
+    <table class="lines"><thead><tr><th>Kostenart</th><th>Verteilung nach</th><th class="num">Gesamtkosten Haus</th><th class="num">Ihr Anteil</th></tr></thead><tbody>
+      ${st.items.map((it, i) => { const tot = it.key === "direkt" ? sum(units, (x) => Number(it.shares?.[x.id]) || 0) : it.amount;
+        return `<tr><td>${esc(it.label)}</td><td class="small">${esc(C.NK_KEYS[it.key])}${it.key === "heizkosten" ? ` (${it.pct ?? 70} % Verbrauch)` : ""}${["verbrauch", "heizkosten"].includes(it.key) && it.shares?.[u.id] ? `<br>Ihr Verbrauch: ${esc(it.shares[u.id])} von ${sum(units, (x) => Number(it.shares?.[x.id]) || 0)}` : ""}</td><td class="num">${eur(tot)}</td><td class="num">${eur(c.items[i].amount)}</td></tr>`; }).join("")}
+    </tbody></table>
+    <table class="totals">
+      <tr><td>Ihr Kostenanteil</td><td class="num">${eur(c.total)}</td></tr>
+      <tr><td>abzüglich geleistete Vorauszahlungen</td><td class="num">− ${eur(c.prepaid)}</td></tr>
+      <tr class="sum"><td>${c.saldo > 0 ? "Nachzahlung" : "Guthaben"}</td><td class="num" style="color:${c.saldo > 0 ? "var(--bad)" : "var(--ok)"}">${eur(Math.abs(c.saldo))}</td></tr>
+    </table>
+    <div style="margin-top:20px">
+      ${c.saldo > 0 ? `<p>Bitte überweisen Sie die Nachzahlung bis zum <b>${d(due)}</b> auf das Konto ${s.invoiceIban ? `IBAN ${esc(s.invoiceIban)}${s.invoiceBank ? ` (${esc(s.invoiceBank)})` : ""}` : "[IBAN]"}, Verwendungszweck „NK ${st.to.slice(0, 4)} ${esc(u?.name || "")}“.</p>` : c.saldo < 0 ? `<p>Das Guthaben überweisen wir Ihnen in den nächsten Tagen bzw. verrechnen es nach Absprache mit der nächsten Miete.</p>` : ""}
+      ${c.newMonthly !== C.rentForMonth(contract, C.monthKey(today())).nk ? `<p>Damit es im nächsten Jahr keine größere ${c.saldo > 0 ? "Nachzahlung" : "Abweichung"} gibt, passen wir die monatliche Vorauszahlung ab dem übernächsten Monat auf <b>${eur(c.newMonthly)}</b> an (§ 560 Abs. 4 BGB).</p>` : ""}
+      <p>Die Belege können Sie nach vorheriger Terminabsprache gern einsehen. Bei Fragen melden Sie sich jederzeit.</p>
+      <p style="margin-top:16px">Mit freundlichen Grüßen<br><br>${esc(s.ownerName)}</p>
+      <p class="small muted" style="margin-top:16px">Anlagen: Kopien der Abrechnungsbelege auf Anfrage (Grundsteuerbescheid, Versorgerrechnungen, Versicherungsnachweise)</p>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- Jahrespaket Steuerberater
+
+function viewPackage(yearArg) {
+  const y = Number(yearArg) || ui.year;
+  const s = state.settings;
+  const av = C.anlageV(state, y);
+  const inc = C.incomeByUnitMonth(state, y);
+  const pts = C.taxOpenPoints(state, y);
+  const exps = state.expenses.filter((e) => e.date.startsWith(String(y)) && e.category !== "privat").sort((a, b) => (a.date < b.date ? -1 : 1));
+  const hk = exps.filter((e) => e.category === "herstellung");
+  const nks = (state.nkStatements || []).filter((x) => x.to.startsWith(String(y)) || x.to.startsWith(String(y - 1)));
+  const mm = Array.from({ length: 12 }, (_, i) => i + 1);
+  const ownersOf = (o) => C.parseOwners(o?.owners);
+  const page = (html) => `<section class="card pkg">${html}</section>`;
+  return `<style>@media print { @page { size: A4 landscape; margin: 12mm; } .pkg { page-break-after: always; } }
+    .pkg th { background: #1f4e5f; color: #fff; } .pkg tbody tr:nth-child(even) td { background: #f5f8f8; }</style>
+  <div class="head noprint"><a href="#/steuer">← Steuer & DATEV</a><div class="toolbar">${btn("pkgYear", "‹", "", y - 1)}<b>${y}</b>${btn("pkgYear", "›", "", y + 1)}<button class="btn primary" onclick="window.print()">Drucken / PDF</button></div></div>
+  ${page(`<h1>Unterlagen Vermietung & Verpachtung ${y}</h1><p class="muted">${esc(s.ownerName)}${s.taxNumber ? ` · St.-Nr. ${esc(s.taxNumber)}` : ""} · erstellt am ${d(today())}</p>
+    <h3>Inhalt</h3><ol style="margin-left:20px"><li>Übersicht aller Objekte</li><li>Monatstabellen je Objekt und Einheit</li><li>Werbungskosten je Objekt</li><li>Anschaffungs-/Herstellungskosten (Einordnung StB)</li><li>Nebenkostenabrechnungen</li><li>Beleg-Checkliste</li><li>Offene Fragen</li></ol>
+    <p class="small muted" style="margin-top:12px">Zusammenstellung aus HausOps Immobilien. Einordnungen sind Vorschläge – die Entscheidung trifft der Steuerberater. DATEV-Buchungsstapel liegt separat bei.</p>`)}
+  ${page(`<h2>1. Übersicht</h2><div class="table-wrap"><table><thead><tr><th>Objekt</th><th>Eigentümer</th><th class="num">Einnahmen</th><th class="num">Werbungskosten</th><th class="num">davon AfA</th><th class="num">Überschuss</th></tr></thead><tbody>
+    ${av.map((r) => { const o = byId("objects", r.objectId); const ow = ownersOf(o);
+      return `<tr><td>${esc(r.name)}<div class="small muted">${esc(addrOf({ objectId: r.objectId }))}</div></td><td class="small">${ow.length ? ow.map((x) => `${esc(x.name)} ${x.share} %: ${eur(Math.round(r.result * x.share / 100))}`).join("<br>") : esc(s.ownerName)}</td><td class="num">${eur(r.incomeTotal)}</td><td class="num">${eur(r.costTotal)}</td><td class="num">${eur(r.costs.afa)}</td><td class="num"><b>${eur(r.result)}</b></td></tr>`; }).join("")}
+    </tbody><tfoot><tr><td colspan="2">Gesamt</td><td class="num">${eur(sum(av, (r) => r.incomeTotal))}</td><td class="num">${eur(sum(av, (r) => r.costTotal))}</td><td class="num">${eur(sum(av, (r) => r.costs.afa))}</td><td class="num">${eur(sum(av, (r) => r.result))}</td></tr></tfoot></table></div>`)}
+  ${state.objects.map((o) => { const units = state.units.filter((u) => u.objectId === o.id);
+    return page(`<h2>2. ${esc(o.name)} – Zuflüsse je Monat (netto)</h2><div class="table-wrap"><table><thead><tr><th>Einheit</th><th></th>${mm.map((m) => `<th class="num">${C.MONTHS_DE[m - 1].slice(0, 3)}</th>`).join("")}<th class="num">Summe</th></tr></thead><tbody>
+      ${units.map((u) => { const rows = u.type === "ferienwohnung" ? [["fewo", "FeWo"]] : [["kalt", "Kalt"], ["umlage", "NK"]];
+        return rows.map(([k, l], i) => `<tr>${i === 0 ? `<td rowspan="${rows.length}" class="small"><b>${esc(u.name)}</b><br>${esc(u.type === "ferienwohnung" ? "Ferienwohnung" : tenantNames(state.contracts.find((c) => c.unitId === u.id && c.start <= `${y}-12-31` && (!c.end || c.end >= `${y}-01-01`))))}</td>` : ""}<td class="small">${l}</td>${mm.map((m) => `<td class="num small">${inc[u.id]?.[m]?.[k] ? C.fmtNum(inc[u.id][m][k]) : ""}</td>`).join("")}<td class="num small"><b>${C.fmtNum(sum(mm, (m) => inc[u.id]?.[m]?.[k] || 0))}</b></td></tr>`).join(""); }).join("")}
+      </tbody></table></div>
+      <h3>3. Werbungskosten ${esc(o.name)}</h3><table>${Object.entries(C.AV_GROUPS).map(([k, l]) => { const r = av.find((x) => x.objectId === o.id); return r?.costs[k] ? `<tr><td>${l}</td><td class="num">${eur(r.costs[k])}</td></tr>` : ""; }).join("")}</table>
+      ${o.buildingShare ? `<p class="small muted">AfA: ${o.afaRate} % von ${eur(o.buildingShare)} (Gebäudeanteil), Erwerb ${d(o.purchaseDate)}</p>` : ""}`); }).join("")}
+  ${page(`<h2>4. Anschaffungs- / Herstellungskosten</h2>${hk.length ? `<table><thead><tr><th>Datum</th><th>Objekt</th><th>Empfänger</th><th>Notiz</th><th class="num">Betrag</th></tr></thead><tbody>${hk.map((e) => `<tr><td>${d(e.date)}</td><td>${esc(byId("objects", e.objectId)?.name || "")}</td><td>${esc(e.vendor)}</td><td class="small">${esc(e.note || "")}</td><td class="num">${eur(e.amount)}</td></tr>`).join("")}</tbody></table>` : '<p class="muted">Keine markiert.</p>'}
+    <p class="small muted">Bitte prüfen: Erhaltungsaufwand (sofort abziehbar) oder Herstellungskosten/anschaffungsnaher Aufwand (AfA).</p>
+    <h2 style="margin-top:18px">5. Nebenkostenabrechnungen</h2>${nks.length ? nks.map((st) => { const r = C.nkAbrechnung(state, st);
+      return `<h3>${esc(byId("objects", st.objectId)?.name)} · ${d(st.from)}–${d(st.to)}</h3><table><thead><tr><th>Mieter</th><th class="num">Kosten</th><th class="num">Vorauszahlung</th><th class="num">Ergebnis</th></tr></thead><tbody>${r.contracts.map((c) => `<tr><td>${esc(contractLabel(byId("contracts", c.contractId)))}</td><td class="num">${eur(c.total)}</td><td class="num">${eur(c.prepaid)}</td><td class="num">${c.saldo > 0 ? "Nachzahlung " : "Guthaben "}${eur(Math.abs(c.saldo))}</td></tr>`).join("")}<tr><td>Vermieter (Leerstand)</td><td class="num">${eur(r.owner.total)}</td><td></td><td></td></tr></tbody></table>`; }).join("") : '<p class="muted">Keine gespeicherten Abrechnungen.</p>'}`)}
+  ${page(`<h2>6. Beleg-Checkliste</h2><table><thead><tr><th>Datum</th><th>Objekt</th><th>Empfänger</th><th>Kategorie</th><th class="num">Betrag</th><th>Beleg</th></tr></thead><tbody>
+    ${exps.map((e) => `<tr><td>${d(e.date)}</td><td class="small">${esc(byId("objects", e.objectId)?.name || "–")}</td><td>${esc(e.vendor)}</td><td class="small">${esc(C.EXPENSE_CATEGORIES[e.category]?.label)}</td><td class="num">${eur(e.amount)}</td><td>${e.belegNr ? `✓ ${esc(e.belegNr)}` : '<span class="badge warn">fehlt</span>'}</td></tr>`).join("")}</tbody></table>
+    <p class="small muted">Außerdem beilegen: Zinsbescheinigungen der Banken, Grundsteuerbescheid, Versicherungsnachweise, Hausgeldabrechnung (WEG), Plattform-Jahresberichte (Airbnb/Booking).</p>
+    <h2 style="margin-top:18px">7. Offene Fragen</h2>${pts.length ? `<ul style="margin-left:20px">${pts.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : '<p class="muted">Keine.</p>'}`)}`;
 }
 
 function viewSettings() {
@@ -969,8 +1221,8 @@ function viewSettings() {
 function render() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [route, arg] = hash.split("/");
-  $("#nav").innerHTML = NAV.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && route === "bericht") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
-  const views = { "": viewDashboard, objekte: viewObjects, mieter: viewTenants, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings };
+  $("#nav").innerHTML = NAV.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
+  const views = { "": viewDashboard, objekte: viewObjects, mieter: viewTenants, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg) };
   try {
     $("#view").innerHTML = (views[route] || viewDashboard)();
   } catch (e) {
@@ -992,7 +1244,14 @@ const actions = {
   year: (y) => { ui.year = Number(y); ui.datevFrom = ui.datevTo = null; render(); },
   newBooking: () => editBooking(), editBooking,
   newBookingAt: (v) => { const [unitId, from] = v.split("|"); editBooking(null, { unitId, from, to: addDays(from, 7) }); },
-  invoiceFromBooking, newInvoice: () => editInvoice(), editInvoice, cancelInvoice, markPaid, smoobu: smoobuImport,
+  invoiceFromBooking, guestMsg, cleaningMsg,
+  pkgYear: (y) => { location.hash = `#/paket/${y}`; },
+  nkAdd: () => { nkDraft().items.push({ label: "Grundsteuer", amount: 0, key: "flaeche", pct: 70, shares: {} }); render(); },
+  nkDel: (i) => { nkDraft().items.splice(Number(i), 1); render(); },
+  nkFromExpenses: () => { const nk = nkDraft(); const add = C.nkItemsFromExpenses(state, nk.objectId, nk.from, nk.to); if (!add.length) return toast("Keine umlagefähigen Ausgaben im Zeitraum gefunden."); nk.items = [...nk.items.filter((x) => !add.some((a) => a.label === x.label)), ...add]; render(); },
+  nkSave: () => { const nk = nkDraft(); if (!nk.items.length) return toast("Keine Kostenpositionen."); nk.id = nk.id || C.uid("nk_"); state.nkStatements = [...(state.nkStatements || []).filter((x) => x.id !== nk.id), structuredClone(nk)]; commit("Abrechnung gespeichert – Anschreiben können jetzt gedruckt werden"); },
+  nkLoad: (id) => { ui.nk = structuredClone(state.nkStatements.find((x) => x.id === id)); render(); },
+  newInvoice: () => editInvoice(), editInvoice, cancelInvoice, markPaid, smoobu: smoobuImport,
   datevPreset: (p) => {
     const y = ui.year;
     if (p === "y") { ui.datevFrom = `${y}-01-01`; ui.datevTo = `${y}-12-31`; }
@@ -1029,6 +1288,18 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("change", async (e) => {
+  const nkf = e.target.dataset?.nk;
+  if (nkf) {
+    const nk = nkDraft(), v = e.target.value, it = nk.items[Number(e.target.dataset.i)];
+    if (nkf === "objectId") { ui.nk = { id: null, objectId: v, from: nk.from, to: nk.to, items: C.nkItemsFromExpenses(state, v, nk.from, nk.to) }; }
+    else if (nkf === "from" || nkf === "to") nk[nkf] = v;
+    else if (nkf === "label") { it.label = v; const def = C.BETRKV.find((x) => x[1] === v); if (def && !it.amount) it.key = def[2]; }
+    else if (nkf === "amount") it.amount = C.parseAmount(v);
+    else if (nkf === "key") it.key = v;
+    else if (nkf === "pct") it.pct = Math.min(70, Math.max(50, Number(v) || 70));
+    else if (nkf === "share") { it.shares = it.shares || {}; it.shares[e.target.dataset.u] = it.key === "direkt" ? C.parseAmount(v) : Number(String(v).replace(",", ".")) || 0; }
+    render(); return;
+  }
   const k = e.target.dataset?.change;
   if (!k) return;
   const v = e.target.value;

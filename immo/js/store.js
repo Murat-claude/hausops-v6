@@ -8,7 +8,7 @@ export function emptyState() {
     version: 1,
     objects: [], units: [], tenants: [], contracts: [],
     accounts: [], transactions: [], payments: [], expenses: [],
-    bookings: [], invoices: [], rules: {},
+    bookings: [], invoices: [], rules: {}, nkStatements: [],
     settings: {
       ownerName: "", ownerStreet: "", ownerZip: "", ownerCity: "", ownerEmail: "", ownerPhone: "",
       taxNumber: "", vatId: "", invoiceIban: "", invoiceBic: "", invoiceBank: "",
@@ -62,7 +62,7 @@ export function demoState() {
     ownerEmail: "vermietung@example.de", taxNumber: "123/456/78901", invoiceIban: "DE02120300000000202051",
     invoiceBank: "Musterbank", sollStart: addMonths(thisM, -1),
   });
-  const o1 = { id: uid("o_"), name: "MFH Lindenstraße", short: "LIN", type: "mfh", street: "Lindenstraße 12", zip: "10115", city: "Berlin", year: 1968, purchaseDate: "2019-04-01", purchasePrice: 68000000, buildingShare: 51000000, afaRate: 2, notes: "" };
+  const o1 = { id: uid("o_"), name: "MFH Lindenstraße", short: "LIN", type: "mfh", street: "Lindenstraße 12", zip: "10115", city: "Berlin", year: 1968, purchaseDate: "2019-04-01", purchasePrice: 68000000, buildingShare: 51000000, afaRate: 2, owners: "Max Mustermann 50; Erika Mustermann 50", notes: "" };
   const o2 = { id: uid("o_"), name: "Ferienhaus Ostsee", short: "OST", type: "ferien", street: "Dünenweg 3", zip: "23743", city: "Grömitz", year: 2005, purchaseDate: "2022-06-01", purchasePrice: 42000000, buildingShare: 30000000, afaRate: 2, notes: "" };
   s.objects.push(o1, o2);
   const u = (o, name, type, extra = {}) => { const x = { id: uid("u_"), objectId: o.id, name, type, area: 0, rooms: 0, floor: "", vat: 0, ...extra }; s.units.push(x); return x; };
@@ -76,10 +76,25 @@ export function demoState() {
   const t1 = t("Anna Schmidt", "DE89370400440532013000", "anna@example.de");
   const t2 = t("Familie Yilmaz", "DE75512108001245126199", "");
   const t3 = t("Jonas Becker", "DE12500105170648489890", "");
-  const c = (unit, tenants, start, kalt, nk, extra = 0) => { const x = { id: uid("c_"), unitId: unit.id, tenantIds: tenants.map((z) => z.id), start, end: "", kalt, nk, extra, kaution: kalt * 3, steps: [], notes: "" }; s.contracts.push(x); return x; };
+  const c = (unit, tenants, start, kalt, nk, extra = 0) => { const x = { id: uid("c_"), unitId: unit.id, tenantIds: tenants.map((z) => z.id), start, end: "", kalt, nk, extra, kaution: kalt * 3, persons: 1, steps: [], notes: "" }; s.contracts.push(x); return x; };
   const c1 = c(w1, [t1], "2021-03-01", 72000, 18000);
   const c2 = c(w3, [t2], "2020-08-01", 98000, 26000);
   const c3 = c(g1, [t3], "2023-01-01", 6000, 0);
+  c2.persons = 4; c1.persons = 2;
+  // Betriebskosten des Vorjahres (für die Nebenkostenabrechnung) + eine Modernisierung
+  const ly = Number(thisM.slice(0, 4)) - 1;
+  const ex = (date, amount, category, vendor, belegNr = "") => s.expenses.push({ id: uid("e_"), date, amount, category, objectId: o1.id, vendor, note: "", belegNr, txId: null });
+  ex(`${ly}-02-15`, 128000, "grundsteuer", "Stadt Berlin", "GS-" + ly);
+  ex(`${ly}-03-01`, 94000, "versicherung", "Gebäudeversicherung AG", "V-17");
+  ex(`${ly}-12-20`, 258000, "versorgung", "Berliner Wasserbetriebe");
+  ex(`${ly}-12-20`, 61000, "muell", "BSR Müllabfuhr", "BSR-" + ly);
+  ex(`${ly}-06-10`, 145000, "erhaltung", "Malerbetrieb Klein", "R-2231");
+  // Mietzahlungen des Vorjahres (bar/ohne Kontoimport erfasst)
+  for (let m = 1; m <= 12; m++) {
+    const per = `${ly}-${String(m).padStart(2, "0")}`;
+    for (const k of [c1, c2, c3]) s.payments.push({ id: uid("p_"), date: `${per}-03`, amount: k.kalt + k.nk, kind: "miete", contractId: k.id, period: per, txId: "import", note: "" });
+  }
+  ex(`${ly}-09-01`, 1850000, "herstellung", "Heizungsbau Nord (neue Gasbrennwerttherme)", "R-88");
   const acc = { id: uid("a_"), name: "Mietkonto", iban: "DE02120300000000202051", bank: "Musterbank" };
   s.accounts.push(acc);
   // Bankumsätze der letzten 2 Monate (unzugeordnet → zum Ausprobieren)
@@ -96,6 +111,10 @@ export function demoState() {
   const d = (n) => { const x = new Date(); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
   b(d(-12), d(-5), "Familie Peters", 77000, 2, "Direkt");
   b(d(3), d(10), "Laura König", 84000, 2, "Airbnb");
+  b(d(-40), d(-33), "Familie Jansen", 70000, 2, "Direkt");
+  s.bookings[s.bookings.length - 1].nationality = "niederländisch";
+  b(d(-60), d(-54), "Eigennutzung", 0, 0, "Direkt");
+  s.bookings[s.bookings.length - 1].status = "eigennutzung";
   b(d(14), d(21), "Thomas Wagner", 91000, 3, "Booking.com");
   return s;
 }
