@@ -398,3 +398,19 @@ test("USt-IdNr. ausländischer Firmen: Format prüfen", async () => {
   assert.equal(vatIdFormatOk("DE12345"), false);
   assert.equal(vatIdFormatOk("GB123456789"), null);
 });
+
+test("Angemietete Ferienwohnung: keine AfA, Miete an Vermieter als Ausgabe, Bank erkennt Zahlung", async () => {
+  const { backfillLeaseExpenses, afaForYear } = await import("../js/core.js");
+  const s = emptyState();
+  s.objects = [{ id: "o1", name: "Drensteinfurt Herrenstein 28a", ownership: "angemietet", landlordName: "Heinz Vermieter", leaseRent: 95000, leaseStart: "2026-03-01", buildingShare: 10000000, afaRate: 2, purchaseDate: "2020-01-01" }];
+  assert.equal(afaForYear(s.objects[0], 2026), 0);
+  const ex = backfillLeaseExpenses(s, "o1", { from: "2026-01", to: "2026-05" });
+  assert.deepEqual(ex.map((e) => e.date), ["2026-03-01", "2026-04-01", "2026-05-01"]);
+  s.expenses = ex;
+  assert.equal(backfillLeaseExpenses(s, "o1", { from: "2026-01", to: "2026-05" }).length, 0);
+  const sug = suggestAssignment({ id: "t", date: "2026-06-01", amount: -95000, name: "Heinz Vermieter", purpose: "Miete Juni Herrenstein", iban: "" }, s);
+  assert.equal(sug.category, "anmietung"); assert.equal(sug.objectId, "o1");
+  const { anlageV } = await import("../js/core.js");
+  const r = anlageV(s, 2026).find((x) => x.objectId === "o1");
+  assert.equal(r.angemietet, true); assert.equal(r.costs.afa, 0); assert.equal(r.costs.sonstige, 285000);
+});

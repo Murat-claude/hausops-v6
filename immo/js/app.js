@@ -185,6 +185,7 @@ const SPEC = {
     { k: "name", l: "Bezeichnung", req: 1, ph: "z. B. MFH Lindenstraße" },
     { k: "short", l: "Kürzel (für DATEV-Buchungstext)", ph: "LIN" },
     { k: "type", l: "Art", t: "select", opts: Object.entries(C.OBJECT_TYPES) },
+    { k: "ownership", l: "Eigentum oder angemietet?", t: "select", opts: [["eigentum", "Eigentum – wir sind Vermieter"], ["angemietet", "Angemietet – wir sind Mieter und vermieten weiter (z. B. als Ferienwohnung)"]] },
     { k: "street", l: "Straße & Hausnummer" },
     { k: "zip", l: "PLZ" }, { k: "city", l: "Ort" },
     { k: "year", l: "Baujahr", t: "number" },
@@ -199,6 +200,11 @@ const SPEC = {
     { k: "mietpreisbremse", l: "Gebiet mit Mietpreisbremse (§ 556d BGB)", t: "checkbox" },
     { k: "vergleichsmiete", l: "Ortsübliche Vergleichsmiete laut Mietspiegel (€/m²)", t: "money", hint: "Für die Prüfung von Neuvermietung (Mietpreisbremse) und Mieterhöhung" },
     { k: "owners", l: "Eigentümer & Anteile (bei Miteigentum)", ph: "Max Mustermann 50; Erika Mustermann 50", full: 1, hint: "Für die Aufteilung der Anlage V je Person" },
+    { k: "landlordName", l: "Nur bei angemietet: unser Vermieter (Name)", hint: "Für die automatische Zuordnung der Mietzahlung im Kontoauszug" },
+    { k: "leaseRent", l: "Nur bei angemietet: Miete an Vermieter (€/Monat, inkl. NK)", t: "money" },
+    { k: "leaseStart", l: "Nur bei angemietet: Mietbeginn", t: "date" }, { k: "leaseEnd", l: "Nur bei angemietet: Mietende (leer = unbefristet)", t: "date" },
+    { k: "leaseDeposit", l: "Nur bei angemietet: unsere Kaution (€)", t: "money" },
+    { k: "sublet", l: "Nur bei angemietet: Untervermietung/Ferienvermietung ist im Mietvertrag schriftlich erlaubt (§ 540 BGB)", t: "checkbox" },
     { k: "notes", l: "Notizen (Hausverwaltung, Grundbuch, Darlehen …)", t: "textarea" },
   ],
   unit: [
@@ -279,15 +285,22 @@ const SPEC = {
 };
 
 function editObject(id) {
-  const o = byId("objects", id) || { id: C.uid("o_"), type: "mfh", afaRate: 2 };
+  const o = byId("objects", id) || { id: C.uid("o_"), type: "mfh", afaRate: 2, ownership: "eigentum" };
   formDialog({
-    title: id ? "Objekt bearbeiten" : "Neues Objekt", spec: SPEC.object, data: o,
-    onSave: (v) => { upsert("objects", { ...o, ...v }); commit("Objekt gespeichert"); },
+    title: id ? "Objekt bearbeiten" : "Neues Objekt", spec: SPEC.object, data: { ownership: "eigentum", ...o },
+    onSave: (v) => {
+      if (v.ownership === "angemietet" && !v.sublet && !confirm("Hinweis: Ohne Erlaubnis des Vermieters ist Untervermietung bzw. Ferienvermietung einer gemieteten Wohnung unzulässig (§ 540 BGB) – Abmahnung und fristlose Kündigung drohen. Trotzdem speichern?")) return false;
+      upsert("objects", { ...o, ...v }); commit("Objekt gespeichert");
+    },
     onDelete: id && (() => {
       if (state.units.some((u) => u.objectId === id)) return alert("Bitte zuerst die Einheiten dieses Objekts löschen.");
       state.objects = state.objects.filter((x) => x.id !== id); commit("Objekt gelöscht");
     }),
   });
+  // Je nach „Eigentum / angemietet“ nur die passenden Felder zeigen
+  const form = $("#modal form"), own = ["year", "plot", "purchaseDate", "purchasePrice", "buildingShare", "afaRate", "aktenzeichen", "ehegatten", "kappung15", "mietpreisbremse", "vergleichsmiete", "owners"], lease = ["landlordName", "leaseRent", "leaseStart", "leaseEnd", "leaseDeposit", "sublet"];
+  const sync = () => { const a = form.ownership.value === "angemietet"; for (const n of [...own, ...lease]) { const el = form.querySelector(`[name="${n}"]`)?.closest("label"); if (el) el.style.display = (a ? lease : own).includes(n) ? "" : "none"; } };
+  form.ownership?.addEventListener("change", sync); sync();
 }
 
 function editUnit(id, objectId) {
@@ -1012,8 +1025,9 @@ function viewObjects() {
       return `<div class="card">
         <div class="head" style="margin-bottom:10px"><div><h2 style="margin:0">${esc(o.name)} ${o.short ? `<span class="badge grey">${esc(o.short)}</span>` : ""}</h2>
           <div class="muted">${esc([o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))} · ${esc(C.OBJECT_TYPES[o.type] || "")}${o.year ? ` · Baujahr ${o.year}` : ""}</div>
+          ${o.ownership === "angemietet" ? `<div class="small" style="margin-top:4px"><span class="badge warn">angemietet</span> Vermieter: ${esc(o.landlordName || "–")} · Miete ${o.leaseRent ? eur(o.leaseRent) : "–"}/Monat${o.sublet ? "" : ' · <span class="neg">Untervermietungserlaubnis fehlt</span>'}</div>` : ""}
           <div class="small muted">Soll-Miete/Monat ${eur(monthly)} · Fläche ${sum(units, (u) => Number(u.area))} m² · AfA ${C.afaForYear(o, ui.year) ? eur(C.afaForYear(o, ui.year)) + " (" + ui.year + ")" : "–"}</div></div>
-          <div class="toolbar"><a class="btn sm" href="#/ablage/${o.id}">📂 Ablage (${state.documents.filter((x) => x.objectId === o.id).length})</a>${btn("editObject", "Bearbeiten", "sm", o.id)}${btn("newUnit", "+ Einheit", "sm", o.id)}</div></div>
+          <div class="toolbar">${o.ownership === "angemietet" ? btn("leaseBackfill", "💶 Miete an Vermieter nachtragen", "sm", o.id) : ""}<a class="btn sm" href="#/ablage/${o.id}">📂 Ablage (${state.documents.filter((x) => x.objectId === o.id).length})</a>${btn("editObject", "Bearbeiten", "sm", o.id)}${btn("newUnit", "+ Einheit", "sm", o.id)}</div></div>
         ${units.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit</th><th>Art</th><th>Lage</th><th class="num">m²</th><th class="num">Zi.</th><th>Mieter / Status</th><th class="num">Miete warm</th></tr></thead><tbody>
           ${units.map((u) => {
             const c = activeContract(u.id, key);
@@ -1054,6 +1068,27 @@ function viewRents() {
         return `<td class="m"><span class="dot ${cls}" title="Soll ${eur(r.soll)} · Ist ${eur(r.ist)}">${cls === "ok" ? "✓" : cls === "no" ? "✗" : cls === "part" ? "½" : cls === "over" ? "+" : "·"}</span></td>`; }).join("")}
         <td class="num ${sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff) < 0 ? "neg" : ""}">${eur(sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff))}</td></tr>`).join("")}
       </tbody></table></div><p class="small muted" style="margin-top:6px">✓ bezahlt · ½ teilweise · ✗ offen · + Überzahlung · Saldo bis heute</p></div>`;
+}
+
+// Angemietete Objekte: an den Vermieter gezahlte Miete für mehrere Monate als Ausgabe eintragen
+function leaseBackfillDialog(objectId) {
+  const o = byId("objects", objectId);
+  if (!o.leaseRent) { toast("Bitte zuerst beim Objekt die Miete an den Vermieter eintragen."); return editObject(objectId); }
+  const now = C.monthKey(today());
+  dialog({
+    title: `Miete an Vermieter – ${o.name}`, submit: "Eintragen",
+    body: `<p class="muted" style="margin-bottom:10px">Trägt die gezahlte Miete (${eur(o.leaseRent)}/Monat an ${esc(o.landlordName || "Vermieter")}) als Ausgabe ein – nur für Monate, die noch fehlen. Kommt die Zahlung über den Kontoauszug, ordnet die App sie automatisch zu; dann ist das hier nicht nötig.</p>
+      <div class="fgrid"><label class="f"><span>Von Monat</span><input type="month" name="from" value="${o.leaseStart && o.leaseStart.slice(0, 7) > `${now.slice(0, 4)}-01` ? o.leaseStart.slice(0, 7) : `${now.slice(0, 4)}-01`}"></label>
+      <label class="f"><span>Bis Monat</span><input type="month" name="to" value="${now}"></label>
+      <label class="f"><span>Gezahlt jeweils am</span><select name="day">${opt([1, 3, 5, 15, 28].map((x) => [x, `${x}. des Monats`]), 1)}</select></label></div>
+      <div id="lbPreview" class="note"></div>`,
+    onOpen: (form) => { const show = () => { const n = C.backfillLeaseExpenses(state, objectId, { from: form.from.value, to: form.to.value }); $("#lbPreview", form).textContent = n.length ? `${n.length} Monate · zusammen ${eur(sum(n, (e) => e.amount))}` : "Für diesen Zeitraum ist schon alles eingetragen."; }; form.addEventListener("input", show); show(); },
+    onSubmit: (form) => {
+      const n = C.backfillLeaseExpenses(state, objectId, { from: form.from.value, to: form.to.value, day: form.day.value });
+      if (!n.length) { toast("Nichts zu tun."); return false; }
+      state.expenses.push(...n); commit(`${n.length} Mietzahlungen an den Vermieter eingetragen`);
+    },
+  });
 }
 
 // Mehrere vergangene Monate auf einmal als bezahlt eintragen (nur der noch fehlende Betrag je Monat)
@@ -1552,8 +1587,9 @@ function viewTax() {
       ${rows.length ? `<details style="margin-top:8px"><summary class="small">Vorschau Buchungssätze</summary><div class="table-wrap"><table><thead><tr><th>Datum</th><th class="num">Betrag</th><th>S/H</th><th>Konto</th><th>Gegenkonto</th><th>Beleg</th><th>Text</th></tr></thead><tbody>
         ${rows.slice(0, 100).map((r) => `<tr><td>${d(r.date)}</td><td class="num">${C.fmtNum(r.amount)}</td><td>${r.sh}</td><td>${r.konto}</td><td>${r.gegen}</td><td class="small">${esc(r.beleg)}</td><td class="small">${esc(r.text)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}
     </div>
+    ${av.some((x) => x.angemietet) ? `<div class="note warn"><b>Angemietete Objekte (${esc(av.filter((x) => x.angemietet).map((x) => x.name).join(", "))}):</b> Hier seid ihr selbst Mieter und vermietet weiter. Die gezahlte Miete an euren Vermieter steht als Werbungskosten/Betriebsausgabe drin (Konto ${state.settings.skr === "04" ? "6310" : "4210"} Miete), Gebäude-AfA und Grundsteuer gibt es nicht. <b>Mit dem Steuerberater klären:</b> Untervermietung als Einkünfte aus Vermietung (Anlage V, „Untervermietung von gemieteten Räumen“) oder – bei Ferienwohnungen mit hotelähnlichen Leistungen (Reinigung während des Aufenthalts, Wäsche, Frühstück) bzw. mehreren Objekten mit Gewinnabsicht – gewerblich (EÜR, Anlage G, Gewerbeanmeldung). Die Zahlen sind in beiden Fällen gleich; nur das Formular ändert sich.</div>` : ""}
     <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Anlage V – Zusammenstellung ${y}</h2><div class="toolbar noprint"><button class="btn sm" onclick="window.print()">Drucken / PDF</button></div></div>
-      <div class="table-wrap"><table><thead><tr><th></th>${av.map((x) => `<th class="num">${esc(x.name)}</th>`).join("")}${av.length > 1 ? '<th class="num">Gesamt</th>' : ""}</tr></thead><tbody>
+      <div class="table-wrap"><table><thead><tr><th></th>${av.map((x) => `<th class="num">${esc(x.name)}${x.angemietet ? '<br><span class="badge warn">angemietet</span>' : ""}</th>`).join("")}${av.length > 1 ? '<th class="num">Gesamt</th>' : ""}</tr></thead><tbody>
         <tr><td colspan="${av.length + 2}"><b>Einnahmen</b> <span class="small muted">(Zuflussprinzip, netto ohne USt, ohne Kaution & Kurtaxe)</span></td></tr>
         ${incomeRows.map(([k, l]) => `<tr><td>${l}</td>${col(null, (x) => x.income[k])}</tr>`).join("")}
         <tr><td><b>Summe Einnahmen</b></td>${col(null, (x) => x.incomeTotal)}</tr>
@@ -4965,7 +5001,7 @@ const actions = {
     if (!confirm(`Vertrag „${contractLabel(c)}“ wirklich löschen?`)) return;
     state.contracts = state.contracts.filter((x) => x.id !== id); commit("Vertrag gelöscht");
   },
-  newPayment: () => editPayment(), editPayment, backfill: backfillDialog,
+  newPayment: () => editPayment(), editPayment, backfill: backfillDialog, leaseBackfill: leaseBackfillDialog,
   undoBackfill: () => { const b = ui.lastBatch; if (!b) return; state.payments = state.payments.filter((p) => p.batch !== b.id); ui.lastBatch = null; commit("Nachtragen rückgängig gemacht"); }, newExpense: () => editExpense(), editExpense,
   newAccount: () => editAccount(), editAccount,
   assign: assignDialog,

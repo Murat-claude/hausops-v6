@@ -142,6 +142,7 @@ export const EXPENSE_CATEGORIES = {
   fewo_reinigung:{ label: "Ferienwohnung: Reinigung / Wäsche",   av: "sonstige",    skr03: "4250", skr04: "6330" },
   fewo_provision:{ label: "Ferienwohnung: Portal-Provision",     av: "sonstige",    skr03: "4760", skr04: "6770" },
   fewo_ausstattung:{ label: "Ferienwohnung: Verbrauch / Ausstattung", av: "sonstige", skr03: "4980", skr04: "6850" },
+  anmietung:     { label: "Miete an Vermieter (angemietete Objekte)", av: "sonstige", skr03: "4210", skr04: "6310" },
   fahrt:         { label: "Fahrtkosten",                        av: "sonstige",    skr03: "4670", skr04: "6670" },
   sonstiges:     { label: "Sonstige Werbungskosten",            av: "sonstige",    skr03: "4900", skr04: "6300" },
   herstellung:   { label: "Anschaffung / Herstellung (AfA – mit StB klären)", av: null, skr03: "0090", skr04: "0240" },
@@ -364,6 +365,13 @@ export function suggestAssignment(tx, state) {
 
   // Ausgaben
   if (rule && rule.kind === "ausgabe") return { ...rule, score: 90, why: ["gelernte Regel"] };
+  // Miete an den Vermieter eines angemieteten Objekts (Name oder Betrag)
+  for (const o of state.objects || []) {
+    if (o.ownership !== "angemietet") continue;
+    const ns = o.landlordName ? nameScore(o.landlordName, text) : 0;
+    const amt = o.leaseRent && -tx.amount === o.leaseRent;
+    if (ns >= 0.8 || (amt && (ns || /miete|pacht/.test(normalize(text))))) return { kind: "ausgabe", category: "anmietung", objectId: o.id, score: ns && amt ? 90 : 70, why: [ns ? "Name des Vermieters" : "", amt ? "Betrag = Miete" : ""].filter(Boolean) };
+  }
   if (rule && rule.kind === "ignorieren") return { kind: "ignorieren", score: 90, why: ["gelernte Regel"] };
   const n = normalize(text);
   for (const [re, cat] of DEBIT_KEYWORDS) {
@@ -433,6 +441,7 @@ export function bookingsOverlap(a, b) {
 // ---------------------------------------------------------------- AfA & Anlage V
 
 export function afaForYear(obj, year) {
+  if (obj.ownership === "angemietet") return 0; // nur angemietet – keine Gebäude-AfA
   const basis = obj.buildingShare || 0;
   const rate = Number(obj.afaRate) || 0;
   if (!basis || !rate || !obj.purchaseDate) return 0;
@@ -509,7 +518,7 @@ const inYear = (iso, year) => iso && iso.slice(0, 4) === String(year);
 export function anlageV(state, year) {
   const objects = [...(state.objects || []), { id: null, name: "Ohne Objektzuordnung" }];
   const result = objects.map((o) => ({
-    objectId: o.id, name: o.name,
+    objectId: o.id, name: o.name, angemietet: o.ownership === "angemietet",
     income: { kalt: 0, umlage: 0, fewo: 0, sonstige: 0 },
     costs: Object.fromEntries(Object.keys(AV_GROUPS).map((k) => [k, 0])),
   }));
@@ -1200,4 +1209,19 @@ export function vatIdFormatOk(v) {
   const n = normVatId(v); if (!n) return null;
   const re = VAT_RE[n.slice(0, 3)] || VAT_RE[n.slice(0, 2)];
   return re ? re.test(n) : null;
+}
+
+// Angemietete Objekte: Miete an den Vermieter für vergangene Monate als Ausgabe nachtragen (nur fehlende Monate)
+export function backfillLeaseExpenses(state, objectId, { from, to, day = 1 }) {
+  const o = (state.objects || []).find((x) => x.id === objectId);
+  if (!o?.leaseRent || !from || !to || from > to) return [];
+  const out = [];
+  for (const key of monthRange(from, to)) {
+    if (o.leaseStart && key < o.leaseStart.slice(0, 7)) continue;
+    if (o.leaseEnd && key > o.leaseEnd.slice(0, 7)) continue;
+    if ((state.expenses || []).some((e) => e.objectId === objectId && e.category === "anmietung" && (e.period === key || e.date.slice(0, 7) === key))) continue;
+    const dd = Math.min(Math.max(1, Number(day) || 1), daysInMonth(key));
+    out.push({ id: uid("e_"), date: `${key}-${String(dd).padStart(2, "0")}`, period: key, amount: o.leaseRent, category: "anmietung", objectId, vendor: o.landlordName || "Vermieter", note: `Miete ${key}`, belegNr: "", fileIds: [] });
+  }
+  return out;
 }
