@@ -1167,3 +1167,26 @@ export function guessFolder(...texts) {
   for (const [k, [, , re]] of Object.entries(DOC_FOLDERS)) if (re && re.test(t)) return k;
   return "sonstiges";
 }
+
+// ---------------------------------------------------------------- Vergangene Mieten nachtragen
+// Für jeden gewählten Vertrag und Monat den noch fehlenden Betrag (Soll − bereits erfasst) als Zahlung anlegen.
+export function backfillPayments(state, { from, to, contractIds, day = 3, batch = "" }) {
+  const out = [];
+  if (!from || !to || from > to) return out;
+  const ids = new Set(contractIds || []);
+  for (const c of state.contracts || []) {
+    if (!ids.has(c.id)) continue;
+    for (const key of monthRange(from, to)) {
+      if (!contractActiveIn(c, key)) continue;
+      const soll = rentForMonth(c, key).total;
+      const ist = (state.payments || []).filter((p) => p.kind === "miete" && p.contractId === c.id && p.period === key).reduce((s, p) => s + p.amount, 0);
+      const missing = soll - ist;
+      if (missing <= 0) continue;
+      const dd = Math.min(Math.max(1, Number(day) || 1), daysInMonth(key));
+      let date = `${key}-${String(dd).padStart(2, "0")}`;
+      if (c.start > date) date = c.start;
+      out.push({ id: uid("p_"), date, amount: missing, kind: "miete", contractId: c.id, period: key, invoiceId: null, objectId: null, txId: null, note: "nachgetragen", batch });
+    }
+  }
+  return out;
+}

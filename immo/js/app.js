@@ -932,7 +932,8 @@ function viewRents() {
   const cell = {};
   for (const r of year) cell[`${r.contractId}|${r.key}`] = r;
   const yContracts = state.contracts.filter((c) => months.some((m) => C.contractActiveIn(c, m)));
-  return head("Mieteingänge", "Soll/Ist-Abgleich je Mietvertrag", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("newPayment", "+ Zahlung manuell")) + `
+  return head("Mieteingänge", "Soll/Ist-Abgleich je Mietvertrag", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("backfill", "⧉ Vergangene Monate nachtragen", "primary") + btn("newPayment", "+ Zahlung manuell")) + `
+    ${ui.lastBatch ? `<div class="note">✓ ${ui.lastBatch.n} Zahlungen nachgetragen (${eur(ui.lastBatch.sum)}). ${btn("undoBackfill", "↶ Rückgängig machen", "sm")}</div>` : ""}
     <div class="kpis">
       <div class="kpi"><div class="l">Soll ${C.fmtMonth(key)}</div><div class="v">${eur(sum(rows, (r) => r.soll))}</div></div>
       <div class="kpi"><div class="l">Ist</div><div class="v">${eur(sum(rows, (r) => r.ist))}</div></div>
@@ -952,6 +953,50 @@ function viewRents() {
         return `<td class="m"><span class="dot ${cls}" title="Soll ${eur(r.soll)} · Ist ${eur(r.ist)}">${cls === "ok" ? "✓" : cls === "no" ? "✗" : cls === "part" ? "½" : cls === "over" ? "+" : "·"}</span></td>`; }).join("")}
         <td class="num ${sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff) < 0 ? "neg" : ""}">${eur(sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff))}</td></tr>`).join("")}
       </tbody></table></div><p class="small muted" style="margin-top:6px">✓ bezahlt · ½ teilweise · ✗ offen · + Überzahlung · Saldo bis heute</p></div>`;
+}
+
+// Mehrere vergangene Monate auf einmal als bezahlt eintragen (nur der noch fehlende Betrag je Monat)
+function backfillDialog() {
+  const now = C.monthKey(today());
+  const to0 = C.addMonths(now, -1), from0 = C.addMonths(now, -3);
+  const cs = state.contracts.filter((c) => (c.tenantIds || []).length);
+  if (!cs.length) return toast("Noch keine Mietverträge.");
+  const body = `<p class="muted" style="margin-bottom:10px">Die App trägt für jeden gewählten Monat die vereinbarte Miete als erhalten ein – nur dort, wo noch etwas fehlt. Bereits erfasste Zahlungen bleiben unverändert.</p>
+    <div class="fgrid">
+      <label class="f"><span>Von Monat</span><input type="month" name="from" value="${from0}"></label>
+      <label class="f"><span>Bis Monat</span><input type="month" name="to" value="${to0}"></label>
+      <label class="f"><span>Zahlungseingang jeweils am</span><select name="day">${opt([1, 3, 5, 10, 15, 28].map((x) => [x, `${x}. des Monats`]), 3)}</select></label>
+      <div class="f"><span class="small muted">Schnellwahl</span><div class="toolbar">
+        <button type="button" class="btn sm" data-bf="1">letzter Monat</button><button type="button" class="btn sm" data-bf="2">2 Monate</button><button type="button" class="btn sm" data-bf="3">3 Monate</button><button type="button" class="btn sm" data-bf="year">ganzes Jahr</button></div></div>
+    </div>
+    <div class="head" style="margin:8px 0 4px"><b>Für welche Mieter?</b><span class="small"><a href="#" data-bfall="1">alle</a> · <a href="#" data-bfall="0">keine</a></span></div>
+    <div class="checks" style="flex-direction:column;align-items:flex-start">${cs.map((c) => `<label><input type="checkbox" name="cid" value="${esc(c.id)}" ${C.contractActiveIn(c, to0) || C.contractActiveIn(c, from0) ? "checked" : ""}> ${esc(contractLabel(c))} <span class="muted small">${eur(C.rentForMonth(c, to0).total)}/Monat</span></label>`).join("")}</div>
+    <div id="bfPreview" class="note" style="margin-top:12px"></div>`;
+  dialog({
+    title: "Vergangene Monate nachtragen", wide: true, submit: "Nachtragen", body,
+    onOpen: (form) => {
+      const calc = () => C.backfillPayments(state, { from: form.from.value, to: form.to.value, contractIds: [...form.querySelectorAll("input[name=cid]:checked")].map((x) => x.value), day: form.day.value });
+      const show = () => { const ps = calc(); $("#bfPreview", form).innerHTML = ps.length ? `Es werden <b>${ps.length} Zahlungen</b> über zusammen <b>${eur(sum(ps, (p) => p.amount))}</b> eingetragen (${C.fmtMonth(form.from.value)} bis ${C.fmtMonth(form.to.value)}).` : "Für diese Auswahl fehlt nichts – alles ist schon erfasst."; };
+      form.addEventListener("input", show); form.addEventListener("change", show);
+      form.addEventListener("click", (e) => {
+        const q = e.target.dataset.bf, all = e.target.dataset.bfall;
+        if (q) { form.to.value = to0; form.from.value = q === "year" ? `${now.slice(0, 4)}-01` : C.addMonths(now, -Number(q)); if (form.from.value > form.to.value) form.from.value = form.to.value; show(); }
+        if (all != null) { e.preventDefault(); form.querySelectorAll("input[name=cid]").forEach((x) => (x.checked = all === "1")); show(); }
+      });
+      show();
+    },
+    onSubmit: (form) => {
+      const batch = C.uid("b_");
+      const ps = C.backfillPayments(state, { from: form.from.value, to: form.to.value, contractIds: [...form.querySelectorAll("input[name=cid]:checked")].map((x) => x.value), day: form.day.value, batch });
+      if (!ps.length) { toast("Für diese Auswahl fehlt nichts."); return false; }
+      state.payments.push(...ps);
+      // Abgleich so weit zurück anzeigen, wie jetzt Zahlungen erfasst sind
+      if (state.settings.sollStart && form.from.value < state.settings.sollStart) state.settings.sollStart = form.from.value;
+      ui.lastBatch = { id: batch, n: ps.length, sum: sum(ps, (p) => p.amount) };
+      if (ui.month > form.to.value || ui.month < form.from.value) ui.month = form.to.value;
+      commit(`${ps.length} Zahlungen nachgetragen`);
+    },
+  });
 }
 
 function editPayment(id) {
@@ -4811,7 +4856,8 @@ const actions = {
     if (!confirm(`Vertrag „${contractLabel(c)}“ wirklich löschen?`)) return;
     state.contracts = state.contracts.filter((x) => x.id !== id); commit("Vertrag gelöscht");
   },
-  newPayment: () => editPayment(), editPayment, newExpense: () => editExpense(), editExpense,
+  newPayment: () => editPayment(), editPayment, backfill: backfillDialog,
+  undoBackfill: () => { const b = ui.lastBatch; if (!b) return; state.payments = state.payments.filter((p) => p.batch !== b.id); ui.lastBatch = null; commit("Nachtragen rückgängig gemacht"); }, newExpense: () => editExpense(), editExpense,
   newAccount: () => editAccount(), editAccount,
   assign: assignDialog,
   accept: (id) => { const tx = byId("transactions", id); applyAssignment(tx, C.suggestAssignment(tx, state), false); commit("Zugeordnet"); },

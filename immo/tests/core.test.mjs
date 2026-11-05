@@ -377,3 +377,14 @@ test("Gewerblicher Mieter: Miete netto zzgl. 19 % USt", async () => {
   // ohne USt unverändert
   assert.equal(rentForMonth({ ...c, ustRate: "" }, "2026-11").total, 120000);
 });
+
+test("Vergangene Monate nachtragen: nur fehlende Beträge", async () => {
+  const { backfillPayments } = await import("../js/core.js");
+  const s = emptyState();
+  s.contracts = [{ id: "c1", unitId: "u1", tenantIds: ["t1"], start: "2026-09-15", kalt: 50000, nk: 10000, extra: 0, steps: [] }];
+  s.payments = [{ id: "p1", kind: "miete", contractId: "c1", period: "2026-10", amount: 20000, date: "2026-10-03" }];
+  const ps = backfillPayments(s, { from: "2026-08", to: "2026-10", contractIds: ["c1"], day: 3 });
+  // August: vor Mietbeginn → nichts; September: volle Miete (Datum = Mietbeginn); Oktober: Rest 400 €
+  assert.deepEqual(ps.map((p) => [p.period, p.amount, p.date]), [["2026-09", 60000, "2026-09-15"], ["2026-10", 40000, "2026-10-03"]]);
+  assert.equal(backfillPayments(s, { from: "2026-10", to: "2026-09", contractIds: ["c1"] }).length, 0);
+});
