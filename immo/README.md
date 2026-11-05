@@ -75,6 +75,32 @@ Die App läuft in zwei Modi:
 - **Sperre**: Wird der Inhaber gesperrt oder läuft sein Abo ab, gilt das auch für die Mitglieder (Sperre bzw. Nur-Lesen).
 - **Lokaler Modus**: Ohne Konto liegen die Daten nur im Browser; ein Team ist dann nicht möglich.
 
+### Admin: Vermieter-Gruppen
+
+Unter **Admin → Gruppen** siehst du alle gemeinsamen Bestände (Inhaber plus weitere Personen).
+- Für jedes Kundenkonto kannst du eine Gruppe anlegen und Personen hinzufügen. Ein vorhandenes Konto kommt sofort dazu, für alle anderen entsteht ein Einladungslink.
+- Rollen lassen sich ändern („Bearbeiten“ / „Nur lesen“), Personen entfernen und Einladungen zurückziehen.
+- Im Nutzer-Dialog stehen Gruppe und Mitgliedschaften; die Nutzerliste zeigt „Mitglied bei …“.
+- **Datenschutz**: Admin-Konten können über den Admin-Bereich nicht in Kundenbestände aufgenommen werden. Sonst könnte sich ein Admin selbst Einsicht verschaffen. Jede Änderung steht im Protokoll.
+- Mieter-Zugänge aus dem Mieterportal zählen nicht als Kunden. Sie sind in der Nutzerliste ausgeblendet und lassen sich einblenden.
+
+## Mieterportal
+
+Mieter bekommen einen eigenen, kostenlosen Zugang, der fürs Handy gemacht ist. Sie sehen **nur ihre eigenen Daten**, nie deinen Bestand.
+
+| Für Mieter | Für dich |
+|---|---|
+| Startseite mit Wohnung, Miete, Kaution, Bankverbindung und deinen Kontaktdaten | Einladen aus der Mieterakte (Karte „🔑 Mieterportal“), Link per E-Mail oder WhatsApp, 30 Tage gültig, nur mit der eingeladenen E-Mail |
+| **Schaden melden** mit Raum, Beschreibung, bis zu 6 Fotos, Kennzeichen „dringend“ | **Postfach** (Menü „Mieterportal“) mit Fotos, Status (neu / gesehen / in Bearbeitung / erledigt) und Antwort |
+| **Zählerstand melden** mit Foto | Schadensmeldung **als Reparaturauftrag übernehmen**: Fotos, Raum und Dringlichkeit werden mitgenommen. Erledigst du die Reparatur, sieht der Mieter den Status und auf Wunsch eine Nachricht |
+| **Nachrichten** an dich, Verlauf mit deinen Antworten | Zählerstand mit einem Klick übernehmen (für Nebenkosten und Verbrauch) |
+| **Dokumente**, die du freigibst (z. B. NK-Abrechnung, Protokoll) | Dokumente in der Mieterakte mit „🔑 Teilen“ freigeben |
+| **Notfall-Kontakte** (Hausmeister, Notdienst) | Notfall-Kontakte einmal für alle Mieter pflegen, Zugang jederzeit entziehen |
+
+- **Datenschutz**: Du bist Verantwortlicher, der Betreiber verarbeitet im Auftrag (AVV). Der Mieter legt seinen Zugang selbst an und bestätigt die Datenschutzhinweise. Die Datenbank (Row Level Security) und der Dateispeicher stellen sicher, dass ein Mieter nur seinen eigenen Ordner und seine eigenen Einträge sieht und schreiben kann.
+- **Missbrauchsschutz**: Ein Mieter-Zugang lässt sich nur mit Einladung anlegen, auch bei geschlossener Registrierung. Er bekommt keine kostenlose Vermieter-Testphase.
+- **Einrichtung**: Datenbank-Update `immo/supabase/migrations/20261110000000_portal.sql` ausführen. Das Portal gibt es nur im Konto-Modus.
+
 ### Einrichtung (einmalig, ca. 15 Minuten)
 
 1. Bei https://supabase.com ein **neues Projekt** anlegen (Region EU, z. B. Frankfurt). Bitte nicht das Projekt von Livora Clean verwenden.
@@ -100,7 +126,7 @@ So funktioniert es für deine Kunden:
 - Tarife ohne Stripe-Preis-ID bleiben manuell (Admin weist zu, oder es geht eine E-Mail an den Support).
 
 Einrichtung:
-1. In Supabase zusätzlich `immo/supabase/migrations/20261106000000_billing.sql`, `immo/supabase/migrations/20261107000000_legal.sql` und `immo/supabase/migrations/20261108000000_team.sql` ausführen (Team-Zugriff).
+1. In Supabase zusätzlich nacheinander alle Dateien aus `immo/supabase/migrations/` ausführen (billing, legal, team, admin_groups, portal), sortiert nach Dateiname.
 2. Bei https://dashboard.stripe.com je Tarif ein **Produkt mit monatlichem, wiederkehrendem Preis** anlegen und die **Preis-ID** (`price_…`) im Admin-Bereich unter „Tarife“ eintragen.
 3. Stripe → **Einstellungen → Billing → Kundenportal** aktivieren: Zahlungsmethode ändern, Rechnungen, Kündigung und Tarifwechsel (die Produkte freigeben).
 4. Stripe → **Entwickler → Webhooks**: Endpoint `https://<deine-seite>/.netlify/functions/immo-stripe-webhook` mit den Ereignissen `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted` und `invoice.payment_failed`.
@@ -115,6 +141,27 @@ Getestet: Signaturprüfung, Formularkodierung und die Abbildung aller Abo-Ereign
 - **KI für Kunden**: Derzeit trägt jeder Nutzer seinen eigenen Claude-API-Schlüssel ein. Für „KI inklusive“-Tarife braucht es eine Server-Funktion mit deinem Schlüssel und einem Nutzungslimit.
 - Rechtliches: Impressum, Datenschutzerklärung mit Auftragsverarbeitung (Supabase, Netlify, Anthropic), AGB, AV-Vertrag für Kunden.
 - Eigene Domain und Branding (Produktname ist im Admin-Bereich einstellbar).
+
+## Reparaturen & Instandhaltung
+
+Menü **Vermietung → Reparaturen**, außerdem „🔧 Reparatur / Schaden“ im „+“-Menü.
+
+- **Aufträge**:
+  - Was ist kaputt, wo (Objekt, Einheit oder Gemeinschaftseigentum), Art, Dringlichkeit und Status (gemeldet → beauftragt → in Arbeit → erledigt).
+  - Dazu Handwerker mit Telefon und E-Mail, Termin, Angebot, Fotos und ein Verlauf.
+  - Mängel aus der Mieterakte oder dem Mieterportal werden mit einem Klick zum Auftrag.
+- **Handwerker beauftragen**: Der Auftragstext mit Adresse, Ansprechpartner vor Ort und Rechnungsanschrift geht per E-Mail, WhatsApp oder in die Zwischenablage. Er enthält den Hinweis, den Lohnanteil auszuweisen (§ 35a EStG). Danach steht der Auftrag auf „beauftragt“.
+- **Mieter informieren**: Ankündigung der Erhaltungsmaßnahme (§ 555a BGB) mit Termin und Firma.
+- **Kosten**:
+  - Die Handwerkerrechnung wird als Ausgabe gebucht und mit dem Auftrag verknüpft (Anlage V, DATEV). Erhaltungsaufwand lässt sich auf 2–5 Jahre verteilen (§ 82b EStDV).
+  - Wer zahlt: Vermieter, Mieter (Kleinreparatur oder selbst verursachter Schaden), Versicherung oder Umlage über die Nebenkosten.
+- **Kleinreparaturklausel**: Grenze je Fall und Jahreshöchstbetrag werden am Mietvertrag hinterlegt. Die App prüft beides nach der Rechtsprechung des BGH.
+  - Liegen die Kosten über der Grenze je Fall, zahlt der Mieter nichts.
+  - Fehlt der Jahreshöchstbetrag, warnt die App, weil die Klausel dann unwirksam ist.
+- **Wartungsplan**: Vorlagen für Heizung, Schornsteinfeger, Rauchmelder, Legionellen, Aufzug, Dachrinne, Feuerlöscher, E-Check, Rückstausicherung, Spielplatz und Dach.
+  - Jede Vorlage hat ein Intervall und ist der passenden Betriebskostenart zugeordnet.
+  - Fälligkeiten erscheinen auf der Startseite. „Erledigt“ rechnet den nächsten Termin aus und bucht umlagefähige Kosten direkt für die Nebenkostenabrechnung.
+- **Kosten & Steuer**: Jahresübersicht nach Art und Kostenträger, offene Angebote. Dazu eine Anzeige der **15-%-Grenze** für anschaffungsnahe Herstellungskosten in den ersten 3 Jahren nach dem Kauf (§ 6 Abs. 1 Nr. 1a EStG).
 
 ## Rechnungen für Portal-Buchungen (Booking.com, Airbnb … über Smoobu)
 
@@ -209,6 +256,16 @@ Die Regeln stammen aus den Fach-Skills *Nebenkostenabrechnung* (BetrKV, Heizkost
 2. **Belege an DATEV Unternehmen online** übergeben, Zuschneiden und Geraderücken beim Scannen.
 3. **E-Rechnung (XRechnung/ZUGFeRD)** für Geschäftskunden (Pflicht für alle ab 2028).
 
+## Tests
+
+| Befehl | Was | Voraussetzung |
+|---|---|---|
+| `npm test` | Fachlogik: Zuordnung, NK, Steuer, Recht, Rechnungen/PDF, Mail, Team-Zusammenführung, Reparaturen | Node 20+ |
+| `npm run test:db` | Zugriffsregeln der Datenbank (Datentrennung, Abo-Sperre, Team, Admin-Gruppen, Mieterportal) | Postgres, `DATABASE_URL` |
+| `npm run test:e2e` | **Echt-Test**: startet Supabase lokal (Docker), die Netlify-Funktionen und einen Browser. Spielt Registrierung, Speichern, Belege, Team, Admin-Gruppen, Mieterportal, Rechnungen, Reparaturen und einen Rundgang durch alle Seiten (Desktop und Handy) durch | Docker, Node, Playwright |
+
+Was zusätzlich mit echten Zugängen geprüft werden muss (Stripe, Bank, Smoobu, Resend, ELSTER), steht in `TESTPROTOKOLL.md`.
+
 ## Entwicklung
 
 Kein Build-Schritt nötig: reines HTML/CSS/JavaScript (ES-Module).
@@ -223,6 +280,7 @@ immo/
   js/ki.js      KI-Funktionen (Belegerkennung, Assistent, Briefe) über die Claude API
   js/cloud.js   Anmeldung, Cloud-Speicherung, Admin (Supabase)
   js/pdf.js     PDF-Rechnungen (jsPDF, vendor/jspdf.js, MIT-Lizenz)
+  js/instand.js Reparaturen, Kleinreparaturklausel, Wartungsplan, 15-%-Grenze
   js/app.js     Oberfläche
   supabase/     Datenbank-Migrationen + RLS-/Billing-Tests
 netlify/functions/immo-billing.js         Stripe Checkout + Kundenportal
