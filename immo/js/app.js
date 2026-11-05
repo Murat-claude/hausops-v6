@@ -5,6 +5,7 @@ import * as F from "./files.js";
 import * as K from "./ki.js";
 import * as Cloud from "./cloud.js";
 import * as B from "./betrkv.js";
+import * as R from "./recht.js";
 
 let state = S.load();
 const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
@@ -185,6 +186,9 @@ const SPEC = {
     { k: "purchasePrice", l: "Kaufpreis inkl. Nebenkosten (€)", t: "money" },
     { k: "buildingShare", l: "Davon Gebäudeanteil = AfA-Basis (€)", t: "money" },
     { k: "afaRate", l: "AfA-Satz in %", t: "number", step: 0.01, hint: "2 % (Baujahr 1925–2022), 2,5 % (vor 1925), 3 % (ab 2023)" },
+    { k: "kappung15", l: "Gebiet mit Kappungsgrenzen-Verordnung (15 % statt 20 %)", t: "checkbox" },
+    { k: "mietpreisbremse", l: "Gebiet mit Mietpreisbremse (§ 556d BGB)", t: "checkbox" },
+    { k: "vergleichsmiete", l: "Ortsübliche Vergleichsmiete laut Mietspiegel (€/m²)", t: "money", hint: "Für die Prüfung von Neuvermietung (Mietpreisbremse) und Mieterhöhung" },
     { k: "owners", l: "Eigentümer & Anteile (bei Miteigentum)", ph: "Max Mustermann 50; Erika Mustermann 50", full: 1, hint: "Für die Aufteilung der Anlage V je Person" },
     { k: "notes", l: "Notizen (Hausverwaltung, Grundbuch, Darlehen …)", t: "textarea" },
   ],
@@ -195,7 +199,8 @@ const SPEC = {
     { k: "floor", l: "Lage / Etage" },
     { k: "area", l: "Wohn-/Nutzfläche m²", t: "number", step: 0.01 },
     { k: "rooms", l: "Zimmer", t: "number", step: 0.5 },
-    { k: "vat", l: "Umsatzsteuer auf Miete", t: "select", opts: [["0", "steuerfrei (§ 4 Nr. 12 UStG)"], ["7", "7 % (Beherbergung / Ferienwohnung)"], ["19", "19 % (Option / separater Stellplatz)"]] },
+    { k: "vat", l: "Umsatzsteuer auf Miete", t: "select", opts: [["0", "automatisch (Wohnraum/Keller steuerfrei; Stellplatz/Garage je nach Mieter)"], ["7", "7 % (Beherbergung / Ferienwohnung)"], ["19", "19 % (Option nach § 9 UStG bei Gewerbe)"]] },
+    { k: "nkUmlage", l: "An der Umlage der Hausnebenkosten beteiligt?", t: "select", opts: [["", "automatisch (Wohnung/Gewerbe/FeWo ja; Garage, Stellplatz, Keller nein)"], ["ja", "ja"], ["nein", "nein"]] },
     { k: "maxGuests", l: "Max. Gäste (Ferienwohnung)", t: "number" },
     { k: "smoobuName", l: "Name in Smoobu (für Import)", hint: "Nur für Ferienwohnungen, falls abweichend" },
     { k: "registrationNo", l: "Registrierungsnummer (Ferienwohnung)", hint: "Falls die Kommune eine Registrierung verlangt (EU-VO 2024/1028) – erscheint auf Rechnungen" },
@@ -218,7 +223,8 @@ const SPEC = {
     { k: "kalt", l: "Kaltmiete (€/Monat)", t: "money" }, { k: "nk", l: "NK-/Heizkosten-Vorauszahlung (€/Monat)", t: "money" },
     { k: "extra", l: "Zuschläge (Stellplatz, Möblierung …)", t: "money" }, { k: "kaution", l: "Kaution (€)", t: "money" },
     { k: "persons", l: "Personen im Haushalt (für Umlage nach Personen)", t: "number" },
-    { k: "notes", l: "Notizen (Index-/Staffelmiete, Kündigungsfrist …)", t: "textarea" },
+    { k: "mietart", l: "Mietart", t: "select", opts: [["standard", "Normale Miete (Erhöhung nach § 558 BGB)"], ["staffel", "Staffelmiete (§ 557a BGB)"], ["index", "Indexmiete (§ 557b BGB)"]] },
+    { k: "notes", l: "Notizen (Kündigungsfrist, Sondervereinbarungen …)", t: "textarea" },
   ],
   step: [
     { k: "from", l: "Gültig ab Monat", t: "month", req: 1 },
@@ -276,10 +282,11 @@ function editUnit(id, objectId) {
   if (!id && isCloud() && lim && state.units.length >= lim) return alert(`Dein Tarif „${planOf().name}“ umfasst bis zu ${lim} Einheiten. Unter „Mein Konto“ kannst du auf einen größeren Tarif wechseln.`);
   const u = byId("units", id) || { id: C.uid("u_"), objectId: objectId || state.objects[0].id, type: "wohnung", vat: "0" };
   formDialog({
-    title: id ? "Einheit bearbeiten" : "Neue Einheit", spec: SPEC.unit, data: { ...u, vat: String(u.vat ?? 0) },
+    title: id ? "Einheit bearbeiten" : "Neue Einheit", spec: SPEC.unit, data: { ...u, vat: String(u.vat ?? 0), nkUmlage: u.nkUmlage === true ? "ja" : u.nkUmlage === false ? "nein" : "" },
     onSave: (v) => {
       if (v.type === "ferienwohnung" && !id && v.vat === "0") v.vat = "7";
-      upsert("units", { ...u, ...v, vat: Number(v.vat) }); commit("Einheit gespeichert");
+      if (Number(v.vat) === 19 && R.WOHNRAUM.includes(v.type) && !confirm("Wohnraumvermietung ist zwingend umsatzsteuerfrei (§ 4 Nr. 12 UStG, keine Option nach § 9 UStG möglich). Trotzdem 19 % setzen?")) return false;
+      upsert("units", { ...u, ...v, vat: Number(v.vat), nkUmlage: v.nkUmlage === "ja" ? true : v.nkUmlage === "nein" ? false : undefined }); commit("Einheit gespeichert");
     },
     onDelete: id && (() => {
       if (state.contracts.some((c) => c.unitId === id) || state.bookings.some((b) => b.unitId === id)) return alert("Die Einheit hat noch Mietverträge oder Buchungen.");
@@ -300,14 +307,31 @@ function editTenant(id) {
   });
 }
 
+const legalNotes = (list) => list.length ? `<div class="legal">${list.map((x) => `<div class="note small ${x.level === "bad" ? "warn" : ""}">${x.level === "bad" ? "⚠️" : "§"} ${esc(x.text)}</div>`).join("")}</div>` : "";
+
+// Zeigt rechtliche Warnungen und lässt den Nutzer bewusst entscheiden (nichts wird stillschweigend blockiert)
+function confirmLegal(list) {
+  const bad = list.filter((x) => x.level === "bad");
+  return !bad.length || confirm(`Rechtlicher Hinweis:\n\n${bad.map((x) => "• " + x.text).join("\n\n")}\n\nTrotzdem speichern?`);
+}
+
+function contractLegal(c) {
+  const u = byId("units", c.unitId);
+  const list = [...R.depositCheck(u, c)];
+  if (R.isParking(u)) { const v = R.vatFor(state, c); list.push({ level: "info", text: `Umsatzsteuer: ${v.reason}` }); }
+  if (!R.isWohnraum(u) && u && u.type !== "ferienwohnung") list.push({ level: "info", text: "Kein Wohnraum: Kündigungsfristen und Mieterhöhung richten sich nach dem Vertrag (§ 580a BGB für Garagen/Stellplätze); Wohnraum-Schutzvorschriften gelten nicht." });
+  return list;
+}
+
 function editContract(id, unitId) {
   if (!state.units.some((u) => u.type !== "ferienwohnung")) return toast("Bitte zuerst eine Einheit (Wohnung, Garage …) anlegen.");
   const c = byId("contracts", id) || { id: C.uid("c_"), unitId: unitId || "", tenantIds: [], steps: [], start: today().slice(0, 8) + "01" };
   formDialog({
     title: id ? "Mietvertrag bearbeiten" : "Neuer Mietvertrag", spec: SPEC.contract, data: c,
-    intro: state.tenants.length ? "" : `<div class="note warn">Lege zuerst unter „Mieter“ den Mieter an – dann kannst du ihn hier auswählen.</div>`,
+    intro: (state.tenants.length ? "" : `<div class="note warn">Lege zuerst unter „Mieter“ den Mieter an – dann kannst du ihn hier auswählen.</div>`) + (id ? legalNotes(contractLegal(c)) : ""),
     onSave: (v) => {
       if (!v.tenantIds.length && !confirm("Kein Mieter ausgewählt – trotzdem speichern?")) return false;
+      if (!confirmLegal(contractLegal({ ...c, ...v }))) return false;
       upsert("contracts", { ...c, ...v }); commit("Mietvertrag gespeichert");
     },
     onDelete: id && (() => {
@@ -323,8 +347,13 @@ function addStep(id) {
   formDialog({
     title: "Mietanpassung (Erhöhung, Staffel, Index, NK-Anpassung)", spec: SPEC.step,
     data: { from: C.addMonths(ui.month, 1), kalt: r.kalt, nk: r.nk, extra: r.extra },
-    intro: `<p class="muted" style="margin-bottom:10px">${esc(contractLabel(c))}</p>`,
-    onSave: (v) => { c.steps = [...(c.steps || []).filter((s) => s.from !== v.from), v]; commit("Mietanpassung gespeichert"); },
+    intro: `<p class="muted" style="margin-bottom:10px">${esc(contractLabel(c))} · ${esc({ standard: "normale Miete", staffel: "Staffelmiete", index: "Indexmiete" }[c.mietart || "standard"])}</p>
+      ${R.isWohnraum(byId("units", c.unitId)) ? `<div class="note small">§ Wohnraum: Erhöhung frühestens 15 Monate nach Einzug/letzter Erhöhung wirksam, max. ${byId("objects", byId("units", c.unitId)?.objectId)?.kappung15 ? 15 : 20} % in 3 Jahren, nicht über der ortsüblichen Vergleichsmiete. Die App prüft das beim Speichern.</div>` : ""}`,
+    onSave: (v) => {
+      const u = byId("units", c.unitId);
+      if (!confirmLegal(R.rentIncreaseCheck(u, byId("objects", u?.objectId), c, v))) return false;
+      c.steps = [...(c.steps || []).filter((s) => s.from !== v.from), v]; commit("Mietanpassung gespeichert");
+    },
   });
 }
 
@@ -366,7 +395,7 @@ function unlink(tx, silent) {
 
 function refreshInvoiceStatus(invoiceId) {
   const inv = byId("invoices", invoiceId);
-  if (!inv || inv.status === "storniert" || inv.type === "storno") return;
+  if (!inv || ["storniert", "entwurf"].includes(inv.status) || inv.type === "storno") return;
   const paid = C.paidForInvoice(state, inv.id);
   inv.status = paid >= C.invoiceTotals(inv).gross ? "bezahlt" : paid > 0 ? "teilbezahlt" : "offen";
 }
@@ -390,7 +419,7 @@ function assignDialog(txId) {
     ? [["miete", "Miete"], ["fewo", "Ferienwohnung-Rechnung"], ["nk_nachzahlung", "Nebenkosten-Nachzahlung"], ["kaution", "Kaution"], ["sonstige", "Sonstige Einnahme"], ["ignorieren", "Ignorieren (privat / Umbuchung)"]]
     : [["ausgabe", "Ausgabe / Werbungskosten"], ["ignorieren", "Ignorieren (privat / Umbuchung)"], ["miete", "Mietrückzahlung (negativ)"]];
   const kind = sug.kind || kinds[0][0];
-  const invOpts = state.invoices.filter((i) => i.type !== "storno" && i.status !== "storniert").map((i) => [i.id, `${i.number} · ${i.recipient?.name || ""} · ${eur(C.invoiceTotals(i).gross)} (${i.status})`]);
+  const invOpts = state.invoices.filter((i) => i.type !== "storno" && !["storniert", "entwurf"].includes(i.status)).map((i) => [i.id, `${i.number} · ${i.recipient?.name || ""} · ${eur(C.invoiceTotals(i).gross)} (${i.status})`]);
   const body = `
     <div class="note"><b>${eur(tx.amount)}</b> · ${d(tx.date)} · ${esc(tx.name)}<br><span class="small">${esc(tx.purpose)}</span>${tx.iban ? `<br><span class="small muted">${esc(tx.iban)}</span>` : ""}</div>
     <div class="fgrid">
@@ -492,21 +521,22 @@ function invoiceFromBooking(bookingId) {
   const u = byId("units", b.unitId);
   const date = today();
   const inv = {
-    id: C.uid("i_"), number: takeInvoiceNumber(date), date, serviceFrom: b.from, serviceTo: b.to, bookingId: b.id, unitId: b.unitId,
+    id: C.uid("i_"), number: "", date, serviceFrom: b.from, serviceTo: b.to, bookingId: b.id, unitId: b.unitId,
     recipient: { name: b.guest, address: [b.guestStreet, [b.guestZip, b.guestCity].filter(Boolean).join(" ")].filter(Boolean).join("\n") },
-    lines: C.linesFromBooking(b, u), kleinunternehmer: !!state.settings.kleinunternehmer, status: "offen", type: "rechnung",
+    lines: C.linesFromBooking(b, u), kleinunternehmer: !!state.settings.kleinunternehmer, status: "entwurf", type: "rechnung",
     note: b.channel && b.channel !== "Direkt" ? `Buchung über ${b.channel}.` : "",
   };
   state.invoices.push(inv);
   b.invoiceId = inv.id;
   persist();
   location.hash = `#/rechnung/${inv.id}`;
-  toast(`Rechnung ${inv.number} erstellt`);
+  toast("Rechnungsentwurf erstellt – prüfen und dann festschreiben");
 }
 
 function editInvoice(id) {
   const isNew = !id;
-  const inv = byId("invoices", id) || { id: C.uid("i_"), date: today(), recipient: { name: "", address: "" }, lines: [{ desc: "Übernachtung", qty: 1, price: 0, vat: 7 }], kleinunternehmer: !!state.settings.kleinunternehmer, status: "offen", type: "rechnung", unitId: fewoUnits()[0]?.id || "" };
+  const inv = byId("invoices", id) || { id: C.uid("i_"), number: "", date: today(), recipient: { name: "", address: "" }, lines: [{ desc: "Übernachtung", qty: 1, price: 0, vat: 7 }], kleinunternehmer: !!state.settings.kleinunternehmer, status: "entwurf", type: "rechnung", unitId: fewoUnits()[0]?.id || "" };
+  if (inv.status !== "entwurf") return alert("Festgeschriebene Rechnungen dürfen nicht mehr geändert werden (GoBD). Bitte stornieren und eine neue Rechnung erstellen.");
   const lineRow = (l = {}) => `<tr>
     <td><input name="desc" value="${esc(l.desc || "")}"></td>
     <td style="width:80px"><input name="qty" type="number" step="0.01" value="${esc(l.qty ?? 1)}"></td>
@@ -521,6 +551,8 @@ function editInvoice(id) {
       <label class="f"><span>bis</span><input type="date" name="serviceTo" value="${esc(inv.serviceTo || "")}"></label>
       <label class="f"><span>Empfänger</span><input name="rname" value="${esc(inv.recipient?.name)}" required></label>
       <label class="f"><span>Anschrift</span><textarea name="raddr" style="min-height:40px">${esc(inv.recipient?.address)}</textarea></label>
+      <label class="f inline"><input type="checkbox" name="business" ${inv.recipient?.business ? "checked" : ""}> Empfänger ist ein Unternehmen (B2B)</label>
+      <label class="f"><span>USt-IdNr. des Empfängers (optional)</span><input name="rvat" value="${esc(inv.recipient?.vatId || "")}"></label>
     </div>
     <div class="table-wrap"><table><thead><tr><th>Beschreibung</th><th>Menge</th><th>Einzelpreis brutto</th><th>USt</th><th>durchl.</th><th></th></tr></thead>
     <tbody id="lines">${inv.lines.map(lineRow).join("")}</tbody></table></div>
@@ -528,7 +560,7 @@ function editInvoice(id) {
     <label class="f inline"><input type="checkbox" name="ku" ${inv.kleinunternehmer ? "checked" : ""}> Kleinunternehmer (§ 19 UStG) – keine Umsatzsteuer ausweisen</label>
     <label class="f"><span>Hinweis auf der Rechnung</span><textarea name="note">${esc(inv.note || "")}</textarea></label>`;
   dialog({
-    title: isNew ? "Neue Rechnung" : `Rechnung ${inv.number} bearbeiten`, body, wide: true,
+    title: isNew ? "Neuer Rechnungsentwurf" : "Rechnungsentwurf bearbeiten", body, wide: true,
     onOpen: (form) => {
       form.querySelector("#addLine").onclick = () => form.querySelector("#lines").insertAdjacentHTML("beforeend", lineRow({ vat: 19 }));
       form.addEventListener("click", (e) => { if (e.target.matches("[data-del-line]")) e.target.closest("tr").remove(); });
@@ -542,15 +574,47 @@ function editInvoice(id) {
       if (!lines.length) { toast("Mindestens eine Position angeben."); return false; }
       Object.assign(inv, {
         date: form.date.value, unitId: form.unitId.value, serviceFrom: form.serviceFrom.value, serviceTo: form.serviceTo.value,
-        recipient: { name: form.rname.value.trim(), address: form.raddr.value.trim() }, lines, kleinunternehmer: form.ku.checked, note: form.note.value.trim(),
+        recipient: { name: form.rname.value.trim(), address: form.raddr.value.trim(), business: form.business.checked, vatId: form.rvat.value.trim() }, lines, kleinunternehmer: form.ku.checked, note: form.note.value.trim(),
       });
-      if (isNew) { inv.number = takeInvoiceNumber(inv.date); state.invoices.push(inv); }
+      if (isNew) state.invoices.push(inv);
       refreshInvoiceStatus(inv.id);
       persist();
       location.hash = `#/rechnung/${inv.id}`;
       render();
     },
   });
+}
+
+// Festschreiben: Pflichtangaben (§ 14 Abs. 4 UStG) prüfen, fortlaufende Nummer vergeben, danach unveränderbar
+function invoiceMissing(inv) {
+  const s = state.settings, t = C.invoiceTotals(inv);
+  return [
+    !s.ownerName && "Name des Vermieters (Einstellungen)", !(s.ownerStreet && s.ownerCity) && "Anschrift des Vermieters (Einstellungen)",
+    !s.taxNumber && !s.vatId && "Steuernummer oder USt-IdNr. (Einstellungen)", !inv.recipient?.name && "Name des Empfängers",
+    t.gross > 25000 && !inv.recipient?.address && "Anschrift des Empfängers (Pflicht ab 250 € brutto)",
+    !inv.serviceFrom && "Leistungszeitraum", !(inv.lines || []).length && "Positionen",
+  ].filter(Boolean);
+}
+
+function finalizeInvoice(id) {
+  const inv = byId("invoices", id);
+  const miss = invoiceMissing(inv);
+  if (miss.length) return alert(`Für eine ordnungsgemäße Rechnung fehlt noch:\n• ${miss.join("\n• ")}`);
+  if (!confirm("Rechnung festschreiben? Sie erhält eine fortlaufende Rechnungsnummer und kann danach nicht mehr geändert, sondern nur noch storniert werden (GoBD).")) return;
+  inv.date = today();
+  inv.number = takeInvoiceNumber(inv.date);
+  inv.status = "offen";
+  inv.finalizedAt = new Date().toISOString();
+  refreshInvoiceStatus(inv.id);
+  commit(`Rechnung ${inv.number} festgeschrieben`);
+}
+
+function deleteDraft(id) {
+  const inv = byId("invoices", id);
+  if (inv.status !== "entwurf" || !confirm("Entwurf löschen?")) return;
+  state.invoices = state.invoices.filter((x) => x.id !== id);
+  const b = byId("bookings", inv.bookingId); if (b) b.invoiceId = null;
+  location.hash = "#/rechnungen"; commit("Entwurf gelöscht");
 }
 
 function cancelInvoice(id) {
@@ -667,6 +731,7 @@ function viewDashboard() {
       <div class="card"><h2>Mietrückstände</h2>${Object.keys(backBy).length ? `<table>${Object.entries(backBy).map(([cid, v]) => `<tr><td>${esc(contractLabel(byId("contracts", cid)))}</td><td class="num neg">${eur(v)}</td></tr>`).join("")}</table>` : '<p class="muted">Keine Rückstände 🎉</p>'}</div>
       <div class="card"><h2>Nächste Anreisen</h2>${upcoming.length ? `<table>${upcoming.map((b) => `<tr class="click" data-act="editBooking" data-id="${b.id}"><td class="nowrap">${d(b.from)}</td><td>${esc(b.guest)}<div class="small muted">${esc(byId("units", b.unitId)?.name)} · ${C.nightsBetween(b.from, b.to)} N · ${esc(b.channel)}</div></td></tr>`).join("")}</table>` : '<p class="muted">Keine anstehenden Buchungen.</p>'}</div>
       <div class="card"><h2>Offene Rechnungen</h2>${openInv.length ? `<table>${openInv.map((i) => `<tr class="click" data-go="#/rechnung/${i.id}"><td>${esc(i.number)}</td><td>${esc(i.recipient?.name)}</td><td class="num">${eur(C.invoiceTotals(i).gross - C.paidForInvoice(state, i.id))}</td></tr>`).join("")}</table>` : '<p class="muted">Alle Rechnungen bezahlt.</p>'}</div>
+      ${(() => { const opp = R.increaseOpportunities(state, today()); return opp.length ? `<div class="card"><h2>💶 Mieterhöhung möglich</h2>${opp.map((o) => `<div class="small" style="margin-bottom:6px"><b>${esc(contractLabel(byId("contracts", o.contractId)))}</b><br>Kaltmiete ${eur(o.now)} → bis zu ${eur(o.maxByCap)} (Kappungsgrenze ${o.cap} %), wirksam frühestens ${C.fmtMonth(o.effective)}. Ortsübliche Vergleichsmiete beachten. ${btn("letterFor", "Erhöhungsverlangen", "sm link", `mieterhoehung|${o.contractId}`)}</div>`).join("")}</div>` : ""; })()}
       <div class="card"><h2>Leerstand & auslaufende Verträge</h2>
         ${vacant.length ? vacant.map((u) => `<div>${esc(unitLabel(u))} <span class="badge warn">frei</span></div>`).join("") : '<p class="muted">Kein Leerstand.</p>'}
         ${ending.map((c) => `<div>${esc(contractLabel(c))} <span class="badge">endet ${d(c.end)}</span></div>`).join("")}
@@ -943,7 +1008,7 @@ function copyText(t) {
   (navigator.clipboard?.writeText(t) || Promise.reject()).then(() => toast("In die Zwischenablage kopiert"), () => { prompt("Text kopieren:", t); });
 }
 
-const invBadge = (i) => ({ offen: '<span class="badge warn">offen</span>', teilbezahlt: '<span class="badge warn">teilbezahlt</span>', bezahlt: '<span class="badge ok">bezahlt</span>', storniert: '<span class="badge grey">storniert</span>', storno: '<span class="badge grey">Storno</span>' }[i.status] || "");
+const invBadge = (i) => ({ entwurf: '<span class="badge grey">Entwurf</span>', offen: '<span class="badge warn">offen</span>', teilbezahlt: '<span class="badge warn">teilbezahlt</span>', bezahlt: '<span class="badge ok">bezahlt</span>', storniert: '<span class="badge grey">storniert</span>', storno: '<span class="badge grey">Storno</span>' }[i.status] || "");
 
 function viewInvoices() {
   const list = [...state.invoices].sort((a, b) => (a.number < b.number ? 1 : -1));
@@ -962,17 +1027,20 @@ function viewInvoice(id) {
   const sender = [s.ownerName, s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean);
   const missing = [!s.ownerName && "Name", !s.ownerStreet && "Anschrift", !s.taxNumber && !s.vatId && "Steuernummer/USt-IdNr."].filter(Boolean);
   return `<div class="head noprint"><div><a href="#/rechnungen">← Rechnungen</a></div><div class="toolbar">
-      ${inv.type !== "storno" && inv.status !== "storniert" ? btn("editInvoice", "Bearbeiten", "", inv.id) + (inv.status !== "bezahlt" ? btn("markPaid", "Zahlung erfassen", "", inv.id) : "") + btn("cancelInvoice", "Stornieren", "danger", inv.id) : ""}
+      ${inv.status === "entwurf" ? btn("editInvoice", "Bearbeiten", "", inv.id) + btn("deleteDraft", "Entwurf löschen", "danger", inv.id) + btn("finalizeInvoice", "✓ Festschreiben & Nummer vergeben", "primary", inv.id)
+        : inv.type !== "storno" && inv.status !== "storniert" ? (inv.status !== "bezahlt" ? btn("markPaid", "Zahlung erfassen", "", inv.id) : "") + btn("cancelInvoice", "Stornieren", "danger", inv.id) : ""}
       <button class="btn primary" onclick="window.print()">Drucken / PDF</button></div></div>
+    ${inv.status === "entwurf" ? `<div class="note warn noprint">Entwurf – noch keine Rechnungsnummer. Erst nach dem Festschreiben versenden.${invoiceMissing(inv).length ? ` Es fehlen: ${invoiceMissing(inv).map(esc).join(", ")}.` : ""}</div>` : ""}
+    ${R.eInvoiceHint(inv) ? `<div class="note noprint small">§ ${esc(R.eInvoiceHint(inv))}</div>` : ""}
     ${missing.length ? `<div class="note warn noprint">Pflichtangaben fehlen: ${missing.join(", ")} – bitte unter <a href="#/einstellungen">Einstellungen</a> ergänzen.</div>` : ""}
     <div class="paper">
       <div class="top"><div><div class="sender">${esc(sender.join(" · "))}</div>
-        <div><b>${esc(inv.recipient?.name)}</b><br>${esc(inv.recipient?.address || "").replace(/\n/g, "<br>")}</div></div>
+        <div><b>${esc(inv.recipient?.name)}</b><br>${esc(inv.recipient?.address || "").replace(/\n/g, "<br>")}${inv.recipient?.vatId ? `<br>USt-IdNr. ${esc(inv.recipient.vatId)}` : ""}</div></div>
         <div><b>${esc(s.ownerName)}</b><br>${sender.slice(1).map(esc).join("<br>")}${s.ownerPhone ? `<br>Tel. ${esc(s.ownerPhone)}` : ""}${s.ownerEmail ? `<br>${esc(s.ownerEmail)}` : ""}
           <table class="meta" style="margin-top:12px"><tr><td class="muted">Rechnungsnr.</td><td><b>${esc(inv.number)}</b></td></tr><tr><td class="muted">Datum</td><td>${d(inv.date)}</td></tr>
           ${inv.serviceFrom ? `<tr><td class="muted">Leistungszeitraum</td><td>${d(inv.serviceFrom)} – ${d(inv.serviceTo)}</td></tr>` : ""}
           ${s.taxNumber ? `<tr><td class="muted">Steuernummer</td><td>${esc(s.taxNumber)}</td></tr>` : ""}${s.vatId ? `<tr><td class="muted">USt-IdNr.</td><td>${esc(s.vatId)}</td></tr>` : ""}</table></div></div>
-      <h1>${inv.type === "storno" ? "Stornorechnung" : "Rechnung"} ${esc(inv.number)}</h1>
+      <h1>${inv.status === "entwurf" ? "ENTWURF – " : ""}${inv.type === "storno" ? "Stornorechnung" : "Rechnung"} ${esc(inv.number)}</h1>
       ${unit ? `<p style="margin-bottom:12px">Unterkunft: ${esc(unit.name)}${obj ? `, ${esc([obj.street, [obj.zip, obj.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}` : ""}${unit.registrationNo ? ` · Registrierungsnr. ${esc(unit.registrationNo)}` : ""}</p>` : ""}
       <table class="lines"><thead><tr><th>Pos.</th><th>Beschreibung</th><th class="num">Menge</th><th class="num">Einzelpreis</th>${inv.kleinunternehmer ? "" : '<th class="num">USt</th>'}<th class="num">Gesamt</th></tr></thead><tbody>
         ${inv.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.desc)}${l.passThrough ? '<div class="small muted">durchlaufender Posten, nicht umsatzsteuerbar</div>' : ""}</td><td class="num">${String(l.qty).replace(".", ",")}</td><td class="num">${eur(l.price)}</td>${inv.kleinunternehmer ? "" : `<td class="num">${l.passThrough ? "–" : l.vat + " %"}</td>`}<td class="num">${eur(Math.round(l.qty * l.price))}</td></tr>`).join("")}
@@ -1086,13 +1154,15 @@ function viewNk() {
   const r = C.nkAbrechnung(state, nk);
   const saved = (state.nkStatements || []).filter((x) => x.objectId === nk.objectId).sort((a, b) => (a.to < b.to ? 1 : -1));
   const late = today() > r.deadline;
+  const periodIssues = R.nkPeriodCheck(nk.from, nk.to);
   const nonUml = state.expenses.filter((e) => e.objectId === nk.objectId && e.date >= nk.from && e.date <= nk.to && !C.EXPENSE_CATEGORIES[e.category]?.umlage && C.EXPENSE_CATEGORIES[e.category]?.av);
   const needsShares = (it) => ["verbrauch", "heizkosten", "direkt"].includes(it.key);
   const itemRow = (it, i) => `<tr>
     <td><input list="betrkv" value="${esc(it.label)}" data-nk="label" data-i="${i}"></td>
     <td style="width:130px"><input inputmode="decimal" value="${it.key === "direkt" ? "" : esc(C.fmtNum(it.amount))}" data-nk="amount" data-i="${i}" ${it.key === "direkt" ? 'disabled placeholder="je Einheit"' : ""}></td>
     <td style="width:230px"><select data-nk="key" data-i="${i}">${opt(Object.entries(C.NK_KEYS), it.key)}</select>
-      ${it.key === "heizkosten" ? `<div class="inline small" style="margin-top:4px">Verbrauchsanteil <input type="number" min="50" max="70" value="${esc(it.pct ?? 70)}" data-nk="pct" data-i="${i}" style="width:70px"> %</div>` : ""}</td>
+      ${it.key === "heizkosten" ? `<div class="inline small" style="margin-top:4px">Verbrauchsanteil <input type="number" min="50" max="70" value="${esc(it.pct ?? 70)}" data-nk="pct" data-i="${i}" style="width:70px"> %</div>` : ""}
+      ${["heizung", "warmwasser"].includes(it.kind) || it.key === "heizkosten" ? `<div class="small" style="margin-top:4px">CO2-Kosten lt. Brennstoffrechnung (€) <input inputmode="decimal" value="${it.co2Cost ? esc(C.fmtNum(it.co2Cost)) : ""}" data-nk="co2Cost" data-i="${i}" style="width:90px" placeholder="0,00"> · CO2 kg/m²/Jahr <input inputmode="decimal" value="${esc(it.co2Kg ?? "")}" data-nk="co2Kg" data-i="${i}" style="width:60px"> <label><input type="checkbox" data-nk="nonResidential" data-i="${i}" ${it.nonResidential ? "checked" : ""}> Nichtwohngebäude (50/50)</label>${it.co2Cost ? ` → Vermieteranteil ${r.co2[i]?.landlordPct ?? "?"} % = ${eur(r.co2[i]?.landlord || 0)}` : ""}</div>` : ""}</td>
     <td class="nowrap">${(it.expenseIds || []).flatMap((eid) => byId("expenses", eid)?.fileIds || []).length ? `<span title="Belege vorhanden">📎${(it.expenseIds || []).flatMap((eid) => byId("expenses", eid)?.fileIds || []).length}</span>` : (it.expenseIds || []).length ? '<span class="muted small" title="Ausgabe ohne Beleg – unter Ausgaben anhängen">kein Beleg</span>' : ""} <button class="btn sm link" data-act="nkDel" data-id="${i}">✕</button></td></tr>
     ${needsShares(it) ? `<tr><td colspan="4" style="background:#fafbfa"><div class="small muted" style="margin-bottom:4px">${it.key === "direkt" ? "Betrag je Einheit (€)" : `Verbrauch je Einheit (Zählerdifferenz, z. B. m³ / kWh / Einheiten Heizkostenverteiler) ${btn("nkMeters", "⟳ aus Zählerständen", "sm", i)}`}</div><div class="inline">
       ${units.map((u) => `<label class="small">${esc(u.name)} <input style="width:100px" inputmode="decimal" value="${esc(it.key === "direkt" ? C.fmtNum(it.shares?.[u.id] || 0) : (it.shares?.[u.id] ?? ""))}" data-nk="share" data-i="${i}" data-u="${u.id}"></label>`).join("")}</div></td></tr>` : ""}`;
@@ -1111,6 +1181,7 @@ function viewNk() {
       <tfoot><tr><td>Summe</td><td class="num">${eur(r.total)}</td><td colspan="2"></td></tr></tfoot></table></div>
       <p class="small muted" style="margin-top:6px">Nur Kosten umlegen, die im Mietvertrag vereinbart sind. Heizöl: Verbrauch = Anfangsbestand + Lieferungen − Endbestand. Heizkosten bei mehreren Parteien: 50–70 % nach Verbrauch (HeizkostenV). Belege außerhalb des Zeitraums gehören ins nächste Jahr.</p>
     </div>
+    ${legalNotes(periodIssues)}
     ${r.warnings.length || late ? `<div class="note warn">${late ? `<b>Frist abgelaufen:</b> Die Abrechnung musste bis ${d(r.deadline)} beim Mieter sein (§ 556 Abs. 3 BGB) – Nachforderungen sind ausgeschlossen, Guthaben müssen trotzdem ausgezahlt werden.<br>` : ""}${r.warnings.map(esc).join("<br>")}</div>` : `<div class="note">Frist: Die Abrechnung muss spätestens am <b>${d(r.deadline)}</b> beim Mieter sein (§ 556 Abs. 3 BGB).</div>`}
     <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Ergebnis je Mieter</h2><div class="toolbar">${btn("nkSave", nk.id ? "Änderungen speichern" : "Abrechnung speichern", "primary")}</div></div>
       ${r.contracts.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit · Mieter</th><th class="num">Tage</th><th class="num">Kostenanteil</th><th class="num">Vorauszahlungen</th><th class="num">Ergebnis</th><th class="num">Vorschlag VZ/Monat</th><th></th></tr></thead><tbody>
@@ -1149,8 +1220,13 @@ function viewNkLetter(stId, contractId) {
     <p style="margin:12px 0">${tenants.length > 1 ? "Sehr geehrte Damen und Herren" : `Guten Tag ${esc(tenants[0]?.name || "")}`},<br>
     hiermit erhalten Sie die Abrechnung der Betriebskosten. Die Gesamtkosten des Hauses werden nach dem jeweils genannten Schlüssel auf alle Wohnungen verteilt; für Ihren Anteil zählen nur die Tage, in denen Sie gemietet haben. Davon ziehen wir Ihre geleisteten Vorauszahlungen ab.</p>
     <table class="lines"><thead><tr><th>Kostenart</th><th>Verteilung nach</th><th class="num">Gesamtkosten Haus</th><th class="num">Ihr Anteil</th></tr></thead><tbody>
-      ${st.items.map((it, i) => { const tot = it.key === "direkt" ? sum(units, (x) => Number(it.shares?.[x.id]) || 0) : it.amount;
-        return `<tr><td>${esc(it.label)}</td><td class="small">${esc(C.NK_KEYS[it.key])}${it.key === "heizkosten" ? ` (${it.pct ?? 70} % Verbrauch)` : ""}${["verbrauch", "heizkosten"].includes(it.key) && it.shares?.[u.id] ? `<br>Ihr Verbrauch: ${esc(it.shares[u.id])} von ${sum(units, (x) => Number(it.shares?.[x.id]) || 0)}` : ""}</td><td class="num">${eur(tot)}</td><td class="num">${eur(c.items[i].amount)}</td></tr>`; }).join("")}
+      ${st.items.map((it, i) => { const tot = (it.key === "direkt" ? sum(units, (x) => Number(it.shares?.[x.id]) || 0) : it.amount) - (r.co2[i]?.landlord || 0);
+        const fmtN = (n) => String(Math.round(n * 100) / 100).replace(".", ",");
+        const personDays = sum(r.contracts, (x) => x.persons * x.days);
+        const noCons = ["heizkosten", "verbrauch"].includes(it.key) && !Object.values(it.shares || {}).some(Number);
+        const basis = noCons ? `ohne Verbrauchswerte nach Fläche: ${fmtN(Number(u?.area) || 0)} von ${fmtN(area)} m² × ${c.days}/${r.days} Tage${it.key === "heizkosten" ? " – Sie dürfen Ihren Anteil um 15 % kürzen (§ 12 HeizkostenV)" : ""}` : { flaeche: `Ihre Fläche ${fmtN(Number(u?.area) || 0)} m² von ${fmtN(area)} m² Gesamtfläche × ${c.days}/${r.days} Tage`, einheiten: `1 von ${units.length} Einheiten × ${c.days}/${r.days} Tage`, personen: `${c.persons} Pers. × ${c.days} Tage = ${c.persons * c.days} von ${personDays} Personentagen`,
+          verbrauch: `Ihr Verbrauch ${fmtN(Number(it.shares?.[u.id]) || 0)} von ${fmtN(sum(units, (x) => Number(it.shares?.[x.id]) || 0))}`, heizkosten: `${100 - (it.pct ?? 70)} % nach Fläche (${fmtN(Number(u?.area) || 0)} von ${fmtN(area)} m²), ${it.pct ?? 70} % nach Verbrauch (${fmtN(Number(it.shares?.[u.id]) || 0)} von ${fmtN(sum(units, (x) => Number(it.shares?.[x.id]) || 0))})`, direkt: "direkt Ihrer Einheit zugeordnet" }[it.key];
+        return `<tr><td>${esc(it.label)}${r.co2[i]?.landlord ? `<div class="small muted">abzgl. Vermieteranteil CO2-Kosten ${eur(r.co2[i].landlord)}</div>` : ""}</td><td class="small">${esc(C.NK_KEYS[it.key])}<br><span class="muted">${esc(basis)}</span></td><td class="num">${eur(tot)}</td><td class="num">${eur(c.items[i].amount)}</td></tr>`; }).join("")}
     </tbody></table>
     <table class="totals">
       <tr><td>Ihr Kostenanteil</td><td class="num">${eur(c.total)}</td></tr>
@@ -1160,7 +1236,8 @@ function viewNkLetter(stId, contractId) {
     <div style="margin-top:20px">
       ${c.saldo > 0 ? `<p>Bitte überweisen Sie die Nachzahlung bis zum <b>${d(due)}</b> auf das Konto ${s.invoiceIban ? `IBAN ${esc(s.invoiceIban)}${s.invoiceBank ? ` (${esc(s.invoiceBank)})` : ""}` : "[IBAN]"}, Verwendungszweck „NK ${st.to.slice(0, 4)} ${esc(u?.name || "")}“.</p>` : c.saldo < 0 ? `<p>Das Guthaben überweisen wir Ihnen in den nächsten Tagen bzw. verrechnen es nach Absprache mit der nächsten Miete.</p>` : ""}
       ${c.newMonthly !== C.rentForMonth(contract, C.monthKey(today())).nk ? `<p>Damit es im nächsten Jahr keine größere ${c.saldo > 0 ? "Nachzahlung" : "Abweichung"} gibt, passen wir die monatliche Vorauszahlung ab dem übernächsten Monat auf <b>${eur(c.newMonthly)}</b> an (§ 560 Abs. 4 BGB).</p>` : ""}
-      <p>Die Belege können Sie nach vorheriger Terminabsprache gern einsehen. Bei Fragen melden Sie sich jederzeit.</p>
+      ${st.items.map((it, i) => r.co2[i]?.landlord ? `<p class="small">Aufteilung der CO2-Kosten nach dem CO2-Kostenaufteilungsgesetz (${esc(it.label)}): CO2-Kosten ${eur(it.co2Cost)}, ${it.nonResidential ? "Nichtwohngebäude (50 % Vermieter)" : `CO2-Ausstoß ${String(it.co2Kg).replace(".", ",")} kg CO2/m²/Jahr, Stufe ${r.co2[i].stufe}, Vermieteranteil ${r.co2[i].landlordPct} %`} = ${eur(r.co2[i].landlord)}. Dieser Anteil ist in der Abrechnung bereits abgezogen.</p>` : "").join("")}
+      <p>Die Belege können Sie nach vorheriger Terminabsprache gern einsehen. Einwendungen gegen diese Abrechnung teilen Sie uns bitte spätestens bis zum Ablauf des zwölften Monats nach Zugang mit (§ 556 Abs. 3 S. 5 BGB). Bei Fragen melden Sie sich jederzeit.</p>
       <p style="margin-top:16px">Mit freundlichen Grüßen<br><br>${esc(s.ownerName)}</p>
       <p class="small muted" style="margin-top:16px">Anlagen: ${att.length ? att.map((x) => esc(x.name)).join(", ") : "Kopien der Abrechnungsbelege auf Anfrage"}</p>
     </div>
@@ -1241,6 +1318,7 @@ function viewSettings() {
       ${Object.entries(C.EXPENSE_CATEGORIES).filter(([k]) => k !== "privat").map(([k, v]) => `<label class="f"><span>${esc(v.label)}</span><input name="exp_${k}" value="${esc(C.expenseAccount(s, k) || "")}"></label>`).join("")}
     </div></details><br><button class="btn primary">Speichern</button></form>
     <div class="card"><h2>Gelernte Zuordnungsregeln (${rules.length})</h2>${rules.length ? `<table>${rules.map(([k, r]) => `<tr><td class="small">${esc(k.replace(/^(iban|name):/, ""))}</td><td class="small">${esc(suggestionLabel({ ...r, period: ui.month }))}</td><td>${btn("delRule", "✕", "sm link", k)}</td></tr>`).join("")}</table>` : '<p class="muted">Regeln entstehen beim Zuordnen von Bankumsätzen („Regel merken“).</p>'}</div>
+    ${viewPrivacyCard()}
     <div class="card"><h2>✨ KI-Assistent (Claude)</h2>
       <p class="small muted" style="margin-bottom:8px">Für Belegerkennung, Fragen an deine Daten und Briefentwürfe. Schlüssel unter console.anthropic.com → API Keys erstellen; Kosten nach Nutzung (meist wenige Cent pro Anfrage). Der Schlüssel wird nur auf diesem Gerät gespeichert und ist nicht Teil der Datensicherung. Beim Nutzen der KI werden die betroffenen Daten an Anthropic übertragen.</p>
       <div class="inline"><input type="password" placeholder="sk-ant-…" value="${K.hasKey() ? "••••••••••••" : ""}" data-change="kiKey" style="max-width:340px" autocomplete="off"> ${K.hasKey() ? '<span class="badge ok">aktiv</span>' : '<span class="badge grey">nicht eingerichtet</span>'}</div></div>
@@ -1639,7 +1717,15 @@ async function kiAsk(q) {
   const history = ui.chat.filter((m) => m.a && !m.err).slice(-8);
   const entry = { q, a: "" };
   ui.chat.push(entry); ui.kiAsking = true; render();
-  try { entry.a = await K.ask({ question: q, history, context: buildContext() }); }
+  try {
+    if (state.settings.kiPseudo !== false) {
+      // Datensparsamkeit (Art. 5 DSGVO): Namen und IBANs verlassen das Gerät nicht
+      const ps = R.pseudonymizer(state);
+      const ctx = JSON.parse(ps(JSON.stringify(buildContext())));
+      const a = await K.ask({ question: ps(q), history: history.map((h) => ({ q: ps(h.q), a: ps(h.a) })), context: ctx });
+      entry.a = ps.revert(a);
+    } else entry.a = await K.ask({ question: q, history, context: buildContext() });
+  }
   catch (e) { entry.a = "⚠️ " + K.friendlyError(e); entry.err = true; }
   ui.kiAsking = false; render();
   window.scrollTo(0, document.body.scrollHeight);
@@ -1717,7 +1803,8 @@ function moveWizard(unitId) {
         <label class="f"><span>Kaltmiete (€/Monat)</span><input name="kalt" inputmode="decimal" value="${r ? C.fmtNum(r.kalt) : ""}"></label>
         <label class="f"><span>NK-/Heizkostenvorauszahlung (€/Monat)</span><input name="nk" inputmode="decimal" value="${r ? C.fmtNum(r.nk) : ""}"></label>
         <label class="f"><span>Zuschläge (Stellplatz, Möblierung …)</span><input name="extra" inputmode="decimal" value="${r?.extra ? C.fmtNum(r.extra) : ""}"></label>
-        <label class="f"><span>Kaution (€)</span><input name="kaution" inputmode="decimal" value="${r ? C.fmtNum(r.kalt * 3) : ""}"></label>
+        <label class="f"><span>Kaution (€, Wohnraum max. 3 Nettokaltmieten)</span><input name="kaution" inputmode="decimal" value="${r ? C.fmtNum(r.kalt * 3) : ""}"></label>
+        <label class="f"><span>Mietart</span><select name="mietart">${opt([["standard", "Normale Miete"], ["staffel", "Staffelmiete"], ["index", "Indexmiete"]], "standard")}</select></label>
         ${meterFields("in", lr)}
         <label class="f"><span>Schlüssel übergeben (Anzahl)</span><input type="number" name="inKeys"></label>
         <label class="f full"><span>Zustand bei Übergabe / Vereinbarungen</span><textarea name="inNote" placeholder="z. B. frisch renoviert, Einbauküche, Kellerraum Nr. 3 …"></textarea></label>
@@ -1755,8 +1842,11 @@ function moveWizard(unitId) {
         old.moveOut = { date: v.outDate, handover: v.outHandover || v.outDate, keys: v.outKeys, note: v.outNote, kaution: v.outKaution };
         state.meterReadings.push(...readings("out", v.outHandover || v.outDate, old.id, "auszug"));
       }
+      const unit = byId("units", unitId), obj = byId("objects", unit?.objectId);
+      const legal = [...R.depositCheck(unit, { kalt: C.parseAmount(v.kalt), kaution: C.parseAmount(v.kaution) }), ...R.rentBrakeCheck(obj, unit, C.parseAmount(v.kalt), old ? C.rentForMonth(old, C.monthKey(old.end || v.outDate || today())).kalt : 0, obj?.vergleichsmiete)];
+      if (!confirmLegal(legal)) return false;
       const t = { id: C.uid("t_"), name: v.name.trim(), members: v.members, email: v.email, phone: v.phone, ibans: v.iban ? [C.normIban(v.iban)] : [], prevAddress: v.prevAddress, notes: "" };
-      const c = { id: C.uid("c_"), unitId, tenantIds: [t.id], start: v.inDate, end: v.inEnd || "", kalt: C.parseAmount(v.kalt), nk: C.parseAmount(v.nk), extra: C.parseAmount(v.extra), kaution: C.parseAmount(v.kaution), persons: Number(v.persons) || 1, steps: [], notes: "",
+      const c = { id: C.uid("c_"), unitId, tenantIds: [t.id], start: v.inDate, end: v.inEnd || "", kalt: C.parseAmount(v.kalt), nk: C.parseAmount(v.nk), extra: C.parseAmount(v.extra), kaution: C.parseAmount(v.kaution), persons: Number(v.persons) || 1, mietart: v.mietart || "standard", steps: [], notes: "",
         moveIn: { date: v.inDate, handover: v.inHandover || v.inDate, keys: v.inKeys, note: v.inNote } };
       state.tenants.push(t); state.contracts.push(c);
       state.meterReadings.push(...readings("in", v.inHandover || v.inDate, c.id, "einzug"));
@@ -1798,7 +1888,7 @@ function viewTenant(id) {
   const nks = (state.nkStatements || []).map((st) => ({ st, r: C.nkAbrechnung(state, st).contracts.find((x) => cIds.has(x.contractId)) })).filter((x) => x.r);
   const active = cs.find((c) => c.start <= today() && (!c.end || c.end >= today()));
   const upcoming = !active && cs.find((c) => c.start > today());
-  return head(t.name, [t.members && "mit " + esc(t.members), esc(t.email || ""), esc(t.phone || "")].filter(Boolean).join(" · "), btn("editTenant", "Stammdaten", "", id) + (active && !active.end ? btn("moveWizard", "Auszug / Mieterwechsel", "", active.unitId) : "") + btn("letterFor", "✉ Brief", "", `zahlungserinnerung|${(active || cs[0])?.id || ""}`)) + `
+  return head(t.name, [t.members && "mit " + esc(t.members), esc(t.email || ""), esc(t.phone || "")].filter(Boolean).join(" · "), btn("editTenant", "Stammdaten", "", id) + (active && !active.end ? btn("moveWizard", "Auszug / Mieterwechsel", "", active.unitId) : "") + btn("letterFor", "✉ Brief", "", `zahlungserinnerung|${(active || cs[0])?.id || ""}`) + `<a class="btn" href="#/auskunft/${id}">🛡 Datenauskunft (Art. 15)</a>`) + `
     <div class="kpis">
       <div class="kpi"><div class="l">Mietkonto (24 Monate)</div><div class="v ${saldo < 0 ? "neg" : "pos"}">${eur(saldo)}</div><div class="s">${saldo < 0 ? "Rückstand" : "ausgeglichen"}</div></div>
       <div class="kpi"><div class="l">Kaution</div><div class="v">${eur(cs[0]?.kaution || 0)}</div><div class="s">${kautionPaid ? `${eur(kautionPaid)} eingegangen` : "Eingang nicht erfasst"}</div></div>
@@ -1818,6 +1908,47 @@ function viewTenant(id) {
       <div class="card"><h2>Schriftverkehr</h2>${letters.map((l) => `<div class="small">${d(l.date)} <a href="#/brief/${l.id}">${esc(l.subject)}</a></div>`).join("") || '<p class="muted small">Noch keine Briefe.</p>'}</div>
     </div>
     ${t.prevAddress || t.notes ? `<div class="card"><h2>Notizen</h2><p class="small">${t.prevAddress ? `Bisherige Anschrift: ${esc(t.prevAddress)}<br>` : ""}${esc(t.notes || "")}</p></div>` : ""}`;
+}
+
+// Auskunft nach Art. 15 DSGVO: alle gespeicherten Daten zu einem Mieter
+function viewDataReport(id) {
+  const t = byId("tenants", id);
+  if (!t) return head("Mieter nicht gefunden");
+  const s = state.settings;
+  const cs = state.contracts.filter((c) => c.tenantIds.includes(id));
+  const cIds = new Set(cs.map((c) => c.id));
+  const pays = state.payments.filter((p) => cIds.has(p.contractId));
+  const rd = (state.meterReadings || []).filter((r) => cIds.has(r.contractId));
+  const docs = state.documents.filter((x) => cIds.has(x.contractId));
+  const letters = (state.letters || []).filter((l) => cIds.has(l.contractId));
+  const txs = state.transactions.filter((tx) => tx.link?.type === "payment" && pays.some((p) => p.id === tx.link.id));
+  return `<div class="head noprint"><a href="#/mieter/${id}">← Mieterakte</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
+  <div class="paper">
+    <h1>Auskunft über gespeicherte personenbezogene Daten (Art. 15 DSGVO)</h1>
+    <p>Verantwortlicher: ${esc(s.ownerName)}, ${esc([s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean).join(", "))}${s.ownerEmail ? `, ${esc(s.ownerEmail)}` : ""} · Stand: ${d(today())}</p>
+    <h3>1. Stammdaten</h3><table class="lines"><tbody>
+      ${[["Name", t.name], ["Weitere Personen", t.members], ["E-Mail", t.email], ["Telefon", t.phone], ["IBAN", (t.ibans || []).join(", ")], ["Zustellanschrift", t.address], ["Bisherige Anschrift", t.prevAddress], ["Notizen", t.notes]].filter(([, v]) => v).map(([k, v]) => `<tr><td style="width:200px">${k}</td><td>${esc(v)}</td></tr>`).join("")}
+    </tbody></table>
+    <h3>2. Mietverhältnisse</h3>${cs.map((c) => `<p>${esc(unitLabel(byId("units", c.unitId)))}: ${d(c.start)} – ${c.end ? d(c.end) : "unbefristet"}, Kaltmiete ${eur(c.kalt)}, NK ${eur(c.nk)}, Kaution ${eur(c.kaution || 0)}, ${c.persons || 1} Person(en)</p>`).join("")}
+    <h3>3. Zahlungen (${pays.length}) und Kontoumsätze (${txs.length})</h3><p class="small">${pays.map((p) => `${d(p.date)} ${eur(p.amount)}`).join(" · ") || "keine"}</p>
+    <h3>4. Zählerstände</h3><p class="small">${rd.map((r) => `${d(r.date)} ${esc(C.METER_TYPES[r.type])}: ${r.value}`).join(" · ") || "keine"}</p>
+    <h3>5. Dokumente und Schreiben</h3><p class="small">${[...docs.map((x) => esc(x.name)), ...letters.map((l) => `${d(l.date)} ${esc(l.subject)}`)].join(" · ") || "keine"}</p>
+    <h3>6. Zwecke, Rechtsgrundlagen, Speicherdauer</h3>
+    <p class="small">Zweck: Durchführung des Mietverhältnisses, Abrechnung von Miete und Betriebskosten, Erfüllung gesetzlicher Pflichten. Rechtsgrundlagen: Art. 6 Abs. 1 lit. b DSGVO (Vertrag), lit. c (gesetzliche Pflichten, z. B. Aufbewahrung nach § 147 AO/§ 257 HGB, Wohnungsgeberbestätigung nach § 19 BMG), lit. f (berechtigtes Interesse, z. B. Geltendmachung von Ansprüchen). Speicherdauer: für die Dauer des Mietverhältnisses; danach Buchungsbelege 8 Jahre, Geschäftsbriefe 6 Jahre ab Ende des Kalenderjahres, anschließend Löschung bzw. Anonymisierung. Empfänger: ggf. Steuerberater, Hausverwaltung, Ableseunternehmen, Handwerker im erforderlichen Umfang${isCloud() ? "; technische Dienstleister im Auftrag (Hosting)" : ""}.</p>
+    <p class="small">Sie haben das Recht auf Berichtigung, Löschung (soweit keine Aufbewahrungspflicht besteht), Einschränkung der Verarbeitung, Datenübertragbarkeit und Widerspruch sowie auf Beschwerde bei einer Datenschutz-Aufsichtsbehörde.</p>
+  </div>`;
+}
+
+function viewPrivacyCard() {
+  const due = R.retentionDue(state, today());
+  return `<div class="card"><h2>🛡 Datenschutz & Aufbewahrung</h2>
+    <label class="f inline"><input type="checkbox" data-change="kiPseudo" ${state.settings.kiPseudo !== false ? "checked" : ""}> KI-Assistent datensparsam: Mieter- und Gästenamen werden vor dem Senden ersetzt, IBANs entfernt (empfohlen)</label>
+    <p class="small muted">Aufbewahrungsfristen: Buchungsbelege, Rechnungen, Kontoauszüge 8 Jahre; Geschäftsbriefe 6 Jahre; Bücher/Abschlüsse 10 Jahre (§ 147 AO, § 257 HGB) – jeweils ab Ende des Kalenderjahres. Meldescheine von Gästen 1 Jahr. Danach sind personenbezogene Daten zu löschen (Art. 17 DSGVO).</p>
+    ${due.tenants.length || due.guests.length ? `<div class="note warn"><b>Frist abgelaufen – Löschung/Anonymisierung empfohlen:</b>
+      ${due.tenants.map((t) => `<div class="small">Ehemaliger Mieter: ${esc(t.name)} ${btn("anonTenant", "anonymisieren", "sm link", t.id)}</div>`).join("")}
+      ${due.guests.length ? `<div class="small">${due.guests.length} Feriengast/-gäste: Kontakt- und Meldedaten älter als 1 Jahr ${btn("anonGuests", "bereinigen", "sm link")}</div>` : ""}
+      <div class="small muted">Beträge und Buchungen bleiben für Steuer und Statistik erhalten; nur Namen, Kontaktdaten, IBAN und Notizen werden entfernt.</div></div>` : '<p class="small">✓ Keine Daten mit abgelaufener Aufbewahrungsfrist.</p>'}
+  </div>`;
 }
 
 function viewProtocol(contractId, dir) {
@@ -1968,10 +2099,56 @@ async function startBilling(action, planId) {
 }
 
 function planCards(current) {
-  return `<div class="plans">${buyablePlans().map((x) => `<div class="plan ${x.id === current ? "current" : ""}"><b>${esc(x.name)}</b><div class="v">${eur(x.price_month_cents)}<span class="small"> / Monat</span></div><div class="small">${esc(x.description)}${x.max_units ? ` · bis ${x.max_units} Einheiten` : " · unbegrenzt"}</div>
+  return `<div class="plans">${buyablePlans().map((x) => `<div class="plan ${x.id === current ? "current" : ""}"><b>${esc(x.name)}</b><div class="v">${eur(x.price_month_cents)}<span class="small"> / Monat</span></div><div class="small">${esc(x.description)}${x.max_units ? ` · bis ${x.max_units} Einheiten` : " · unbegrenzt"}</div><div class="small muted">${esc(auth.settings?.price_note || "")} Monatlich kündbar.</div>
     ${x.id === current ? '<span class="badge ok">aktuell</span>' : btn("buyPlan", hasSubscription() ? "Wechseln" : "Jetzt buchen", "sm primary", x.id)}</div>`).join("")}</div>`;
 }
 const hasSubscription = () => ["active", "trialing", "past_due"].includes(auth.profile?.subscription_status);
+
+// Bestellübersicht vor Vertragsschluss (§ 312j BGB „Button-Lösung“, Widerrufsrecht §§ 355, 356 BGB)
+function orderOverview(planId) {
+  if (hasSubscription()) return startBilling("checkout", planId); // Tarifwechsel läuft über das Stripe-Kundenportal
+  const p = auth.plans.find((x) => x.id === planId), st = auth.settings || {};
+  if ($("#modal").open) $("#modal").close();
+  dialog({
+    title: "Bestellübersicht", submit: "Zahlungspflichtig bestellen",
+    body: `<table class="lines"><tbody>
+        <tr><td>Tarif</td><td><b>${esc(p.name)}</b> – ${esc(p.description)}${p.max_units ? `, bis ${p.max_units} Einheiten` : ""}</td></tr>
+        <tr><td>Preis</td><td><b>${eur(p.price_month_cents)} pro Monat</b> ${esc(st.price_note || "")}</td></tr>
+        <tr><td>Laufzeit</td><td>monatlich, verlängert sich automatisch um einen Monat; jederzeit zum Ende des laufenden Monats kündbar (auch über „Verträge hier kündigen“)</td></tr>
+        <tr><td>Zahlung</td><td>im Voraus über Stripe (Karte, SEPA-Lastschrift u. a.); Rechnung per E-Mail</td></tr>
+        <tr><td>Vertragspartner</td><td>${esc(st.product_name || "")} – siehe ${legalLink("impressum", "Impressum")}</td></tr></tbody></table>
+      <p class="small" style="margin:10px 0">Es gelten die ${legalLink("agb", "AGB")}, die ${legalLink("datenschutz", "Datenschutzerklärung")} und der ${legalLink("avv", "Auftragsverarbeitungsvertrag")}. Verbraucher haben ein 14-tägiges ${legalLink("widerruf", "Widerrufsrecht")}.</p>
+      <label class="f inline small"><input type="checkbox" name="consentStart" required> Ich verlange ausdrücklich, dass mit der Leistung vor Ablauf der Widerrufsfrist begonnen wird. Mir ist bekannt, dass ich bei einem Widerruf Wertersatz für die bis dahin erbrachte Leistung schulde und mein Widerrufsrecht bei vollständiger Vertragserfüllung erlischt (§§ 356 Abs. 4, 357a BGB).</label>
+      <p class="small muted">Im nächsten Schritt gibst du deine Zahlungsdaten auf der sicheren Seite von Stripe ein.</p>`,
+    onSubmit: (form) => {
+      if (!form.consentStart.checked) { toast("Bitte die Zustimmung zum sofortigen Leistungsbeginn bestätigen."); return false; }
+      startBilling("checkout", planId);
+    },
+  });
+}
+
+// Kündigungsbutton nach § 312k BGB – erreichbar ohne Anmeldung
+function viewCancelForm() {
+  const r = ui.cancelResult, st = auth.settings || {};
+  const back = auth.user ? `<a href="#/konto">← Mein Konto</a>` : `<a href="#/">← Zur Anmeldung</a>`;
+  if (r) return `<div class="cancel-page"><div class="head noprint">${back}<button class="btn primary" onclick="window.print()">Bestätigung drucken / speichern</button></div>
+    <div class="paper"><h1>Ihre Kündigung ist eingegangen</h1><p style="white-space:pre-wrap">${esc(r.confirmationText)}</p>
+    <p class="small muted" style="margin-top:12px">${r.mailed ? "Eine Bestätigung wurde zusätzlich an Ihre E-Mail-Adresse gesendet." : "Bitte speichern oder drucken Sie diese Bestätigung."}</p></div></div>`;
+  return `<div class="cancel-page"><div class="head">${back}</div><form class="card" data-form="cancel" style="max-width:640px">
+    <h1>${ui.cancelKind === "widerruf" ? "Vertrag widerrufen" : "Verträge hier kündigen"}</h1>
+    <p class="small muted" style="margin-bottom:12px">Kündigung deines Abos bei ${esc(st.product_name || "HausOps Immobilien")}. Ohne Angabe eines Datums wirkt sie zum nächstmöglichen Zeitpunkt (Ende des bezahlten Monats). Deine Daten kannst du bis dahin exportieren.</p>
+    <div class="fgrid">
+      <label class="f"><span>Dein Name *</span><input name="name" required value="${esc(auth.profile?.full_name || "")}"></label>
+      <label class="f"><span>E-Mail für die Bestätigung *</span><input name="email" type="email" required value="${esc(auth.profile?.email || "")}"></label>
+      <label class="f"><span>E-Mail-Adresse des Kontos</span><input name="accountEmail" type="email" value="${esc(auth.profile?.email || "")}"></label>
+      <label class="f"><span>Vertrags-/Kundennummer (optional)</span><input name="contractRef"></label>
+      <label class="f"><span>Art</span><select name="kind">${opt([["ordentlich", "ordentliche Kündigung"], ["ausserordentlich", "außerordentliche Kündigung"], ["widerruf", "Widerruf (innerhalb von 14 Tagen nach Vertragsschluss)"]], ui.cancelKind || "ordentlich")}</select></label>
+      <label class="f"><span>Zeitpunkt</span><select name="wishedDate">${opt([["naechstmoeglich", "zum nächstmöglichen Zeitpunkt"], ["sofort", "sofort (nur bei außerordentlicher Kündigung)"]], "naechstmoeglich")}</select></label>
+      <label class="f full"><span>Grund (nur bei außerordentlicher Kündigung erforderlich)</span><textarea name="reason"></textarea></label>
+    </div>
+    <button class="btn primary" style="background:var(--bad);border-color:var(--bad)">${ui.cancelKind === "widerruf" ? "Widerruf bestätigen" : "jetzt kündigen"}</button>
+  </form></div>`;
+}
 
 function paywall() {
   dialog({
@@ -2119,7 +2296,8 @@ function viewAuth() {
       <label class="f"><span>Firma (optional)</span><input name="company" autocomplete="organization"></label></div>
       <label class="f"><span>E-Mail</span><input name="email" type="email" required autocomplete="email"></label>
       <label class="f"><span>Passwort (mind. 8 Zeichen)</span><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
-      <label class="f inline small"><input type="checkbox" name="terms" required> Ich akzeptiere die ${legalLink("agb", "AGB")} und habe die ${legalLink("datenschutz", "Datenschutzerklärung")} gelesen.</label>
+      <label class="f inline small"><input type="checkbox" name="terms" required> Ich akzeptiere die ${legalLink("agb", "AGB")} und habe die ${legalLink("datenschutz", "Datenschutzerklärung")} und die ${legalLink("widerruf", "Widerrufsbelehrung")} zur Kenntnis genommen.</label>
+      <label class="f inline small"><input type="checkbox" name="avv" required> Ich schließe den ${legalLink("avv", "Auftragsverarbeitungsvertrag (Art. 28 DSGVO)")} für die Daten meiner Mieter und Gäste ab.</label>
       <button class="btn primary" style="width:100%;justify-content:center">Konto erstellen</button></form>`,
     reset: `<form data-form="reset"><h2>Passwort zurücksetzen</h2><p class="small muted" style="margin-bottom:10px">Du bekommst eine E-Mail mit einem Link zum Festlegen eines neuen Passworts.</p>
       <label class="f"><span>E-Mail</span><input name="email" type="email" required></label>
@@ -2132,14 +2310,14 @@ function viewAuth() {
     <div class="auth-hero"><div class="logo">${esc(st.product_name || "HausOps Immobilien")}</div>
       <h1>Deine Immobilien. Einfach verwaltet.</h1>
       <ul><li>Wohnungen, Häuser, Garagen, Stellplätze & Ferienwohnungen</li><li>Bankabgleich: Mieteingänge automatisch erkannt</li><li>Nebenkostenabrechnung nach BetrKV mit Mieterbrief</li><li>Belege fotografieren – die KI liest sie aus</li><li>Anlage V, DATEV-Export & Steuerberater-Paket</li></ul>
-      ${plans.length ? `<div class="plans">${plans.map((p) => `<div class="plan"><b>${esc(p.name)}</b><div class="v">${p.price_month_cents ? eur(p.price_month_cents) + "<span class=\"small\"> / Monat</span>" : "kostenlos"}</div><div class="small">${esc(p.description)}</div></div>`).join("")}</div>` : ""}
+      ${plans.length ? `<div class="plans">${plans.map((p) => `<div class="plan"><b>${esc(p.name)}</b><div class="v">${p.price_month_cents ? eur(p.price_month_cents) + "<span class=\"small\"> / Monat</span>" : "kostenlos"}</div><div class="small">${esc(p.description)}</div></div>`).join("")}</div><p class="small" style="margin-top:8px;color:#dce8eb">${esc(st.price_note || "")}</p>` : ""}
     </div>
     <div class="auth-box card">
       ${st.announcement ? `<div class="note warn">${esc(st.announcement)}</div>` : ""}
       ${tab !== "newpw" ? `<div class="tabs"><button data-act="authTab" data-id="login" class="${tab === "login" ? "active" : ""}">Anmelden</button><button data-act="authTab" data-id="register" class="${tab === "register" ? "active" : ""}">Registrieren</button></div>` : ""}
       ${ui.authMsg ? `<div class="note">${esc(ui.authMsg)}</div>` : ""}
       ${form}
-      <div class="small muted" style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">${legalLink("impressum", "Impressum")}${legalLink("datenschutz", "Datenschutz")}${legalLink("agb", "AGB")}</div>
+      <div class="small muted" style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">${legalLink("impressum", "Impressum")}${legalLink("datenschutz", "Datenschutz")}${legalLink("agb", "AGB")}${legalLink("widerruf", "Widerruf")}<a class="btn link small" href="#/kuendigen" data-act="setKuendigung">Verträge hier kündigen</a><a class="btn link small" href="#/kuendigen" data-act="setWiderruf">Vertrag widerrufen</a></div>
     </div></div>`;
 }
 
@@ -2161,6 +2339,7 @@ function banners() {
   const t = trialInfo();
   if (t && (t.expired || t.days <= 7)) out.push(`<div class="note warn noprint">${t.expired ? "🔒 Deine Testphase ist abgelaufen – Nur-Lesen-Modus. Daten bleiben erhalten und exportierbar." : `Deine Testphase endet in ${t.days} Tag(en).`} ${btn("paywall", "Tarif wählen", "sm primary")}</div>`);
   const p = auth.profile;
+  if (p && auth.settings?.legal_version && (!p.avv_accepted_at || (p.legal_version || "") !== auth.settings.legal_version) && p.role !== "admin") out.push(`<div class="note warn noprint">📄 Unsere ${legalLink("agb", "AGB")} bzw. der ${legalLink("avv", "Auftragsverarbeitungsvertrag")} wurden aktualisiert. ${btn("acceptLegal", "Zustimmen", "sm primary")}</div>`);
   if (p?.subscription_status === "past_due") out.push(`<div class="note warn noprint">⚠️ Die letzte Zahlung ist fehlgeschlagen. Bitte Zahlungsmethode aktualisieren. ${btn("billingPortal", "Zahlungsmethode ändern", "sm primary")}</div>`);
   if (p?.cancel_at_period_end && p.current_period_end) out.push(`<div class="note noprint">Dein Abo ist gekündigt und endet am ${d(p.current_period_end.slice(0, 10))}. ${btn("billingPortal", "Kündigung zurücknehmen", "sm")}</div>`);
   return out.join("");
@@ -2187,7 +2366,7 @@ function viewKonto() {
     <div class="card"><h2>Daten & Datenschutz</h2>
       <p class="small muted" style="margin-bottom:8px">Deine Daten sind von allen anderen Konten getrennt gespeichert; auch Administratoren sehen keine Objekt- oder Mieterdaten.</p>
       <div class="toolbar">${btn("backupFull", "⬇ Alle Daten exportieren")}${btn("deleteSelf", "Konto & alle Daten löschen", "danger")}</div>
-      <div class="small" style="margin-top:10px">${legalLink("impressum", "Impressum")} · ${legalLink("datenschutz", "Datenschutz")} · ${legalLink("agb", "AGB")}</div></div>`;
+      <div class="small" style="margin-top:10px">${legalLink("impressum", "Impressum")} · ${legalLink("datenschutz", "Datenschutz")} · ${legalLink("agb", "AGB")} · ${legalLink("avv", "Auftragsverarbeitung")} · ${legalLink("widerruf", "Widerruf")} · <a href="#/kuendigen" data-act="setKuendigung">Verträge hier kündigen</a> · <a href="#/kuendigen" data-act="setWiderruf">Vertrag widerrufen</a></div></div>`;
 }
 
 // ---------------------------------------------------------------- Admin-Bereich
@@ -2195,8 +2374,8 @@ function viewKonto() {
 async function loadAdmin() {
   ui.adminBusy = true; render();
   try {
-    const [users, log, plans, settings] = await Promise.all([Cloud.adminUsers(), Cloud.adminLog(), Cloud.plans(), Cloud.appSettings()]);
-    Object.assign(ui, { adminUsers: users, adminLog: log });
+    const [users, log, plans, settings, canc] = await Promise.all([Cloud.adminUsers(), Cloud.adminLog(), Cloud.plans(), Cloud.appSettings(), Cloud.adminCancellations().catch(() => [])]);
+    Object.assign(ui, { adminUsers: users, adminLog: log, adminCancellations: canc });
     auth.plans = plans; auth.settings = settings;
   } catch (e) { alert("Admin-Daten konnten nicht geladen werden: " + e.message); }
   ui.adminBusy = false; render();
@@ -2214,7 +2393,7 @@ function viewAdmin() {
   const q = C.normalize(ui.adminSearch || "");
   const list = users.filter((u) => !q || C.normalize(`${u.email} ${u.full_name} ${u.company}`).includes(q));
   const fmtBytes = (b) => (b > 1e6 ? `${(b / 1e6).toFixed(1).replace(".", ",")} MB` : `${Math.round((b || 0) / 1e3)} KB`);
-  const tabs = [["uebersicht", "Übersicht"], ["nutzer", `Nutzer (${users.length})`], ["tarife", "Tarife"], ["einstellungen", "Einstellungen & Rechtstexte"], ["protokoll", "Protokoll"]];
+  const tabs = [["uebersicht", "Übersicht"], ["nutzer", `Nutzer (${users.length})`], ["tarife", "Tarife"], ["einstellungen", "Einstellungen & Rechtstexte"], ["kuendigungen", `Kündigungen (${(ui.adminCancellations || []).filter((c) => c.status !== "erledigt").length})`], ["protokoll", "Protokoll"]];
   const st = auth.settings || {};
   const body = {
     uebersicht: `<div class="kpis">
@@ -2246,8 +2425,15 @@ function viewAdmin() {
         <label class="f full"><span>Impressum</span><textarea name="impressum">${esc(st.impressum)}</textarea></label>
         <label class="f full"><span>Datenschutzerklärung</span><textarea name="datenschutz" style="min-height:160px">${esc(st.datenschutz)}</textarea></label>
         <label class="f full"><span>AGB</span><textarea name="agb" style="min-height:160px">${esc(st.agb)}</textarea></label>
+        <label class="f full"><span>Auftragsverarbeitungsvertrag (Art. 28 DSGVO) – Kunden verarbeiten Daten ihrer Mieter in der App</span><textarea name="avv" style="min-height:160px">${esc(st.avv)}</textarea></label>
+        <label class="f full"><span>Widerrufsbelehrung (inkl. Muster-Widerrufsformular)</span><textarea name="widerruf" style="min-height:120px">${esc(st.widerruf)}</textarea></label>
+        <label class="f"><span>Preisangabe (PAngV)</span><input name="price_note" value="${esc(st.price_note)}" placeholder="Alle Preise inkl. 19 % USt."></label>
+        <label class="f"><span>Version der Rechtstexte</span><input name="legal_version" value="${esc(st.legal_version)}"><small class="muted">Bei Änderung von AGB/AVV erhöhen – Kunden werden dann um erneute Zustimmung gebeten.</small></label>
       </div><button class="btn primary">Speichern</button>
       <p class="small muted" style="margin-top:8px">Vor dem Verkauf: Impressum, Datenschutzerklärung (inkl. Auftragsverarbeitung mit Supabase/Anthropic) und AGB rechtlich prüfen lassen.</p></form>`,
+    kuendigungen: `<p class="small muted" style="margin-bottom:8px">Eingänge über den Kündigungsbutton (§ 312k BGB). Abos werden automatisch zum Laufzeitende gekündigt; ohne E-Mail-Versand (RESEND_API_KEY) bitte die Bestätigung selbst per E-Mail senden.</p>
+      <div class="table-wrap"><table><thead><tr><th>Eingang</th><th>Name / E-Mail</th><th>Konto</th><th>Art</th><th>Status</th><th>Bestätigung</th></tr></thead><tbody>
+      ${(ui.adminCancellations || []).map((c) => `<tr><td class="small nowrap">${new Date(c.created_at).toLocaleString("de-DE")}<br>K-${String(c.id).padStart(6, "0")}</td><td class="small">${esc(c.name)}<br>${esc(c.email)}</td><td class="small">${esc(c.account_email)}${c.effective_at ? `<br>endet ${d(c.effective_at.slice(0, 10))}` : ""}</td><td class="small">${esc(c.kind)}${c.reason ? `<br><span class="muted">${esc(c.reason.slice(0, 80))}</span>` : ""}</td><td class="small">${esc(c.status)}</td><td class="small">${c.confirmation_sent ? "✓ E-Mail" : '<span class="neg">manuell senden</span>'}</td></tr>`).join("") || '<tr><td colspan="6" class="muted">Keine Kündigungen.</td></tr>'}</tbody></table></div>`,
     protokoll: `<table>${(ui.adminLog || []).map((l) => `<tr><td class="small nowrap">${new Date(l.at).toLocaleString("de-DE")}</td><td class="small">${esc(l.action)}</td><td class="small">${esc(users.find((u) => u.id === l.target_id)?.email || l.target_id || "")}</td><td class="small muted">${esc(JSON.stringify(l.details))}</td></tr>`).join("") || '<tr><td class="muted">Noch keine Einträge.</td></tr>'}</table>`,
   }[tab];
   return head("Admin-Bereich", "Kunden, Tarife und Einstellungen – ohne Einblick in Kundendaten", "") + `
@@ -2298,7 +2484,7 @@ function adminPlanDialog(id) {
 
 function showLegal(k) {
   const st = auth.settings || {};
-  const title = { impressum: "Impressum", datenschutz: "Datenschutzerklärung", agb: "Allgemeine Geschäftsbedingungen" }[k];
+  const title = { impressum: "Impressum", datenschutz: "Datenschutzerklärung", agb: "Allgemeine Geschäftsbedingungen", avv: "Vertrag zur Auftragsverarbeitung (Art. 28 DSGVO)", widerruf: "Widerrufsbelehrung" }[k];
   dialog({ title, wide: true, body: `<div style="white-space:pre-wrap">${esc(st[k] || "Noch nicht hinterlegt.")}</div>` });
 }
 
@@ -2307,13 +2493,14 @@ function showLegal(k) {
 function render() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [route, arg] = hash.split("/");
-  const gate = auth.mode === "cloud" && (!auth.user || ui.authTab === "newpw" || auth.profile?.status === "blocked");
+  const gate = auth.mode === "cloud" && route !== "kuendigen" && (!auth.user || ui.authTab === "newpw" || auth.profile?.status === "blocked");
+  if (route === "kuendigen" && !auth.user) { document.body.classList.add("authscreen"); $("#view").innerHTML = `<div style="padding:24px 16px">${viewCancelForm()}</div>`; return; }
   document.body.classList.toggle("authscreen", gate);
   if (gate) { $("#view").innerHTML = auth.user && auth.profile?.status === "blocked" && ui.authTab !== "newpw" ? viewBlocked() : viewAuth(); return; }
   const nav = [...NAV.slice(0, -1), ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡", "Admin"]] : []), NAV[NAV.length - 1]];
   $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${esc(planOf()?.name || "")}<br><span id="sync">${syncLabel()}</span>` : "Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.";
-  $("#nav").innerHTML = nav.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") || (r === "mieter" && route === "protokoll") || (r === "nebenkosten" && route === "nkassistent") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
-  const views = { "": viewDashboard, objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), nkassistent: viewNkWizard, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
+  $("#nav").innerHTML = nav.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") || (r === "mieter" && ["protokoll", "auskunft"].includes(route)) || (r === "nebenkosten" && route === "nkassistent") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
+  const views = { "": viewDashboard, objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), kuendigen: viewCancelForm, nkassistent: viewNkWizard, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
     $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
@@ -2326,9 +2513,12 @@ function render() {
 const actions = {
   newObject: () => editObject(), editObject,
   moveWizard: (unitId) => moveWizard(unitId || null),
-  buyPlan: (planId) => startBilling("checkout", planId),
+  buyPlan: (planId) => orderOverview(planId),
   billingPortal: () => startBilling("portal"),
   paywall: () => paywall(),
+  setKuendigung: () => { ui.cancelKind = "ordentlich"; ui.cancelResult = null; location.hash = "#/kuendigen"; render(); },
+  setWiderruf: () => { ui.cancelKind = "widerruf"; ui.cancelResult = null; location.hash = "#/kuendigen"; render(); },
+  acceptLegal: async () => { try { await Cloud.acceptLegal(); auth.profile = await Cloud.profile(auth.user.id); toast("Danke – Zustimmung gespeichert"); render(); } catch (e) { alert(e.message); } },
   letterFor: (v) => { const [kind, contractId] = v.split("|"); if ($("#modal").open) $("#modal").close(); ui.letter = { kind, contractId, subject: "", body: "", instr: "" }; location.hash = "#/briefe"; render(); },
   wizStep: (n) => { nkWizState().step = Number(n); render(); window.scrollTo(0, 0); },
   wizResearch: (id) => wizResearch(id),
@@ -2398,12 +2588,14 @@ const actions = {
   year: (y) => { ui.year = Number(y); ui.datevFrom = ui.datevTo = null; render(); },
   newBooking: () => editBooking(), editBooking,
   newBookingAt: (v) => { const [unitId, from] = v.split("|"); editBooking(null, { unitId, from, to: addDays(from, 7) }); },
-  invoiceFromBooking, guestMsg, cleaningMsg,
+  invoiceFromBooking, guestMsg, cleaningMsg, finalizeInvoice, deleteDraft,
+  anonTenant: (id) => { if (!confirm("Mieter unwiderruflich anonymisieren? Name, Kontaktdaten, IBAN und Notizen werden gelöscht; Beträge bleiben erhalten.")) return; const i = state.tenants.findIndex((t) => t.id === id); state.tenants[i] = R.anonymizeTenant(state.tenants[i]); commit("Mieter anonymisiert"); },
+  anonGuests: () => { const due = new Set(R.retentionDue(state, today()).guests.map((b) => b.id)); state.bookings = state.bookings.map((b) => (due.has(b.id) ? R.anonymizeGuest(b) : b)); commit(`${due.size} Gastdatensätze bereinigt`); },
   pkgYear: (y) => { location.hash = `#/paket/${y}`; },
   nkAdd: () => { nkDraft().items.push({ label: "Grundsteuer", amount: 0, key: "flaeche", pct: 70, shares: {} }); render(); },
   nkDel: (i) => { nkDraft().items.splice(Number(i), 1); render(); },
   nkFromExpenses: () => { const nk = nkDraft(); const add = C.nkItemsFromExpenses(state, nk.objectId, nk.from, nk.to); if (!add.length) return toast("Keine umlagefähigen Ausgaben im Zeitraum gefunden."); nk.items = [...nk.items.filter((x) => !add.some((a) => a.label === x.label)), ...add]; render(); },
-  nkSave: () => { const nk = nkDraft(); if (!nk.items.length) return toast("Keine Kostenpositionen."); nk.id = nk.id || C.uid("nk_"); state.nkStatements = [...(state.nkStatements || []).filter((x) => x.id !== nk.id), structuredClone(nk)]; commit("Abrechnung gespeichert – Anschreiben können jetzt gedruckt werden"); },
+  nkSave: () => { const nk = nkDraft(); if (!nk.items.length) return toast("Keine Kostenpositionen."); if (!confirmLegal(R.nkPeriodCheck(nk.from, nk.to))) return; nk.id = nk.id || C.uid("nk_"); state.nkStatements = [...(state.nkStatements || []).filter((x) => x.id !== nk.id), structuredClone(nk)]; commit("Abrechnung gespeichert – Anschreiben können jetzt gedruckt werden"); },
   nkLoad: (id) => { ui.nk = structuredClone(state.nkStatements.find((x) => x.id === id)); render(); },
   newInvoice: () => editInvoice(), editInvoice, cancelInvoice, markPaid, smoobu: smoobuImport,
   datevPreset: (p) => {
@@ -2458,6 +2650,9 @@ document.addEventListener("change", async (e) => {
     else if (nkf === "amount") it.amount = C.parseAmount(v);
     else if (nkf === "key") it.key = v;
     else if (nkf === "pct") it.pct = Math.min(70, Math.max(50, Number(v) || 70));
+    else if (nkf === "co2Cost") it.co2Cost = C.parseAmount(v);
+    else if (nkf === "co2Kg") it.co2Kg = Number(String(v).replace(",", ".")) || 0;
+    else if (nkf === "nonResidential") it.nonResidential = e.target.checked;
     else if (nkf === "share") { it.shares = it.shares || {}; it.shares[e.target.dataset.u] = it.key === "direkt" ? C.parseAmount(v) : Number(String(v).replace(",", ".")) || 0; }
     render(); return;
   }
@@ -2479,6 +2674,7 @@ document.addEventListener("change", async (e) => {
   if (!k) return;
   if (k === "docUpload" || k === "docScan") { await addFiles(e.target.files, { scan: k === "docScan" }); e.target.value = ""; return; }
   if (k === "autoKi") { ui.autoKi = e.target.checked; return; }
+  if (k === "kiPseudo") { state.settings.kiPseudo = e.target.checked; commit(e.target.checked ? "Datensparsamer KI-Modus an" : "Datensparsamer KI-Modus aus"); return; }
   if (k === "tenantSearch") { ui.tenantSearch = e.target.value; render(); return; }
   if (k === "adminSearch") { ui.adminSearch = e.target.value; render(); return; }
   if (k === "attachExpense") { const id = e.target.dataset.id; if (!byId("expenses", id)) return toast("Bitte die Ausgabe zuerst speichern."); $("#modal").close(); await addFiles(e.target.files, { expenseId: id }); editExpense(id); return; }
@@ -2514,7 +2710,7 @@ async function handleAccountForm(f, form) {
     if (f === "login") { await Cloud.signIn(v.email.trim(), v.password); const s = await Cloud.session(); ui.authMsg = ""; await enterAccount(s.user); }
     if (f === "register") {
       if (v.password.length < 8) throw new Error("Das Passwort muss mindestens 8 Zeichen haben.");
-      const r = await Cloud.signUp({ email: v.email.trim(), password: v.password, fullName: v.fullName.trim(), company: (v.company || "").trim() });
+      const r = await Cloud.signUp({ email: v.email.trim(), password: v.password, fullName: v.fullName.trim(), company: (v.company || "").trim(), consent: { terms_accepted: true, avv_accepted: true, consent_at: new Date().toISOString() } });
       if (r.session) await enterAccount(r.session.user);
       else { ui.authTab = "login"; ui.authMsg = "Fast geschafft! Bitte bestätige deine E-Mail-Adresse über den Link in der Mail und melde dich dann an."; render(); }
     }
@@ -2523,7 +2719,7 @@ async function handleAccountForm(f, form) {
     if (f === "profile") { await Cloud.updateProfile(auth.user.id, { full_name: v.full_name.trim(), company: v.company.trim() }); Object.assign(auth.profile, { full_name: v.full_name.trim(), company: v.company.trim() }); toast("Profil gespeichert"); render(); }
     if (f === "password") { await Cloud.updatePassword(v.password); form.reset(); toast("Passwort geändert"); }
     if (f === "appsettings") {
-      await Cloud.saveAppSettings({ product_name: v.product_name, support_email: v.support_email, trial_days: Number(v.trial_days) || 30, registration_open: !!v.registration_open, announcement: v.announcement, impressum: v.impressum, datenschutz: v.datenschutz, agb: v.agb });
+      await Cloud.saveAppSettings({ product_name: v.product_name, support_email: v.support_email, trial_days: Number(v.trial_days) || 30, registration_open: !!v.registration_open, announcement: v.announcement, impressum: v.impressum, datenschutz: v.datenschutz, agb: v.agb, avv: v.avv, widerruf: v.widerruf, price_note: v.price_note, legal_version: v.legal_version });
       auth.settings = await Cloud.appSettings(); toast("Einstellungen gespeichert"); render();
     }
   } catch (err) {
@@ -2556,6 +2752,13 @@ document.addEventListener("submit", (e) => {
     render(); window.scrollTo(0, 0); return;
   }
   if (["login", "register", "reset", "newpw", "profile", "password", "appsettings"].includes(f)) { handleAccountForm(f, e.target); return; }
+  if (f === "cancel") {
+    const v = Object.fromEntries(new FormData(e.target));
+    if (v.kind === "ausserordentlich" && !v.reason.trim()) return alert("Bitte bei einer außerordentlichen Kündigung den Grund angeben.");
+    const b = e.target.querySelector("button"); b.disabled = true;
+    Cloud.cancelContract(v).then((r) => { ui.cancelResult = r; render(); window.scrollTo(0, 0); }).catch((err) => { alert(err.message); b.disabled = false; });
+    return;
+  }
   const fd = Object.fromEntries(new FormData(e.target));
   const s = state.settings;
   if (f === "owner") Object.assign(s, fd, { invoiceIban: C.normIban(fd.invoiceIban) });

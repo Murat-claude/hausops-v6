@@ -3,6 +3,8 @@
 Verwaltung vermieteter Immobilien (angelehnt an den Funktionsumfang von immocloud) mit Ferienwohnungs-Modul.
 Läuft als eigenständige Web-App unter **`/immo/`** auf derselben Netlify-Seite wie Livora Clean. Die bestehende App bleibt unverändert.
 
+> **Rechtliches:** Welche gesetzlichen Regeln die App prüft (Mietrecht, Betriebskosten, CO2-Aufteilung, Umsatzsteuer bei Stellplätzen, GoBD, DSGVO, Verbraucherrecht beim Verkauf), mit Mustertexten und offenen Punkten, steht in [`RECHTLICHES.md`](RECHTLICHES.md).
+
 ## Funktionen
 
 | Bereich | Was es kann |
@@ -68,11 +70,11 @@ So funktioniert es für deine Kunden:
 - Tarife ohne Stripe-Preis-ID bleiben manuell (Admin weist zu, oder es geht eine E-Mail an den Support).
 
 Einrichtung:
-1. In Supabase zusätzlich `immo/supabase/migrations/20261106000000_billing.sql` ausführen.
+1. In Supabase zusätzlich `immo/supabase/migrations/20261106000000_billing.sql` und `immo/supabase/migrations/20261107000000_legal.sql` ausführen.
 2. Bei https://dashboard.stripe.com je Tarif ein **Produkt mit monatlichem, wiederkehrendem Preis** anlegen und die **Preis-ID** (`price_…`) im Admin-Bereich unter „Tarife“ eintragen.
 3. Stripe → **Einstellungen → Billing → Kundenportal** aktivieren: Zahlungsmethode ändern, Rechnungen, Kündigung und Tarifwechsel (die Produkte freigeben).
 4. Stripe → **Entwickler → Webhooks**: Endpoint `https://<deine-seite>/.netlify/functions/immo-stripe-webhook` mit den Ereignissen `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted` und `invoice.payment_failed`.
-5. In Netlify zusätzlich `STRIPE_SECRET_KEY` (sk_…) und `STRIPE_WEBHOOK_SECRET` (whsec_…) setzen, optional `IMMO_PUBLIC_URL` (z. B. `https://deine-domain.de`).
+5. In Netlify zusätzlich `STRIPE_SECRET_KEY` (sk_…) und `STRIPE_WEBHOOK_SECRET` (whsec_…) setzen, optional `IMMO_PUBLIC_URL` (z. B. `https://deine-domain.de`). Für die Bestätigungsmails von Kündigung und Widerruf (§ 312k BGB verlangt Textform): `RESEND_API_KEY` und `IMMO_MAIL_FROM`.
 6. Zuerst im **Testmodus** (Testschlüssel und Testkarte 4242 4242 4242 4242) durchspielen, dann auf Live-Schlüssel umstellen.
 7. Steuern: Für Rechnungen mit USt in Stripe die Firmendaten und **Stripe Tax** oder feste Steuersätze einrichten (Kleinunternehmer: ohne USt, Hinweis § 19 UStG in den Rechnungseinstellungen).
 
@@ -134,6 +136,8 @@ immo/
 netlify/functions/immo-billing.js         Stripe Checkout + Kundenportal
 netlify/functions/immo-stripe-webhook.js  Stripe-Webhook (Signatur geprüft) → Tarif im Profil
 netlify/lib/immo-billing-lib.js           gemeinsame Stripe-/Supabase-Logik
+netlify/functions/immo-kuendigung.js      Kündigungsbutton / Widerruf (öffentlich) mit Bestätigung
+immo/js/recht.js                          rechtliche Prüfungen (Kaution, Mieterhöhung, USt Stellplatz, CO2, DSGVO …)
   vendor/       Anthropic SDK (Browser-Bundle) + Lizenz
   tests/        node --test (npm test)
 ```

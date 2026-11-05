@@ -117,7 +117,7 @@ export function demoState() {
   mk(`${thisM}-03`, 6000, "J. Becker", t3.ibans[0], "Garage");
   mk(`${thisM}-04`, -48712, "Musterbank Baufinanzierung", "", "Zinsen Darlehen 4711");
   // Ferienwohnung
-  const b = (from, to, guest, total, adults, channel) => s.bookings.push({ id: uid("b_"), unitId: f1.id, guest, guestStreet: "", guestZip: "", guestCity: "", email: "", from, to, adults, children: 0, total, cleaning: 6500, kurtaxe: 300, channel, status: "bestaetigt", note: "" });
+  const b = (from, to, guest, total, adults, channel) => s.bookings.push({ id: uid("b_"), unitId: f1.id, guest, guestStreet: "Gästestraße 5", guestZip: "50667", guestCity: "Köln", email: "", from, to, adults, children: 0, total, cleaning: 6500, kurtaxe: 300, channel, status: "bestaetigt", note: "" });
   const d = (n) => { const x = new Date(); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
   b(d(-12), d(-5), "Familie Peters", 77000, 2, "Direkt");
   b(d(3), d(10), "Laura König", 84000, 2, "Airbnb");

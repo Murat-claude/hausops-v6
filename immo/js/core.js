@@ -1,5 +1,6 @@
 // HausOps Immobilien — reine Fachlogik (ohne DOM), in Node testbar.
 // Geldbeträge werden durchgehend als ganze Cent (Integer) gespeichert.
+import { vatFor, nkParticipates, co2Split } from "./recht.js";
 
 // ---------------------------------------------------------------- Geld & Datum
 
@@ -110,6 +111,9 @@ export const UNIT_TYPES = {
   gewerbe: "Gewerbe",
   garage: "Garage",
   stellplatz: "Stellplatz",
+  carport: "Carport",
+  keller: "Keller / Abstellraum",
+  lager: "Lager / Hobbyraum",
   ferienwohnung: "Ferienwohnung",
   sonstiges: "Sonstiges",
 };
@@ -275,7 +279,7 @@ export function suggestAssignment(tx, state) {
     const cands = [];
     // FeWo-Rechnungen
     for (const inv of state.invoices || []) {
-      if (inv.status === "storniert" || inv.status === "bezahlt") continue;
+      if (["storniert", "bezahlt", "entwurf"].includes(inv.status)) continue;
       const open = invoiceTotals(inv).gross - paidForInvoice(state, inv.id);
       let score = 0; const why = [];
       if (inv.number && normalize(text).includes(normalize(inv.number))) { score += 70; why.push("Rechnungsnr. im Verwendungszweck"); }
@@ -449,8 +453,7 @@ export function splitPayment(state, p) {
 }
 
 function unitVat(state, contract) {
-  const u = (state.units || []).find((x) => x.id === contract?.unitId);
-  return Number(u?.vat) || 0;
+  return vatFor(state, contract).vat; // Wohnraum steuerfrei, separat vermietete Stellplätze 19 % (§ 4 Nr. 12 UStG)
 }
 
 const inYear = (iso, year) => iso && iso.slice(0, 4) === String(year);
@@ -755,7 +758,7 @@ export function nkItemsFromExpenses(state, objectId, from, to) {
 }
 
 // Berechnet die Abrechnung tagegenau je Mietvertrag; Leerstand trägt der Vermieter.
-export const NK_UNIT_TYPES = (u) => !["garage", "stellplatz"].includes(u.type); // Garagen/Stellplätze tragen keine Betriebskosten des Hauses
+export const NK_UNIT_TYPES = (u) => nkParticipates(u); // je Einheit einstellbar; Garagen/Stellplätze/Keller standardmäßig nicht
 
 export function nkAbrechnung(state, { objectId, from, to, items }) {
   const units = (state.units || []).filter((u) => u.objectId === objectId && NK_UNIT_TYPES(u));
@@ -802,18 +805,30 @@ export function nkAbrechnung(state, { objectId, from, to, items }) {
   };
   const perSeg = segs.map(() => []);
   const warnings = [];
-  for (const item of items) {
-    const amount = item.key === "direkt" ? units.reduce((s, u) => s + (Number(item.shares?.[u.id]) || 0), 0) : item.amount;
+  const ownerExtra = items.map(() => 0);
+  const co2Info = [];
+  for (const [idx, item] of items.entries()) {
+    let amount = item.key === "direkt" ? units.reduce((s, u) => s + (Number(item.shares?.[u.id]) || 0), 0) : item.amount;
+    if (item.co2Cost > 0) { // CO2-Kostenaufteilungsgesetz: Vermieteranteil vorab abziehen
+      const sp = co2Split(Math.min(item.co2Cost, amount), Number(item.co2Kg) || 0, !item.nonResidential);
+      if (!item.co2Kg && !item.nonResidential) warnings.push(`${item.label}: CO2-Ausstoß (kg CO2/m²/Jahr) fehlt – ohne Angabe trägt der Vermieter im Zweifel 95 % der CO2-Kosten.`);
+      amount -= sp.landlord; ownerExtra[idx] = sp.landlord; co2Info[idx] = sp;
+    }
     let raw;
-    if (item.key === "heizkosten") {
+    const hasShares = Object.values(item.shares || {}).some(Number);
+    if (item.key === "heizkosten" && hasShares) {
       const pct = Math.min(70, Math.max(50, Number(item.pct) || 70));
       const a = distribute(amount * (100 - pct) / 100, "flaeche", item);
       const b = distribute(amount * pct / 100, "verbrauch", item);
       raw = a.map((v, i) => v + b[i]);
-      if (!Object.values(item.shares || {}).some(Number)) warnings.push(`${item.label}: Verbrauchswerte fehlen – Verbrauchsanteil ${pct} % wird niemandem zugeordnet.`);
+    } else if ((item.key === "heizkosten" || item.key === "verbrauch") && !hasShares) {
+      // Ohne Verbrauchswerte: Verteilung nach Fläche (statt Kosten beim Vermieter zu belassen)
+      raw = distribute(amount, "flaeche", item);
+      warnings.push(item.key === "heizkosten"
+        ? `${item.label}: Keine Verbrauchswerte – nach Wohnfläche verteilt. Mieter dürfen ihren Heizkostenanteil dann um 15 % kürzen (§ 12 HeizkostenV); Verbrauchswerte bzw. Zählerstände nachtragen.`
+        : `${item.label}: Keine Verbrauchswerte – nach Wohnfläche verteilt. Verbrauchswerte bzw. Zählerstände nachtragen, falls Zähler vorhanden.`);
     } else raw = distribute(amount, item.key, item);
     if (item.key === "flaeche" && !units.some((u) => Number(u.area))) warnings.push(`${item.label}: Bei den Einheiten fehlen die Wohnflächen.`);
-    if (item.key === "verbrauch" && !Object.values(item.shares || {}).some(Number)) warnings.push(`${item.label}: Verbrauchswerte fehlen.`);
     // runden; Rundungsdifferenz trägt der Vermieter
     const rounded = raw.map((v) => Math.round(v));
     const diff = amount - rounded.reduce((a, b) => a + b, 0);
@@ -824,7 +839,7 @@ export function nkAbrechnung(state, { objectId, from, to, items }) {
   }
   const months = monthRange(monthKey(from), monthKey(to));
   const contracts = [];
-  let owner = { items: items.map((it) => ({ label: it.label, amount: 0 })), total: 0, days: 0 };
+  let owner = { items: items.map((it, i) => ({ label: it.label, amount: ownerExtra[i] })), total: ownerExtra.reduce((a, b) => a + b, 0), days: 0 };
   segs.forEach((x, i) => {
     const total = perSeg[i].reduce((s, it) => s + it.amount, 0);
     if (!x.contractId) {
@@ -849,7 +864,7 @@ export function nkAbrechnung(state, { objectId, from, to, items }) {
   const dk = addMonths(monthKey(to), 12);
   const deadline = `${dk}-${String(Math.min(Number(to.slice(8, 10)), daysInMonth(dk))).padStart(2, "0")}`;
   const check = contracts.reduce((s, c) => s + c.total, 0) + owner.total;
-  return { from, to, days: P, contracts, owner, total, check, deadline, warnings };
+  return { from, to, days: P, contracts, owner, total, check, deadline, warnings, co2: co2Info, unitsUsed: units.map((u) => u.id) };
 }
 
 // ---------------------------------------------------------------- Ferienwohnung-Kennzahlen

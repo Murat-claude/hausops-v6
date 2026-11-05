@@ -39,8 +39,8 @@ export async function signIn(email, password) {
   fail(error);
 }
 
-export async function signUp({ email, password, fullName, company }) {
-  const { data, error } = await sb.auth.signUp({ email, password, options: { data: { full_name: fullName, company }, emailRedirectTo: redirect() } });
+export async function signUp({ email, password, fullName, company, consent }) {
+  const { data, error } = await sb.auth.signUp({ email, password, options: { data: { full_name: fullName, company, ...consent }, emailRedirectTo: redirect() } });
   fail(error);
   return data; // data.session === null → E-Mail-Bestätigung nötig
 }
@@ -189,6 +189,20 @@ export async function billing(action, planId) {
   });
   const out = await res.json().catch(() => ({}));
   if (res.status === 501 || res.status === 404) return { notConfigured: true };
+  if (!res.ok || !out.success) throw new Error(out.error || `Fehler ${res.status}`);
+  return out;
+}
+
+// ---------------------------------------------------------------- Rechtliches
+export async function acceptLegal() { const { error } = await sb.rpc("accept_legal"); fail(error); }
+export async function adminCancellations() {
+  const { data, error } = await sb.from("cancellations").select("*").order("created_at", { ascending: false }).limit(200);
+  fail(error); return data;
+}
+// Kündigungsbutton (§ 312k BGB) – funktioniert auch ohne Anmeldung
+export async function cancelContract(payload) {
+  const res = await fetch("/.netlify/functions/immo-kuendigung", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  const out = await res.json().catch(() => ({}));
   if (!res.ok || !out.success) throw new Error(out.error || `Fehler ${res.status}`);
   return out;
 }
