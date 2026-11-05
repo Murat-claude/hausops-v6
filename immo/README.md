@@ -88,6 +88,27 @@ Getestet: Signaturprüfung, Formularkodierung und die Abbildung aller Abo-Ereign
 - Rechtliches: Impressum, Datenschutzerklärung mit Auftragsverarbeitung (Supabase, Netlify, Anthropic), AGB, AV-Vertrag für Kunden.
 - Eigene Domain und Branding (Produktname ist im Admin-Bereich einstellbar).
 
+## Live-Synchronisation: Bank, Smoobu, Airbnb & Booking.com
+
+Die App ruft **beim Öffnen, danach alle 15 Minuten und beim Zurückkehren in die App** automatisch ab:
+
+| Quelle | Was kommt an | Wie |
+|---|---|---|
+| **Bankkonto (live)** | Alle gebuchten Umsätze, Mieten werden sofort zugeordnet; keine Duplikate, auch nicht zu früher importierten CSV-Umsätzen | Open Banking (PSD2) über den lizenzierten Kontoinformationsdienst **Enable Banking**: nur Lesezugriff, Freigabe bei der eigenen Bank, gültig bis 180 Tage (Hinweis vor Ablauf, „verlängern“) |
+| **Smoobu** | Buchungen aller Portale (Airbnb, Booking.com, FeWo-direkt …) **mit Gastname, E-Mail, Telefon, Personen, Preis**; Änderungen und Stornos | Smoobu-API mit der seit 25.09.2026 vorgeschriebenen **HMAC-Signatur** |
+| **iCal von Airbnb / Booking.com / FeWo-direkt / Vrbo / Holidu …** | Belegung (neue Buchungen, Verschiebungen, Stornos, Sperrzeiten), bei Airbnb mit Reservierungscode und den letzten 4 Ziffern der Telefonnummer | Kalender-Link je Ferienwohnung; Buchungen, die schon über Smoobu da sind, werden verknüpft statt verdoppelt |
+| **Export-Kalender (Cloud-Modus)** | Deine Direkt- und Smoobu-Buchungen als iCal für die Portale → keine Doppelbuchungen | geheimer Link je Ferienwohnung und Portal (eigene Buchungen des Portals werden ausgeblendet) |
+
+Airbnb und Booking.com bieten privaten Vermietern **keine offene Schnittstelle** (nur zertifizierten Partnern). Vollständige Buchungsdaten in Echtzeit gibt es deshalb über einen Channel-Manager wie Smoobu; iCal liefert ohne Channel-Manager die Belegung.
+
+### Einrichtung
+1. **Bank (Enable Banking):** Unter https://enablebanking.com ein Konto anlegen, eine Anwendung erstellen (für eigene Konten kostenlos im „restricted production“-Modus; für Kunden ist ein Vertrag nötig) und als **Redirect-URL** `https://<deine-seite>/immo/` eintragen. In Netlify `ENABLEBANKING_APP_ID` (Anwendungs-ID) und `ENABLEBANKING_PRIVATE_KEY` (privater Schlüssel als PEM) setzen. Danach in der App unter **Bank → „+ Bank verbinden“** die Bank wählen und dort freigeben.
+2. **Smoobu:** In Smoobu unter Einstellungen → Erweitert → API-Schlüssel einen neuen Schlüssel mit **Secret** erzeugen. In Netlify `SMOOBU_API_KEY` und **`SMOOBU_API_SECRET`** setzen. **Wichtig:** Ohne Secret lehnt Smoobu seit 25.09.2026 alle Abrufe ab – das betrifft auch Livora Clean, das dieselbe Funktion nutzt. In der App unter Ferienwohnung „Smoobu automatisch abrufen“ anhaken und bei jeder Ferienwohnung den Smoobu-Namen eintragen, falls er abweicht.
+3. **iCal:** Unter Ferienwohnung → Kanäle → „+ Kalender importieren“ den Export-Link aus Airbnb/Booking einfügen. Im Cloud-Modus über „Export-Kalender für Portale“ die Links erzeugen und in Airbnb bzw. Booking unter „Kalender importieren“ eintragen.
+4. **Zugriffsschutz:** Im Cloud-Modus über die Anmeldung. Im lokalen Modus in Netlify `IMMO_SYNC_TOKEN` (langer Zufallswert) setzen und denselben Wert in der App unter Einstellungen → Synchronisation eintragen.
+
+Getestet: HMAC-Signatur, Enable-Banking-Signatur (RS256-JWT), Umsatz-Umwandlung, iCal-Einlesen und -Abgleich, Duplikatschutz und erlaubte Kalender-Anbieter (`tests/sync.test.cjs`, `tests/core.test.mjs`); im Browser der Ablauf Bank verbinden → Rückkehr → Abruf → Zuordnung → erneuter Abruf ohne Duplikate, dazu iCal und Smoobu gegen simulierte Schnittstellen. Gegen die echten Schnittstellen von Enable Banking und Smoobu konnte hier nicht getestet werden – bitte zuerst mit eigenem Konto und Testbuchungen prüfen.
+
 ## Fachliche Grundlage
 
 Die Regeln stammen aus den Fach-Skills *Nebenkostenabrechnung* (BetrKV, HeizkostenV, § 556 BGB), *Ferienwohnung-Profi* (Revenue-Kennzahlen, Gästekommunikation, Pflichten in Deutschland) und *Steuerberater-Unterlagen* (Aufbau des Jahrespakets). Alles ist als Vorbereitung gedacht, nicht als Rechts- oder Steuerberatung.
@@ -116,7 +137,7 @@ Die Regeln stammen aus den Fach-Skills *Nebenkostenabrechnung* (BetrKV, Heizkost
 
 ## Nächste Ausbaustufen
 
-1. **Live-Bankanbindung** (PSD2 über einen lizenzierten Kontoinformationsdienst wie finAPI, Tink oder Salt Edge, oder FinTS mit DK-Produktregistrierung) als Netlify-Function, die die Umsätze dann automatisch statt per Datei abholt. Das braucht einen Vertrag oder eine Registrierung beim Anbieter.
+1. **Abruf im Hintergrund** auch bei geschlossener App (geplante Netlify-Function mit Zwischenspeicher pro Kunde) und Smoobu-Webhooks für Sofort-Meldungen.
 2. **Belege an DATEV Unternehmen online** übergeben, Zuschneiden und Geraderücken beim Scannen.
 3. **E-Rechnung (XRechnung/ZUGFeRD)** für Geschäftskunden (Pflicht für alle ab 2028).
 
@@ -139,6 +160,11 @@ netlify/functions/immo-billing.js         Stripe Checkout + Kundenportal
 netlify/functions/immo-stripe-webhook.js  Stripe-Webhook (Signatur geprüft) → Tarif im Profil
 netlify/lib/immo-billing-lib.js           gemeinsame Stripe-/Supabase-Logik
 netlify/functions/immo-kuendigung.js      Kündigungsbutton / Widerruf (öffentlich) mit Bestätigung
+netlify/functions/immo-bank.js            Live-Bankanbindung (Enable Banking, PSD2)
+netlify/functions/immo-ical.js            iCal-Kalender der Portale abrufen (nur erlaubte Anbieter)
+netlify/functions/immo-ical-feed.js       Export-Kalender je Ferienwohnung für die Portale
+netlify/functions/smoobu-sync.js          Smoobu-Buchungen (HMAC), auch von Livora Clean genutzt
+netlify/lib/immo-sync-lib.js              gemeinsame Sync-Logik (HMAC, JWT, iCal, Zugriffsschutz)
 immo/js/recht.js                          rechtliche Prüfungen (Kaution, Mieterhöhung, USt Stellplatz, CO2, DSGVO …)
   vendor/       Anthropic SDK (Browser-Bundle) + Lizenz
   tests/        node --test (npm test)

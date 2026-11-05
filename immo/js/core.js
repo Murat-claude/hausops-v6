@@ -970,3 +970,79 @@ export function checkMove(oldContract, moveOutDate, moveInDate) {
   const gap = moveOutDate && moveInDate ? nightsBetween(moveOutDate, moveInDate) - 1 : 0;
   return { warnings, vacancyDays: Math.max(0, gap) };
 }
+
+// ---------------------------------------------------------------- Live-Sync: iCal & Bank
+
+// iCal (RFC 5545) einlesen: nur die Felder, die Portale liefern (Belegung, Kennung, Beschreibung)
+export function parseIcs(text) {
+  const lines = String(text).replace(/\r\n[ \t]/g, "").replace(/\n[ \t]/g, "").split(/\r?\n/);
+  const events = [];
+  let ev = null;
+  const val = (v) => v.replace(/\\n/gi, "\n").replace(/\\([,;\\])/g, "$1");
+  const date = (v) => { const m = v.match(/(\d{4})(\d{2})(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : ""; };
+  for (const line of lines) {
+    if (line === "BEGIN:VEVENT") ev = {};
+    else if (line === "END:VEVENT") { if (ev?.from) events.push(ev); ev = null; }
+    else if (ev) {
+      const i = line.indexOf(":");
+      if (i < 0) continue;
+      const name = line.slice(0, i).split(";")[0].toUpperCase(), v = line.slice(i + 1);
+      if (name === "UID") ev.uid = v;
+      else if (name === "DTSTART") ev.from = date(v);
+      else if (name === "DTEND") ev.to = date(v);
+      else if (name === "SUMMARY") ev.summary = val(v);
+      else if (name === "DESCRIPTION") ev.description = val(v);
+      else if (name === "STATUS") ev.status = v.toUpperCase();
+    }
+  }
+  return events.map((e) => ({ ...e, to: e.to || addDaysIso(e.from, 1) }));
+}
+
+// Kalender eines Portals mit den Buchungen einer Ferienwohnung abgleichen (ohne Doppelungen)
+export function mergeIcal(bookings, { unitId, feedId, channel, events, todayIso }) {
+  const out = bookings.map((b) => ({ ...b }));
+  const seen = new Set();
+  let added = 0, updated = 0, cancelled = 0;
+  for (const e of events) {
+    if (e.status === "CANCELLED") continue;
+    const blocked = /not available|blocked|blockiert|gesperrt/i.test(e.summary || "") && !/closed - not available/i.test(e.summary || "");
+    const key = `${feedId}:${e.uid || e.from + e.to}`;
+    seen.add(key);
+    const code = (e.description || "").match(/details\/([A-Z0-9]{6,})/)?.[1] || "";
+    const phone4 = (e.description || "").match(/Last 4 Digits\)?:\s*(\d{4})/i)?.[1] || "";
+    const existing = out.find((b) => b.icalKey === key);
+    if (existing) {
+      if (existing.from !== e.from || existing.to !== e.to || existing.status === "storniert") { Object.assign(existing, { from: e.from, to: e.to, status: blocked ? "eigennutzung" : "bestaetigt" }); updated++; }
+      continue;
+    }
+    // Schon über Smoobu oder manuell erfasst? Dann nur verknüpfen
+    const twin = out.find((b) => b.unitId === unitId && b.from === e.from && b.to === e.to && b.status !== "storniert" && !b.icalKey);
+    if (twin) { twin.icalKey = key; continue; }
+    out.push({ id: `b_ical_${Math.random().toString(36).slice(2, 10)}`, unitId, guest: blocked ? "Blockiert (Portal)" : `${channel}-Gast${code ? " " + code : ""}`, from: e.from, to: e.to, adults: 0, children: 0, total: 0, cleaning: 0, kurtaxe: 0, channel, status: blocked ? "eigennutzung" : "bestaetigt", icalKey: key, note: [code && `Reservierung ${code}`, phone4 && `Tel. endet auf ${phone4}`].filter(Boolean).join(" · ") });
+    added++;
+  }
+  // Im Kalender nicht mehr vorhanden → storniert (nur zukünftige)
+  for (const b of out) {
+    if (b.icalKey?.startsWith(feedId + ":") && !seen.has(b.icalKey) && b.from >= todayIso && b.status !== "storniert") { b.status = "storniert"; cancelled++; }
+  }
+  return { bookings: out, added, updated, cancelled };
+}
+
+// Live-Bankumsätze übernehmen (Duplikate über die Bank-Kennung bzw. Inhalt erkennen)
+export function mergeBankTx(transactions, accountId, incoming) {
+  const known = new Set(transactions.map((t) => t.extId || t.hash));
+  const fresh = [];
+  for (const t of incoming) {
+    if (t.pending) continue; // nur gebuchte Umsätze
+    const tx = makeTx({ accountId, date: t.date, amount: t.amount, name: t.name, iban: t.iban, purpose: t.purpose });
+    if (t.extId) tx.extId = `${accountId}:${t.extId}`;
+    const id = tx.extId || tx.hash;
+    if (known.has(id) || known.has(tx.hash)) continue;
+    // Bereits per CSV/CAMT importiert? (gleicher Betrag, ±1 Tag, gleiche IBAN bzw. gleicher Name)
+    const twin = transactions.find((o) => !o.extId && o.accountId === accountId && o.amount === tx.amount && Math.abs(nightsBetween(o.date < tx.date ? o.date : tx.date, o.date < tx.date ? tx.date : o.date)) <= 1 &&
+      ((o.iban && tx.iban && o.iban === tx.iban) || (normalize(o.name) && normalize(o.name) === normalize(tx.name))));
+    if (twin) { twin.extId = tx.extId; known.add(id); continue; }
+    known.add(id); fresh.push(tx);
+  }
+  return fresh;
+}

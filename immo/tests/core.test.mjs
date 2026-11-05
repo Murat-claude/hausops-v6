@@ -276,3 +276,38 @@ test("Nur der umlagefähige Anteil einer Rechnung geht in die NK-Abrechnung", ()
   const items = nkItemsFromExpenses(s, "o", "2025-01-01", "2025-12-31");
   assert.deepEqual(items.map((i) => [i.kind, i.amount]).sort(), [["hauswart", 80000], ["versicherung", 30000]]);
 });
+
+import { parseIcs, mergeIcal, mergeBankTx } from "../js/core.js";
+
+test("iCal von Airbnb/Booking einlesen und abgleichen", () => {
+  const airbnb = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20261210\r\nDTEND;VALUE=DATE:20261215\r\nSUMMARY:Reserved\r\nUID:abc@airbnb.com\r\nDESCRIPTION:Reservation URL: https://www.airbnb.com/hosting/reservations/details/HMABC12345\\nPhone Number (Last 4 Digits): 4711\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nDTSTART;VALUE=DATE:20261220\r\nDTEND;VALUE=DATE:20261222\r\nSUMMARY:Airbnb (Not available)\r\nUID:blk@airbnb.com\r\nEND:VEVENT\r\nEND:VCALENDAR";
+  const ev = parseIcs(airbnb);
+  assert.equal(ev.length, 2);
+  let r = mergeIcal([], { unitId: "f", feedId: "air", channel: "Airbnb", events: ev, todayIso: "2026-11-05" });
+  assert.equal(r.added, 2);
+  assert.equal(r.bookings[0].guest, "Airbnb-Gast HMABC12345");
+  assert.match(r.bookings[0].note, /4711/);
+  assert.equal(r.bookings[1].status, "eigennutzung");
+  // erneuter Abruf: nichts doppelt; Buchung entfällt → storniert
+  r = mergeIcal(r.bookings, { unitId: "f", feedId: "air", channel: "Airbnb", events: ev.slice(1), todayIso: "2026-11-05" });
+  assert.equal(r.added, 0); assert.equal(r.cancelled, 1);
+  // Über Smoobu schon vorhanden → nur verknüpfen
+  const smoobu = [{ id: "s1", unitId: "f", from: "2027-01-02", to: "2027-01-05", status: "bestaetigt", guest: "Max" }];
+  const bk = parseIcs("BEGIN:VEVENT\nDTSTART;VALUE=DATE:20270102\nDTEND;VALUE=DATE:20270105\nSUMMARY:CLOSED - Not available\nUID:bk1\nEND:VEVENT");
+  r = mergeIcal(smoobu, { unitId: "f", feedId: "bkg", channel: "Booking.com", events: bk, todayIso: "2026-11-05" });
+  assert.equal(r.added, 0); assert.equal(r.bookings[0].icalKey, "bkg:bk1"); assert.equal(r.bookings[0].guest, "Max");
+});
+
+test("Live-Bankumsätze ohne Duplikate übernehmen", () => {
+  const inc = [{ extId: "E1", date: "2026-10-30", amount: 90000, name: "Anna", iban: "DE89", purpose: "Miete" }, { extId: "E2", date: "2026-10-31", amount: -500, name: "X", purpose: "", pending: true }];
+  const first = mergeBankTx([], "acc", inc);
+  assert.equal(first.length, 1);
+  assert.equal(mergeBankTx(first, "acc", inc).length, 0);
+});
+
+test("Live-Umsatz erkennt vorher per CSV importierten Umsatz", () => {
+  const csv = [{ accountId: "acc", date: "2026-10-30", amount: 90000, name: "Anna Schmidt", iban: "DE89370400440532013000", purpose: "MIETE NOV", hash: "h1" }];
+  const fresh = mergeBankTx(csv, "acc", [{ extId: "E1", date: "2026-10-31", amount: 90000, name: "Anna Schmidt", iban: "DE89370400440532013000", purpose: "Miete November" }]);
+  assert.equal(fresh.length, 0);
+  assert.equal(csv[0].extId, "acc:E1");
+});

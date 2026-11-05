@@ -231,3 +231,7 @@ body.authscreen main { max-width: none; padding: 0; }
 .result:hover { background: var(--soft); }
 .result .ic { font-size: 20px; width: 26px; text-align: center; }
 @media (max-width: 900px) { .facts { grid-template-columns: minmax(0, 1fr); } #gsearch { margin-bottom: 8px; } }
+
+.channel { border-top: 1px solid var(--line); padding: 10px 0; }
+.channel code { font-size: 11px; word-break: break-all; background: #f4f6f5; padding: 1px 4px; border-radius: 4px; }
+#livesync { color: #c8d8dc; }

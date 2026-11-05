@@ -1,6 +1,9 @@
 // SMOOBU SYNC — holt Buchungen serverseitig (Proxy, wie von Smoobu vorgeschrieben)
-// WICHTIG: Legacy "Api-Key" Auth wird von Smoobu am 25.09.2026 abgeschaltet.
-// Dann muss auf HMAC (X-API-Key/X-Timestamp/X-Nonce/X-Signature) migriert werden — Secret nötig!
+// Seit 25.09.2026 verlangt Smoobu HMAC-Signaturen (X-API-Key/X-Timestamp/X-Nonce/X-Signature).
+// Netlify-Variablen: SMOOBU_API_KEY + SMOOBU_API_SECRET (Smoobu → Einstellungen → Erweitert → API-Schlüssel).
+// Ohne Secret wird das alte Verfahren versucht (wird von Smoobu abgelehnt).
+// Wird von Livora Clean und HausOps Immobilien genutzt – Felder nur ergänzen, nicht umbenennen.
+const { smoobuGet } = require("../lib/immo-sync-lib.js");
 const SMOOBU_API_KEY = process.env.SMOOBU_API_KEY;
 
 function heutePlus(tage) {
@@ -10,13 +13,7 @@ function heutePlus(tage) {
 }
 
 async function holeSeite(page, from, to) {
-  const url = `https://login.smoobu.com/api/reservations?pageSize=100&page=${page}&from=${from}&to=${to}&showCancellation=true`;
-  const res = await fetch(url, { headers: { "Api-Key": SMOOBU_API_KEY, "Content-Type": "application/json" } });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Smoobu API Fehler: ${res.status} ${res.statusText} — ${text.slice(0, 500)}`);
-  }
-  return res.json();
+  return smoobuGet("/api/reservations", { pageSize: 100, page, from, to, showCancellation: "true" });
 }
 
 exports.handler = async (event) => {
@@ -58,7 +55,16 @@ exports.handler = async (event) => {
       preis: b.price || 0,
       status: b.type === "cancellation" ? "cancelled" : "confirmed",
       kanal: b.channel?.name || "Direkt",
-      typ: "buchung"
+      typ: "buchung",
+      // Zusätzliche Felder für HausOps Immobilien (Rechnung, Gästekommunikation)
+      erwachsene: b.adults || 0,
+      kinder: b.children || 0,
+      email: b.email || "",
+      telefon: b.phone || "",
+      adresse: b.address || null,
+      anzahlung: b.prepayment || 0,
+      notiz: b.notice || "",
+      einheit_id: b.apartment?.id || null
     }));
 
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, count: buchungen.length, buchungen, zeitraum: { from, to } }) };

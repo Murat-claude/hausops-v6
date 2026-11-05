@@ -644,24 +644,28 @@ function markPaid(id) {
   });
 }
 
-async function smoobuImport() {
+async function smoobuImport({ silent = false } = {}) {
   try {
-    toast("Hole Buchungen von Smoobu …");
+    if (!silent) toast("Hole Buchungen von Smoobu …");
     const res = await fetch("/.netlify/functions/smoobu-sync");
-    const data = await res.json();
+    const data = await res.json().catch(() => ({ success: false, error: `Smoobu-Funktion nicht erreichbar (${res.status})` }));
     if (!data.success) throw new Error(data.error || "Unbekannter Fehler");
     let added = 0, updated = 0, unknown = new Set();
     for (const sb of data.buchungen) {
       const unit = fewoUnits().find((u) => C.normalize(u.smoobuName || u.name) === C.normalize(sb.einheit_name));
       if (!unit) { unknown.add(sb.einheit_name); continue; }
       const existing = state.bookings.find((b) => b.smoobuId === sb.smoobu_id);
-      const v = { unitId: unit.id, guest: sb.gast_name, from: sb.start_datum, to: sb.end_datum, adults: sb.personen, total: Math.round((sb.preis || 0) * 100), channel: sb.kanal, status: sb.status === "cancelled" ? "storniert" : "bestaetigt", smoobuId: sb.smoobu_id };
-      if (existing) { Object.assign(existing, v); updated++; }
+      const v = { unitId: unit.id, guest: sb.gast_name, from: sb.start_datum, to: sb.end_datum, adults: sb.erwachsene || sb.personen, children: sb.kinder || 0, total: Math.round((sb.preis || 0) * 100), channel: sb.kanal, status: sb.status === "cancelled" ? "storniert" : "bestaetigt", smoobuId: sb.smoobu_id,
+        ...(sb.email ? { email: sb.email } : {}), ...(sb.telefon ? { phone: sb.telefon } : {}),
+        ...(sb.adresse?.street ? { guestStreet: sb.adresse.street, guestZip: sb.adresse.postalCode || "", guestCity: sb.adresse.location || "" } : {}) };
+      if (existing) { const changed = ["from", "to", "status", "total", "guest"].some((k) => existing[k] !== v[k]); Object.assign(existing, v); if (changed) updated++; }
       else { state.bookings.push({ id: C.uid("b_"), children: 0, cleaning: 0, kurtaxe: state.settings.defaultKurtaxe || 0, note: "", ...v }); added++; }
     }
+    if (silent) return { added, updated, unknown: [...unknown] };
     commit(`Smoobu: ${added} neu, ${updated} aktualisiert${unknown.size ? ` · nicht zugeordnet: ${[...unknown].join(", ")} (Smoobu-Namen bei der Einheit eintragen)` : ""}`);
   } catch (e) {
-    alert(`Smoobu-Import fehlgeschlagen: ${e.message}\n\nDer Import funktioniert, wenn die App über Netlify läuft und SMOOBU_API_KEY gesetzt ist.`);
+    if (silent) throw e;
+    alert(`Smoobu-Import fehlgeschlagen: ${e.message}\n\nDer Import funktioniert, wenn die App über Netlify läuft und SMOOBU_API_KEY + SMOOBU_API_SECRET gesetzt sind.`);
   }
 }
 
@@ -817,7 +821,7 @@ function viewBank() {
   const sugs = Object.fromEntries(shown.filter((t) => !t.link).map((t) => [t.id, C.suggestAssignment(t, state)]));
   const good = Object.values(sugs).filter((s) => s && s.score >= 60).length;
   const accOpts = state.accounts.map((a) => [a.id, `${a.name}${a.iban ? " · " + a.iban.slice(-4) : ""}`]);
-  return head("Bank", "Kontoumsätze importieren, Mieten & Kosten automatisch zuordnen", btn("newAccount", "+ Bankkonto")) + `
+  return head("Bank", "Live mit der Bank verbunden oder per Kontoauszug-Import – Mieten & Kosten werden automatisch zugeordnet", btn("newAccount", "+ Bankkonto")) + bankLiveCard() + `
     <div class="card noprint"><h2>Kontoauszug importieren</h2>
       ${state.accounts.length ? `<div class="inline"><select id="impAcc">${opt(accOpts, state.accounts[0].id)}</select>
         <label class="btn primary">Datei wählen (CSV / CAMT.053 XML)<input type="file" accept=".csv,.txt,.xml,.camt" data-change="importFile" hidden></label></div>
@@ -896,7 +900,7 @@ function viewFewo() {
       return `<td class="d ${wd === 0 || wd === 6 ? "we" : ""} ${b ? "b" : ""} ${b?.status === "angefragt" ? "req" : ""} ${b?.status === "eigennutzung" ? "own" : ""} ${day === today() ? "today" : ""}" ${b ? `data-act="editBooking" data-id="${b.id}" title="${esc(b.guest)} · ${d(b.from)}–${d(b.to)}"` : `data-act="newBookingAt" data-id="${u.id}|${day}" title="Neue Buchung ab ${d(day)}"`}>${b && b.from === day ? esc((b.guest || "").slice(0, 2)) : ""}</td>`;
     }).join("")}</tr>`).join("")}</table>`;
   const statusB = (b) => ({ storniert: '<span class="badge bad">storniert</span>', angefragt: '<span class="badge warn">angefragt</span>', eigennutzung: '<span class="badge grey">Eigennutzung</span>' }[b.status] || '<span class="badge ok">bestätigt</span>');
-  return head("Ferienwohnung", "Belegung, Kennzahlen, Buchungen & Gäste-Rechnungen", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("smoobu", "⟳ Smoobu-Import") + btn("newBooking", "+ Buchung", "primary")) + `
+  return head("Ferienwohnung", "Belegung, Kennzahlen, Buchungen & Gäste-Rechnungen", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("syncNow", "🔄 Synchronisieren") + btn("newBooking", "+ Buchung", "primary")) + `
     <div class="kpis">
       <div class="kpi"><div class="l">Auslastung ${C.MONTHS_DE[Number(key.slice(5)) - 1]}</div><div class="v">${pct(k.occupancy)}</div><div class="s">${k.nights} / ${k.available} Nächte · ${vs(k.occupancy, kPrev.occupancy, pct)}</div></div>
       <div class="kpi"><div class="l">ADR (Ø Preis / Nacht)</div><div class="v">${k.adr ? eur(k.adr) : "–"}</div><div class="s">${vs(k.adr, kPrev.adr, eur)}</div></div>
@@ -909,6 +913,7 @@ function viewFewo() {
       <div class="kpi"><div class="l">Stornoquote ${y}</div><div class="v">${pct(kYear.cancelRate)}</div></div>
       <div class="kpi"><div class="l">Direktbuchungen ${y}</div><div class="v">${pct(kYear.directShare)}</div><div class="s">ohne Portal-Provision</div></div>
     </div>
+    ${channelsCard()}
     <div class="card"><h2>Belegungskalender ${C.fmtMonth(key)}</h2><div class="table-wrap">${cal}</div><p class="small muted" style="margin-top:6px">Freien Tag anklicken = neue Buchung. Gold = angefragt, grau = Eigennutzung/gesperrt.</p></div>
     <div class="card"><h2>Reinigungsplan (nächste 14 Tage)</h2>${departures.length ? `<div class="table-wrap"><table><thead><tr><th>Abreise</th><th>Wohnung</th><th>Gast</th><th>Nächste Anreise</th><th></th></tr></thead><tbody>
       ${departures.map((b) => { const next = active.filter((x) => x.unitId === b.unitId && x.from >= b.to && x.id !== b.id).sort((a, c) => (a.from < c.from ? -1 : 1))[0];
@@ -1320,6 +1325,10 @@ function viewSettings() {
       ${Object.entries(C.EXPENSE_CATEGORIES).filter(([k]) => k !== "privat").map(([k, v]) => `<label class="f"><span>${esc(v.label)}</span><input name="exp_${k}" value="${esc(C.expenseAccount(s, k) || "")}"></label>`).join("")}
     </div></details><br><button class="btn primary">Speichern</button></form>
     <div class="card"><h2>Gelernte Zuordnungsregeln (${rules.length})</h2>${rules.length ? `<table>${rules.map(([k, r]) => `<tr><td class="small">${esc(k.replace(/^(iban|name):/, ""))}</td><td class="small">${esc(suggestionLabel({ ...r, period: ui.month }))}</td><td>${btn("delRule", "✕", "sm link", k)}</td></tr>`).join("")}</table>` : '<p class="muted">Regeln entstehen beim Zuordnen von Bankumsätzen („Regel merken“).</p>'}</div>
+    <div class="card"><h2>🔄 Synchronisation (Bank, Smoobu, Kalender)</h2>
+      <p class="small muted" style="margin-bottom:8px">Die App ruft beim Öffnen und alle 15 Minuten automatisch neue Bankumsätze und Buchungen ab. ${isCloud() ? "Im Cloud-Modus ist der Zugriff über deine Anmeldung geschützt." : "Im lokalen Modus schützt ein Sync-Schlüssel die Server-Funktionen: denselben Wert in Netlify als IMMO_SYNC_TOKEN setzen."}</p>
+      ${isCloud() ? "" : `<label class="f"><span>Sync-Schlüssel (IMMO_SYNC_TOKEN)</span><input type="password" data-change="syncToken" value="${getSyncToken() ? "••••••••" : ""}" style="max-width:340px" autocomplete="off"></label>`}
+      <div class="small">Letzter Abruf: ${syncStatus().lastRun ? new Date(syncStatus().lastRun).toLocaleString("de-DE") : "noch nie"} ${btn("syncNow", "Jetzt abrufen", "sm")}</div></div>
     ${viewPrivacyCard()}
     <div class="card"><h2>✨ KI-Assistent (Claude)</h2>
       <p class="small muted" style="margin-bottom:8px">Für Belegerkennung, Fragen an deine Daten und Briefentwürfe. Schlüssel unter console.anthropic.com → API Keys erstellen; Kosten nach Nutzung (meist wenige Cent pro Anfrage). Der Schlüssel wird nur auf diesem Gerät gespeichert und ist nicht Teil der Datensicherung. Beim Nutzen der KI werden die betroffenen Daten an Anthropic übertragen.</p>
@@ -2278,6 +2287,179 @@ async function wizResearch(id) {
   ui.researchBusy = null; render();
 }
 
+// ---------------------------------------------------------------- Live-Synchronisation (Bank, Smoobu, iCal)
+
+const SYNC_TOKEN_KEY = "hausops-immo-sync-token";
+const getSyncToken = () => { try { return localStorage.getItem(SYNC_TOKEN_KEY) || ""; } catch { return ""; } };
+
+async function callFn(name, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (isCloud()) { const s = await Cloud.session(); if (s) headers.Authorization = `Bearer ${s.access_token}`; }
+  const tok = getSyncToken(); if (tok) headers["X-Immo-Token"] = tok;
+  const res = await fetch(`/.netlify/functions/${name}`, { method: "POST", headers, body: JSON.stringify(body) });
+  const out = await res.json().catch(() => ({ success: false, error: `Funktion ${name} nicht erreichbar (${res.status}) – läuft die App über Netlify?` }));
+  if (!res.ok || !out.success) throw Object.assign(new Error(out.error || `Fehler ${res.status}`), { status: res.status });
+  return out;
+}
+
+const syncStatus = () => (state.settings.sync ||= { bank: {}, ical: {}, smoobu: null });
+
+// Alles abrufen, was verbunden ist. silent = beim Start/automatisch (nur bei Neuigkeiten melden)
+async function syncAll({ silent = false } = {}) {
+  if (ui.syncing || (isCloud() && !canWrite())) return;
+  const bankAccs = state.accounts.filter((a) => a.eb?.uid);
+  const feeds = fewoUnits().flatMap((u) => (u.icalFeeds || []).map((f) => ({ ...f, unitId: u.id })));
+  const smoobu = !!state.settings.smoobuAuto;
+  if (!bankAccs.length && !feeds.length && !smoobu) { if (!silent) toast("Noch nichts verbunden – Bank unter „Bank“, Kalender unter „Ferienwohnung“ verbinden."); return; }
+  ui.syncing = true; setSyncBadge();
+  const st = syncStatus(), msgs = [], errors = [];
+  let newTx = 0, assigned = 0;
+  for (const a of bankAccs) {
+    try {
+      if (a.eb.validUntil && a.eb.validUntil < new Date().toISOString()) { errors.push(`${a.name}: Bankfreigabe abgelaufen – neu verbinden`); continue; }
+      const since = st.bank[a.id]?.at ? C.addDaysIso(st.bank[a.id].at.slice(0, 10), -7) : C.addDaysIso(today(), -90);
+      const r = await callFn("immo-bank", { action: "transactions", accountUid: a.eb.uid, dateFrom: since });
+      const fresh = C.mergeBankTx(state.transactions, a.id, r.transactions);
+      state.transactions.push(...fresh);
+      newTx += fresh.length; assigned += autoAssign(fresh);
+      st.bank[a.id] = { at: new Date().toISOString(), ok: true };
+    } catch (e) { st.bank[a.id] = { at: new Date().toISOString(), ok: false, error: e.message }; errors.push(`${a.name}: ${e.message}`); if (e.status === 410) a.eb.validUntil = new Date(0).toISOString(); }
+  }
+  if (newTx) msgs.push(`${newTx} neue Bankumsätze (${assigned} automatisch zugeordnet)`);
+  let bAdd = 0, bUpd = 0, bCan = 0;
+  for (const f of feeds) {
+    try {
+      const r = await callFn("immo-ical", { url: f.url });
+      const m = C.mergeIcal(state.bookings, { unitId: f.unitId, feedId: f.id, channel: f.channel, events: C.parseIcs(r.ics), todayIso: today() });
+      state.bookings = m.bookings; bAdd += m.added; bUpd += m.updated; bCan += m.cancelled;
+      st.ical[f.id] = { at: new Date().toISOString(), ok: true };
+    } catch (e) { st.ical[f.id] = { at: new Date().toISOString(), ok: false, error: e.message }; errors.push(`${f.channel}-Kalender: ${e.message}`); }
+  }
+  if (smoobu) {
+    try { const r = await smoobuImport({ silent: true }); bAdd += r.added; bUpd += r.updated; st.smoobu = { at: new Date().toISOString(), ok: true }; }
+    catch (e) { st.smoobu = { at: new Date().toISOString(), ok: false, error: e.message }; errors.push(`Smoobu: ${e.message}`); }
+  }
+  if (bAdd || bUpd || bCan) msgs.push(`Buchungen: ${bAdd} neu, ${bUpd} geändert${bCan ? `, ${bCan} storniert` : ""}`);
+  st.lastRun = new Date().toISOString();
+  ui.syncing = false;
+  if (msgs.length || errors.length) commit(); else { persist(); render(); }
+  if (msgs.length) toast(`🔄 ${msgs.join(" · ")}`);
+  else if (!silent && !errors.length) toast("🔄 Alles aktuell – keine neuen Umsätze oder Buchungen.");
+  if (errors.length && !silent) alert(`Synchronisation teilweise fehlgeschlagen:\n• ${errors.join("\n• ")}`);
+  setSyncBadge();
+}
+
+function setSyncBadge() {
+  const el = $("#livesync");
+  if (!el) return;
+  const st = syncStatus();
+  el.innerHTML = ui.syncing ? "🔄 synchronisiert …" : st.lastRun ? `🔄 aktuell: ${new Date(st.lastRun).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}` : "";
+}
+
+function startAutoSync() {
+  if (ui.autoSyncStarted) return;
+  ui.autoSyncStarted = true;
+  setTimeout(() => syncAll({ silent: true }), 1500);
+  setInterval(() => { if (document.visibilityState === "visible") syncAll({ silent: true }); }, 15 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    const last = syncStatus().lastRun;
+    if (document.visibilityState === "visible" && (!last || Date.now() - new Date(last) > 10 * 60 * 1000)) syncAll({ silent: true });
+  });
+}
+
+// ---------------------------------------------------------------- Bank live verbinden (Enable Banking)
+
+async function connectBank() {
+  let banks;
+  try { banks = (await callFn("immo-bank", { action: "banks", country: "DE" })).banks; }
+  catch (e) { return alert(`Live-Bankanbindung nicht verfügbar: ${e.message}\n\nEinrichtung siehe README („Bank live verbinden“). Bis dahin: CSV/CAMT-Import.`); }
+  dialog({
+    title: "Bankkonto live verbinden", submit: "Weiter zur Bank",
+    body: `<p class="small" style="margin-bottom:10px">Du wirst zu deiner Bank weitergeleitet und gibst dort mit deinem Online-Banking-Zugang <b>nur Lesezugriff</b> auf Kontostand und Umsätze frei (PSD2, lizenzierter Kontoinformationsdienst Enable Banking). Überweisungen sind damit nicht möglich. Die Freigabe gilt bis zu 180 Tage und kann jederzeit widerrufen werden.</p>
+      <label class="f"><span>Bank suchen</span><input name="q" placeholder="z. B. Sparkasse, Volksbank, ING …" autocomplete="off"></label>
+      <label class="f"><span>Bank</span><select name="bank" size="8" required>${opt(banks.map((b) => [b.name, b.name]), "")}</select></label>`,
+    onOpen: (form) => {
+      form.q.addEventListener("input", () => {
+        const q = C.normalize(form.q.value);
+        form.bank.innerHTML = opt(banks.filter((b) => !q || C.normalize(b.name).includes(q)).map((b) => [b.name, b.name]), "");
+      });
+    },
+    onSubmit: (form) => {
+      if (!form.bank.value) { toast("Bitte eine Bank auswählen."); return false; }
+      const stateKey = C.uid("eb_");
+      try { localStorage.setItem("hausops-eb-pending", JSON.stringify({ state: stateKey, bank: form.bank.value, at: Date.now() })); } catch {}
+      callFn("immo-bank", { action: "connect", bank: form.bank.value, country: "DE", state: stateKey, redirectUrl: `${location.origin}${location.pathname}` })
+        .then((r) => { location.href = r.url; })
+        .catch((e) => alert("Verbindung konnte nicht gestartet werden: " + e.message));
+    },
+  });
+}
+
+// Rückkehr von der Bank: ?code=…&state=…
+async function finishBankConnect() {
+  const qs = new URLSearchParams(location.search);
+  const code = qs.get("code"), st = qs.get("state");
+  if (!code || !st?.startsWith("eb_")) return;
+  history.replaceState(null, "", location.pathname + "#/bank");
+  let pending = null;
+  try { pending = JSON.parse(localStorage.getItem("hausops-eb-pending") || "null"); localStorage.removeItem("hausops-eb-pending"); } catch {}
+  if (!pending || pending.state !== st) return alert("Die Rückmeldung der Bank passt nicht zur gestarteten Verbindung. Bitte erneut verbinden.");
+  try {
+    const r = await callFn("immo-bank", { action: "session", code });
+    for (const acc of r.accounts) {
+      let a = state.accounts.find((x) => x.iban && C.normIban(x.iban) === C.normIban(acc.iban));
+      if (!a) { a = { id: C.uid("a_"), name: `${pending.bank} ${acc.name}`.trim(), bank: pending.bank, iban: C.normIban(acc.iban) }; state.accounts.push(a); }
+      a.eb = { uid: acc.uid, validUntil: r.validUntil, connectedAt: new Date().toISOString(), bank: pending.bank };
+    }
+    commit(`${r.accounts.length} Konto/Konten live verbunden – Umsätze werden abgerufen …`);
+    await syncAll();
+  } catch (e) { alert("Bankverbindung fehlgeschlagen: " + e.message); }
+}
+
+function bankLiveCard() {
+  const live = state.accounts.filter((a) => a.eb?.uid);
+  const st = syncStatus();
+  const soon = (iso) => iso && new Date(iso) - new Date() < 14 * 864e5;
+  return `<div class="card noprint"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">🔄 Live-Verbindung zur Bank</h2>
+      <div class="toolbar">${live.length ? btn("syncNow", ui.syncing ? "⏳ ruft ab …" : "Jetzt abrufen", "") : ""}${btn("connectBank", "+ Bank verbinden", "primary")}</div></div>
+    ${live.length ? live.map((a) => { const s = st.bank[a.id]; const expired = a.eb.validUntil && a.eb.validUntil < new Date().toISOString();
+      return `<div class="kv"><span><b>${esc(a.name)}</b> <span class="small muted">${esc(a.iban || "")}</span></span><span class="small">${expired ? `<span class="badge bad">Freigabe abgelaufen</span> ${btn("connectBank", "neu verbinden", "sm link")}` : `${soon(a.eb.validUntil) ? `<span class="badge warn">Freigabe endet ${d(a.eb.validUntil.slice(0, 10))}</span> ${btn("connectBank", "verlängern", "sm link")}` : `<span class="badge ok">verbunden</span>`} ${s ? (s.ok ? `zuletzt ${new Date(s.at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}` : `<span class="neg" title="${esc(s.error)}">Fehler beim Abruf</span>`) : ""}`} ${btn("unlinkBank", "trennen", "sm link", a.id)}</span></div>`; }).join("")
+      : '<p class="small muted">Verbinde dein Mietkonto einmal mit deiner Bank – danach kommen neue Umsätze automatisch beim Öffnen der App und alle 15 Minuten, Mieten werden sofort zugeordnet. (Lesezugriff über PSD2; die Freigabe musst du alle 180 Tage bei der Bank bestätigen.)</p>'}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- Kanäle der Ferienwohnung (iCal, Smoobu, Export)
+
+function channelsCard() {
+  const st = syncStatus();
+  const units = fewoUnits();
+  const feedUrl = (u, x) => isCloud() && u.icalToken ? `${location.origin}/.netlify/functions/immo-ical-feed?u=${auth.user.id}&unit=${u.id}&t=${u.icalToken}${x ? `&x=${encodeURIComponent(x)}` : ""}` : "";
+  return `<div class="card noprint"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">🔄 Kanäle: Airbnb, Booking.com & Co.</h2><div class="toolbar">${btn("syncNow", ui.syncing ? "⏳ synchronisiert …" : "Jetzt synchronisieren", "")}</div></div>
+    <label class="f inline small"><input type="checkbox" data-change="smoobuAuto" ${state.settings.smoobuAuto ? "checked" : ""}> <b>Smoobu automatisch abrufen</b> (empfohlen: alle Portale mit Gastnamen, Preisen und Kontaktdaten) ${st.smoobu ? `<span class="muted">· zuletzt ${new Date(st.smoobu.at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}${st.smoobu.ok ? "" : ` · <span class="neg">${esc(st.smoobu.error)}</span>`}</span>` : ""}</label>
+    ${units.map((u) => `<div class="channel"><b>${esc(u.name)}</b>
+      ${(u.icalFeeds || []).map((f) => { const s = st.ical[f.id]; return `<div class="kv small"><span>📥 ${esc(f.channel)}-Kalender <span class="muted">${esc(f.url.slice(0, 48))}…</span></span><span>${s ? (s.ok ? `<span class="badge ok">ok</span> ${new Date(s.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}` : `<span class="badge bad" title="${esc(s.error)}">Fehler</span>`) : ""} ${btn("delFeed", "✕", "sm link", `${u.id}|${f.id}`)}</span></div>`; }).join("")}
+      <div class="toolbar" style="margin-top:6px">${btn("addFeed", "+ Kalender importieren (iCal)", "sm", u.id)}${isCloud() ? btn("exportFeed", "📤 Export-Kalender für Portale", "sm", u.id) : ""}</div>
+      ${isCloud() && u.icalToken ? `<div class="small muted" style="margin-top:6px">Export-Links (in Airbnb/Booking unter „Kalender importieren“ eintragen):<br>Airbnb: <code>${esc(feedUrl(u, "airbnb"))}</code><br>Booking.com: <code>${esc(feedUrl(u, "booking"))}</code></div>` : ""}
+    </div>`).join("")}
+    <p class="small muted" style="margin-top:8px">iCal liefert nur die Belegung (keine Preise/Gastnamen) – ideal gegen Doppelbuchungen. Vollständige Buchungsdaten kommen über Smoobu. Airbnb und Booking.com bieten privaten Vermietern keine offene Schnittstelle; ein Abgleich in Echtzeit ist nur über einen Channel-Manager wie Smoobu möglich.${isCloud() ? "" : " Der Export-Kalender für die Portale ist im Cloud-Modus verfügbar."}</p>
+  </div>`;
+}
+
+function addFeed(unitId) {
+  formDialog({
+    title: "Kalender eines Portals importieren", data: { channel: "Airbnb" },
+    intro: `<div class="note small">So findest du den Link: <b>Airbnb</b> → Kalender → Verfügbarkeit → Kalender verbinden → „Kalender exportieren“. <b>Booking.com</b> → Extranet → Preise & Verfügbarkeit → Kalender synchronisieren → „Kalender exportieren“. <b>FeWo-direkt/Vrbo</b> → Kalender → Import/Export.</div>`,
+    spec: [{ k: "channel", l: "Portal", t: "select", opts: ["Airbnb", "Booking.com", "FeWo-direkt / Vrbo", "Traum-Ferienwohnungen", "Holidu", "Sonstige"].map((x) => [x, x]) }, { k: "url", l: "iCal-Link (https://… .ics)", req: 1, full: 1 }],
+    onSave: (v) => {
+      const u = byId("units", unitId);
+      if (!/^(https|webcal):\/\//.test(v.url)) { toast("Bitte den vollständigen Link (https://…) einfügen."); return false; }
+      u.icalFeeds = [...(u.icalFeeds || []), { id: C.uid("f_"), channel: v.channel, url: v.url.trim() }];
+      commit("Kalender hinzugefügt – wird abgerufen …");
+      syncAll();
+    },
+  });
+}
+
 // ---------------------------------------------------------------- Konten, Cloud-Sync & Admin
 
 const auth = { mode: "local", user: null, profile: null, settings: null, plans: [], version: 0, sync: "ok", syncTimer: null, pending: false };
@@ -2431,7 +2613,7 @@ window.addEventListener("beforeunload", (e) => { if (auth.pending) { syncNow(); 
 
 async function boot() {
   const cloud = await Cloud.init().catch(() => false);
-  if (!cloud) { auth.mode = "local"; render(); return; }
+  if (!cloud) { auth.mode = "local"; render(); afterStart(); return; }
   auth.mode = "cloud";
   auth.settings = await Cloud.appSettings().catch(() => null);
   auth.plans = await Cloud.plans().catch(() => []);
@@ -2454,6 +2636,11 @@ async function boot() {
       render(); toast(hasSubscription() ? `Tarif „${planOf()?.name}“ ist aktiv.` : "Die Freischaltung dauert etwas – bitte gleich neu laden.");
     }
   }
+}
+
+async function afterStart() {
+  await finishBankConnect();
+  startAutoSync();
 }
 
 async function enterAccount(user) {
@@ -2480,6 +2667,7 @@ async function enterAccount(user) {
   }
   if (!location.hash || location.hash === "#/") location.hash = "#/";
   render();
+  if (auth.profile?.status === "active") afterStart();
 }
 
 function legalLink(k, label) { return `<button class="btn link small" data-act="legal" data-id="${k}">${label}</button>`; }
@@ -2702,7 +2890,8 @@ function render() {
   document.body.classList.toggle("authscreen", gate);
   if (gate) { $("#view").innerHTML = auth.user && auth.profile?.status === "blocked" && ui.authTab !== "newpw" ? viewBlocked() : viewAuth(); return; }
   const nav = [...NAV.slice(0, -1), ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡", "Admin"]] : []), NAV[NAV.length - 1]];
-  $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${esc(planOf()?.name || "")}<br><span id="sync">${syncLabel()}</span>` : "Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.";
+  $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${esc(planOf()?.name || "")}<br><span id="sync">${syncLabel()}</span><br><span id="livesync"></span>` : `Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.<br><span id="livesync"></span>`;
+  setTimeout(setSyncBadge, 0);
   if (!$("#gsearch")) $("#nav").insertAdjacentHTML("beforebegin", `<input id="gsearch" type="search" placeholder="🔎 Suchen … ( / )" autocomplete="off">`);
   if (route === "mieter" && arg && ui.folderTenant !== arg) { ui.folderTenant = arg; ui.folderTab = ui.nextFolderTab || "ueberblick"; ui.nextFolderTab = null; }
   $("#nav").innerHTML = nav.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") || (r === "mieter" && ["protokoll", "auskunft"].includes(route)) || (r === "nebenkosten" && route === "nkassistent") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
@@ -2719,6 +2908,12 @@ function render() {
 const actions = {
   newObject: () => editObject(), editObject,
   moveWizard: (unitId) => moveWizard(unitId || null),
+  syncNow: () => syncAll(),
+  connectBank: () => connectBank(),
+  unlinkBank: (id) => { const a = byId("accounts", id); if (!confirm(`Live-Verbindung für „${a.name}“ trennen? Bereits abgerufene Umsätze bleiben erhalten. Die Freigabe kannst du zusätzlich im Online-Banking widerrufen.`)) return; delete a.eb; commit("Live-Verbindung getrennt"); },
+  addFeed: (unitId) => addFeed(unitId),
+  delFeed: (v) => { const [uid, fid] = v.split("|"); const u = byId("units", uid); if (!confirm("Kalender entfernen? Bereits importierte Buchungen bleiben erhalten.")) return; u.icalFeeds = (u.icalFeeds || []).filter((f) => f.id !== fid); commit("Kalender entfernt"); },
+  exportFeed: (uid) => { const u = byId("units", uid); if (!u.icalToken || confirm("Neuen geheimen Export-Link erzeugen? Der alte Link funktioniert dann nicht mehr.")) { u.icalToken = Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b.toString(16).padStart(2, "0")).join(""); commit("Export-Kalender erstellt – Links unten in die Portale eintragen"); } },
   folderTab: (t) => { ui.folderTab = t; render(); },
   tenantFilter: (f) => { ui.tenantFilter = f; render(); },
   newNote: (v) => { const [type, tenantId, contractId] = v.split("|"); editNote(null, { type, tenantId, contractId, due: type === "termin" ? C.addDaysIso(today(), 7) : "" }); },
@@ -2893,6 +3088,8 @@ document.addEventListener("change", async (e) => {
   if (k === "docUpload" || k === "docScan") { await addFiles(e.target.files, { scan: k === "docScan" }); e.target.value = ""; return; }
   if (k === "autoKi") { ui.autoKi = e.target.checked; return; }
   if (k === "kiPseudo") { state.settings.kiPseudo = e.target.checked; commit(e.target.checked ? "Datensparsamer KI-Modus an" : "Datensparsamer KI-Modus aus"); return; }
+  if (k === "smoobuAuto") { state.settings.smoobuAuto = e.target.checked; commit(e.target.checked ? "Smoobu wird automatisch abgerufen" : "Smoobu-Abruf aus"); if (e.target.checked) syncAll(); return; }
+  if (k === "syncToken") { try { e.target.value ? localStorage.setItem(SYNC_TOKEN_KEY, e.target.value.trim()) : localStorage.removeItem(SYNC_TOKEN_KEY); } catch {} toast("Sync-Schlüssel gespeichert (nur auf diesem Gerät)"); return; }
   if (k === "folderKind") { ui.folderKind = e.target.value; render(); return; }
   if (k === "folderUpload") {
     const tid = location.hash.split("/")[2], t = byId("tenants", tid);
