@@ -102,6 +102,22 @@ dialog .df .grow { flex: 1; }
 .suggest { display: inline-flex; gap: 6px; align-items: center; background: var(--warn-bg); color: var(--warn); border-radius: 7px; padding: 3px 4px 3px 8px; font-size: 12px; }
 .suggest.hi { background: var(--ok-bg); color: var(--ok); }
 
+/* Belege & Dokumente */
+.drop.over { outline: 2px dashed var(--brand); background: var(--soft); }
+.docs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.doc { display: flex; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: #fff; min-width: 0; }
+.doc .thumb { width: 72px; height: 92px; flex-shrink: 0; border-radius: 6px; background: #eef1ef; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: pointer; font-weight: 700; color: var(--bad); }
+.doc .thumb img { width: 100%; height: 100%; object-fit: cover; }
+.doc .meta { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.att { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px 3px 3px; font-size: 12px; cursor: pointer; }
+.att img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.paper.anlage { margin-top: 16px; page-break-before: always; }
+
+/* KI-Chat */
+.chat .msg { padding: 10px 12px; border-radius: 12px; margin-bottom: 10px; max-width: 900px; overflow-wrap: anywhere; }
+.chat .msg.q { background: var(--brand); color: #fff; margin-left: auto; width: fit-content; max-width: 80%; }
+.chat .msg.a { background: var(--soft); }
+
 /* Belegungskalender */
 .cal { border-collapse: separate; border-spacing: 2px; }
 .cal th, .cal td { padding: 0; border: 0; background: none; text-align: center; font-size: 11px; }

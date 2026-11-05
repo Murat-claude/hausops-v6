@@ -16,6 +16,9 @@ Läuft als eigenständige Web-App unter **`/immo/`** auf derselben Netlify-Seite
 | **Ferienwohnung** | Belegungskalender inkl. Eigennutzung, Buchungen mit Kanal (Airbnb, Booking …), Prüfung auf Überschneidungen, **Smoobu-Import** über die vorhandene Netlify-Function. Kennzahlen **Auslastung, ADR, RevPAR** mit Vorjahresvergleich, Ø Aufenthaltsdauer, **Stornoquote**, **Direktbuchungsanteil**, Netto-Ertrag. **Reinigungsplan** mit Hinweis auf Wechsel am selben Tag und Auftrag zum Kopieren. **Gäste-Nachrichten** (Bestätigung, 3 Tage vor Anreise, während des Aufenthalts, Abreise/Bewertung). Hinweis auf den **Meldeschein** bei ausländischen Gästen, **Registrierungsnummer** auf Rechnungen |
 | **Rechnungen** | Fortlaufende Nummern (`RE-2026-0001`), 7 % USt auf Übernachtung und Endreinigung, 19 % auf Extras, **Kurtaxe als durchlaufender Posten**, Kleinunternehmer-Option (§ 19 UStG), Pflichtangaben nach § 14 UStG, Druck/PDF, Storno mit Stornorechnung, Zahlungsstatus |
 | **Nebenkostenabrechnung** | Kostenarten nach § 2 BetrKV, Umlageschlüssel Fläche, Personen(-tage), Einheiten, Verbrauch, **Heizkosten-VO (50–70 % Verbrauch)** oder direkt je Einheit. Abrechnung **tagegenau** bei Mieterwechsel; den Leerstandsanteil trägt der Vermieter. Vorauszahlungen werden aus den echten Zahlungseingängen übernommen. Die App prüft die **12-Monats-Frist** (§ 556 Abs. 3 BGB), schlägt eine neue Vorauszahlung vor und erstellt ein druckbares **Anschreiben** je Mieter mit Hinweis auf Belegeinsicht. Garagen und Stellplätze tragen keine Hauskosten |
+| **Belege & Dokumente** | **Foto aufnehmen** (Handykamera), **Dokument scannen** (Kontrastverstärkung zu Schwarz-Weiß), **PDFs/Bilder hochladen** oder per Drag & Drop. Ein Eingangskorb mit Kategorien (Rechnung, Bescheid, Versorgerabrechnung, Mietvertrag, Übergabeprotokoll, Zählerstand …). Belege lassen sich an Ausgaben anhängen, Ausgaben ohne Beleg sind markiert. Gespeichert wird lokal (IndexedDB), die Sicherung kann die Belege enthalten |
+| **KI (Claude)** | **Belegerkennung**: Aussteller, Datum, Betrag, Rechnungsnummer, Kategorie, BetrKV-Kostenart, Umlagefähigkeit, Zeitraum und Verbrauch werden aus Foto oder PDF gelesen. Beim Buchen schlägt die App vor, den Beleg an eine vorhandene Ausgabe oder einen Bankumsatz zu hängen statt doppelt zu buchen. **KI-Assistent** mit Zugriff auf die App-Daten (Rückstände, Anlage V, NK-Abrechnungen, Ferienwohnung …). **KI-Prüfung** der Nebenkostenabrechnung. **Briefe mit KI** formulieren, umformulieren oder übersetzen |
+| **Briefe an Mieter** | Vorlagen: Zahlungserinnerung und Mahnung (mit echten Rückständen), Anpassung der NK-Vorauszahlung (aus der letzten Abrechnung), Ankündigung Ablesung/Handwerker, Mieterhöhung nach § 558 BGB, **Wohnungsgeberbestätigung (§ 19 BMG)**, Mietbescheinigung, Kündigungsbestätigung, freier Brief. Druck/PDF mit Briefkopf, E-Mail, **Briefarchiv** |
 | **Steuer** | **Anlage-V-Zusammenstellung** je Objekt (Zuflussprinzip, AfA automatisch zeitanteilig) mit Aufteilung bei **Miteigentum** |
 | **Jahrespaket Steuerberater** | Querformat-PDF mit Deckblatt, Übersicht, **Monatstabellen je Einheit** (Kalt/NK/FeWo), Werbungskosten, separat markierten **Anschaffungs-/Herstellungskosten**, Nebenkostenabrechnungen, **Beleg-Checkliste** (fehlende Belege markiert) und **offenen Fragen** (unzugeordnete Umsätze, fehlende AfA-Daten, überlappende Mietverträge, Einordnung der Ferienwohnung) |
 | **DATEV** | **DATEV-Buchungsstapel (EXTF 700, Windows-1252)** für Monat, Quartal oder Jahr, SKR 03/04, Konten anpassbar. Dazu Buchungsliste (Excel) und druckbarer Monatsbericht für den Steuerberater |
@@ -33,6 +36,13 @@ Die Regeln stammen aus den Fach-Skills *Nebenkostenabrechnung* (BetrKV, Heizkost
 4. **Bank**: Konto anlegen und im Online-Banking „Umsätze exportieren“ (CSV oder CAMT.053) wählen, Datei importieren, Vorschläge mit ✓ bestätigen. „Regel merken“ sorgt dafür, dass derselbe Zahler beim nächsten Mal automatisch zugeordnet wird.
 5. **Steuer & DATEV**: Monat wählen, „DATEV-Buchungsstapel“ und „Bericht drucken“ an den Steuerberater schicken.
 
+## KI einrichten
+
+1. Unter https://console.anthropic.com einen API-Schlüssel erstellen. Abgerechnet wird nach Nutzung, eine Belegerkennung oder Frage kostet meist nur wenige Cent.
+2. In der App unter **Einstellungen → KI-Assistent** den Schlüssel eintragen. Er wird nur auf diesem Gerät gespeichert und ist nicht Teil der Datensicherung.
+3. Die App nutzt Claude Opus 5.5 über das offizielle Anthropic-SDK (`vendor/anthropic-sdk.js`, Version 1.1.0, Apache-2.0). Lehnt das Modell eine Anfrage ab, übernimmt automatisch ein Ersatzmodell (serverseitiger Fallback).
+4. Datenschutz: Nur wenn du eine KI-Funktion nutzt, werden der Beleg bzw. die nötigen App-Daten an Anthropic übertragen. Alles andere bleibt lokal.
+
 ## Wichtige Hinweise
 
 - Die **Konten-Vorschläge** (SKR 03: Bank 1200, Mieterlöse steuerfrei 8100, Erlöse 7 % 8300, durchlaufende Posten 1590 …) bitte einmal mit dem Steuerberater abstimmen. Ändern kannst du sie unter Einstellungen.
@@ -44,7 +54,7 @@ Die Regeln stammen aus den Fach-Skills *Nebenkostenabrechnung* (BetrKV, Heizkost
 
 1. **Live-Bankanbindung** (PSD2 über einen lizenzierten Kontoinformationsdienst wie finAPI, Tink oder Salt Edge, oder FinTS mit DK-Produktregistrierung) als Netlify-Function, die die Umsätze dann automatisch statt per Datei abholt. Das braucht einen Vertrag oder eine Registrierung beim Anbieter.
 2. **Cloud-Sync** über Supabase (wie bei Livora Clean), damit die Daten auf mehreren Geräten verfügbar sind und ein Login möglich ist.
-3. **Belege hochladen** (Foto/PDF) mit Weitergabe an DATEV Unternehmen online.
+3. **Belege an DATEV Unternehmen online** übergeben, Zuschneiden und Geraderücken beim Scannen.
 4. **E-Rechnung (XRechnung/ZUGFeRD)** für Geschäftskunden (Pflicht für alle ab 2028).
 
 ## Entwicklung
@@ -56,6 +66,9 @@ immo/
   index.html, styles.css
   js/core.js    Fachlogik: Zuordnung, Soll/Ist, Rechnungen, AfA, Anlage V, DATEV, CSV/CAMT
   js/store.js   Speicherung, Sicherung, Demo-Daten
+  js/files.js   Belege/Dokumente (IndexedDB, Bildverkleinerung, Scan-Filter)
+  js/ki.js      KI-Funktionen (Belegerkennung, Assistent, Briefe) über die Claude API
   js/app.js     Oberfläche
+  vendor/       Anthropic SDK (Browser-Bundle) + Lizenz
   tests/        node --test (npm test)
 ```

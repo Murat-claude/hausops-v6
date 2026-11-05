@@ -1,6 +1,8 @@
 // HausOps Immobilien — Oberfläche (Vanilla JS, ohne Build-Schritt)
 import * as C from "./core.js";
 import * as S from "./store.js";
+import * as F from "./files.js";
+import * as K from "./ki.js";
 
 let state = S.load();
 const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
@@ -207,6 +209,7 @@ const SPEC = {
     { k: "date", l: "Datum", t: "date", req: 1 }, { k: "amount", l: "Betrag brutto (€)", t: "money", req: 1 },
     { k: "category", l: "Kategorie", t: "select", opts: Object.entries(C.EXPENSE_CATEGORIES).map(([k, v]) => [k, v.label]) },
     { k: "objectId", l: "Objekt", t: "select", opts: () => objectOpts() },
+    { k: "betrkv", l: "Betriebskostenart (für NK-Abrechnung)", t: "select", opts: () => [["", "– automatisch / keine –"], ...C.BETRKV.map(([k, l]) => [k, l])] },
     { k: "vendor", l: "Empfänger / Firma" }, { k: "belegNr", l: "Belegnummer / Rechnungsnr." },
     { k: "note", l: "Notiz", t: "textarea" },
   ],
@@ -599,8 +602,8 @@ function journalCsv(from, to) {
 
 const NAV = [
   ["", "▦", "Übersicht"], ["objekte", "⌂", "Objekte & Einheiten"], ["mieter", "☺", "Mieter & Verträge"],
-  ["mieten", "€", "Mieteingänge"], ["bank", "⇄", "Bank"], ["ausgaben", "✎", "Ausgaben"], ["nebenkosten", "⚖", "Nebenkosten"],
-  ["ferien", "☀", "Ferienwohnung"], ["rechnungen", "▤", "Rechnungen"], ["steuer", "§", "Steuer & DATEV"], ["einstellungen", "⚙", "Einstellungen"],
+  ["mieten", "€", "Mieteingänge"], ["bank", "⇄", "Bank"], ["ausgaben", "✎", "Ausgaben"], ["dokumente", "📎", "Belege & Dokumente"], ["nebenkosten", "⚖", "Nebenkosten"], ["briefe", "✉", "Briefe"],
+  ["ferien", "☀", "Ferienwohnung"], ["rechnungen", "▤", "Rechnungen"], ["steuer", "§", "Steuer & DATEV"], ["ki", "✨", "KI-Assistent"], ["einstellungen", "⚙", "Einstellungen"],
 ];
 
 function head(title, sub, actions = "") {
@@ -768,7 +771,7 @@ function viewExpenses() {
     `<select data-change="expObj" style="width:auto">${opt([["", "Alle Objekte"], ...state.objects.map((o) => [o.id, o.name])], ui.expObj)}</select>` + btn("year", "‹", "", ui.year - 1) + btn("year", "›", "", ui.year + 1) + btn("newExpense", "+ Ausgabe", "primary")) + `
     <div class="grid g21">
       <div class="card">${list.length ? `<div class="table-wrap"><table><thead><tr><th>Datum</th><th>Empfänger</th><th>Kategorie</th><th>Objekt</th><th class="num">Betrag</th></tr></thead><tbody>
-        ${list.map((e) => `<tr class="click" data-act="editExpense" data-id="${e.id}"><td class="nowrap">${d(e.date)}</td><td>${esc(e.vendor)}<div class="small muted">${esc((e.note || "").slice(0, 70))}</div></td><td class="small">${esc(C.EXPENSE_CATEGORIES[e.category]?.label)}</td><td class="small">${esc(byId("objects", e.objectId)?.name || "–")}</td><td class="num">${eur(e.amount)} ${e.txId ? "🏦" : ""}</td></tr>`).join("")}
+        ${list.map((e) => `<tr class="click" data-act="editExpense" data-id="${e.id}"><td class="nowrap">${d(e.date)}</td><td>${esc(e.vendor)}<div class="small muted">${esc((e.note || "").slice(0, 70))}</div></td><td class="small">${esc(C.EXPENSE_CATEGORIES[e.category]?.label)}</td><td class="small">${esc(byId("objects", e.objectId)?.name || "–")}</td><td class="num">${eur(e.amount)} ${e.txId ? "🏦" : ""}${(e.fileIds || []).length ? " 📎" : ' <span class="muted" title="kein Beleg">○</span>'}</td></tr>`).join("")}
       </tbody></table></div>` : '<p class="muted">Keine Ausgaben in diesem Jahr. Ausgaben entstehen automatisch beim Zuordnen von Bankumsätzen oder manuell (bar/Karte).</p>'}</div>
       <div class="card"><h2>Nach Kategorie</h2><table>${Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td class="small">${esc(C.EXPENSE_CATEGORIES[k]?.label)}</td><td class="num">${eur(v)}</td></tr>`).join("")}</table></div>
     </div>`;
@@ -778,8 +781,10 @@ function editExpense(id) {
   const e = byId("expenses", id) || { id: C.uid("e_"), date: today(), category: "erhaltung", txId: null };
   formDialog({
     title: id ? "Ausgabe bearbeiten" : "Neue Ausgabe (bar / Karte / ohne Kontoimport)", spec: SPEC.expense, data: e,
-    intro: e.txId ? `<div class="note small">Aus Bankumsatz übernommen – Datum und Betrag kommen vom Konto.</div>` : "",
-    onSave: (v) => { upsert("expenses", { ...e, ...v, amount: Math.abs(v.amount) }); commit("Ausgabe gespeichert"); },
+    intro: (e.txId ? `<div class="note small">Aus Bankumsatz übernommen – Datum und Betrag kommen vom Konto.</div>` : "") +
+      `<div class="inline" style="margin-bottom:10px">${(e.fileIds || []).map((fid) => { const doc = byId("documents", fid); return doc ? `<span class="att" data-act="openDoc" data-id="${fid}">${doc.thumb ? `<img src="${doc.thumb}">` : "📄"} ${esc(doc.name.slice(0, 24))}</span>` : ""; }).join("")}
+      <label class="btn sm">📎 Beleg anhängen<input type="file" accept="image/*,application/pdf" capture="environment" data-change="attachExpense" data-id="${e.id}" hidden></label></div>`,
+    onSave: (v) => { upsert("expenses", { ...e, ...(byId("expenses", e.id) || {}), ...v, amount: Math.abs(v.amount) }); commit("Ausgabe gespeichert"); },
     onDelete: id && (() => {
       const tx = state.transactions.find((t) => t.link?.type === "expense" && t.link.id === id);
       if (tx) tx.link = null;
@@ -1065,7 +1070,7 @@ function viewNk() {
     <td style="width:130px"><input inputmode="decimal" value="${it.key === "direkt" ? "" : esc(C.fmtNum(it.amount))}" data-nk="amount" data-i="${i}" ${it.key === "direkt" ? 'disabled placeholder="je Einheit"' : ""}></td>
     <td style="width:230px"><select data-nk="key" data-i="${i}">${opt(Object.entries(C.NK_KEYS), it.key)}</select>
       ${it.key === "heizkosten" ? `<div class="inline small" style="margin-top:4px">Verbrauchsanteil <input type="number" min="50" max="70" value="${esc(it.pct ?? 70)}" data-nk="pct" data-i="${i}" style="width:70px"> %</div>` : ""}</td>
-    <td><button class="btn sm link" data-act="nkDel" data-id="${i}">✕</button></td></tr>
+    <td class="nowrap">${(it.expenseIds || []).flatMap((eid) => byId("expenses", eid)?.fileIds || []).length ? `<span title="Belege vorhanden">📎${(it.expenseIds || []).flatMap((eid) => byId("expenses", eid)?.fileIds || []).length}</span>` : (it.expenseIds || []).length ? '<span class="muted small" title="Ausgabe ohne Beleg – unter Ausgaben anhängen">kein Beleg</span>' : ""} <button class="btn sm link" data-act="nkDel" data-id="${i}">✕</button></td></tr>
     ${needsShares(it) ? `<tr><td colspan="4" style="background:#fafbfa"><div class="small muted" style="margin-bottom:4px">${it.key === "direkt" ? "Betrag je Einheit (€)" : "Verbrauch je Einheit (Zählerdifferenz, z. B. m³ / kWh / Einheiten Heizkostenverteiler)"}</div><div class="inline">
       ${units.map((u) => `<label class="small">${esc(u.name)} <input style="width:100px" inputmode="decimal" value="${esc(it.key === "direkt" ? C.fmtNum(it.shares?.[u.id] || 0) : (it.shares?.[u.id] ?? ""))}" data-nk="share" data-i="${i}" data-u="${u.id}"></label>`).join("")}</div></td></tr>` : ""}`;
   return head("Nebenkostenabrechnung", "Betriebskosten nach BetrKV – tagegenau, mit Leerstandsanteil des Vermieters", "") + `
@@ -1077,7 +1082,7 @@ function viewNk() {
     ${saved.length ? `<div class="small">Gespeicherte Abrechnungen: ${saved.map((x) => `<button class="btn sm link" data-act="nkLoad" data-id="${x.id}">${d(x.from)}–${d(x.to)}</button>`).join(" · ")}</div>` : ""}
     </div>
     <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Umlagefähige Kosten (§ 2 BetrKV)</h2>
-      <div class="toolbar">${btn("nkFromExpenses", "Aus Ausgaben übernehmen", "sm")}${btn("nkAdd", "+ Kostenart", "sm")}</div></div>
+      <div class="toolbar">${btn("nkFromExpenses", "Aus Ausgaben übernehmen", "sm")}${btn("nkAdd", "+ Kostenart", "sm")}${btn("nkKiCheck", "✨ KI-Prüfung", "sm")}</div></div>
       <div class="table-wrap"><table><thead><tr><th>Kostenart</th><th class="num">Gesamtkosten Haus</th><th>Umlageschlüssel</th><th></th></tr></thead><tbody>
       ${nk.items.map(itemRow).join("") || '<tr><td colspan="4" class="muted">Noch keine Kosten – „Aus Ausgaben übernehmen“ oder „+ Kostenart“.</td></tr>'}</tbody>
       <tfoot><tr><td>Summe</td><td class="num">${eur(r.total)}</td><td colspan="2"></td></tr></tfoot></table></div>
@@ -1109,7 +1114,8 @@ function viewNkLetter(stId, contractId) {
   const area = sum(units, (x) => Number(x.area));
   const sender = [s.ownerName, s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean);
   const due = addDays(today(), 30);
-  return `<div class="head noprint"><a href="#/nebenkosten">← Nebenkosten</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
+  const att = st.items.flatMap((it) => (it.expenseIds || []).flatMap((eid) => byId("expenses", eid)?.fileIds || [])).map((fid) => byId("documents", fid)).filter(Boolean);
+  return `<div class="head noprint"><a href="#/nebenkosten">← Nebenkosten</a><div class="toolbar">${att.length ? `<label class="small inline"><input type="checkbox" data-act="nkAttach" ${ui.nkAttach ? "checked" : ""}> Belegkopien anhängen (${att.length})</label>` : ""}${btn("nkArchive", "Im Briefarchiv vermerken", "", `${stId}|${contractId}`)}<button class="btn primary" onclick="window.print()">Drucken / PDF</button></div></div>
   <div class="paper">
     <div class="top"><div><div class="sender">${esc(sender.join(" · "))}</div>
       <div><b>${esc(tenants.map((t) => t.name).join(", "))}</b><br>${esc(tenants[0]?.address || addrOf(u))}</div></div>
@@ -1133,9 +1139,10 @@ function viewNkLetter(stId, contractId) {
       ${c.newMonthly !== C.rentForMonth(contract, C.monthKey(today())).nk ? `<p>Damit es im nächsten Jahr keine größere ${c.saldo > 0 ? "Nachzahlung" : "Abweichung"} gibt, passen wir die monatliche Vorauszahlung ab dem übernächsten Monat auf <b>${eur(c.newMonthly)}</b> an (§ 560 Abs. 4 BGB).</p>` : ""}
       <p>Die Belege können Sie nach vorheriger Terminabsprache gern einsehen. Bei Fragen melden Sie sich jederzeit.</p>
       <p style="margin-top:16px">Mit freundlichen Grüßen<br><br>${esc(s.ownerName)}</p>
-      <p class="small muted" style="margin-top:16px">Anlagen: Kopien der Abrechnungsbelege auf Anfrage (Grundsteuerbescheid, Versorgerrechnungen, Versicherungsnachweise)</p>
+      <p class="small muted" style="margin-top:16px">Anlagen: ${att.length ? att.map((x) => esc(x.name)).join(", ") : "Kopien der Abrechnungsbelege auf Anfrage"}</p>
     </div>
-  </div>`;
+  </div>
+  ${ui.nkAttach ? att.map((x) => x.type.startsWith("image/") ? `<div class="paper anlage"><p class="small muted">Anlage: ${esc(x.name)}</p><img data-doc="${x.id}" style="width:100%"></div>` : `<div class="paper anlage noprint"><p>PDF-Anlage „${esc(x.name)}“ bitte separat drucken: <button class="btn sm" data-act="openDoc" data-id="${x.id}">öffnen</button></p></div>`).join("") : ""}`;
 }
 
 // ---------------------------------------------------------------- Jahrespaket Steuerberater
@@ -1211,9 +1218,388 @@ function viewSettings() {
       ${Object.entries(C.EXPENSE_CATEGORIES).filter(([k]) => k !== "privat").map(([k, v]) => `<label class="f"><span>${esc(v.label)}</span><input name="exp_${k}" value="${esc(C.expenseAccount(s, k) || "")}"></label>`).join("")}
     </div></details><br><button class="btn primary">Speichern</button></form>
     <div class="card"><h2>Gelernte Zuordnungsregeln (${rules.length})</h2>${rules.length ? `<table>${rules.map(([k, r]) => `<tr><td class="small">${esc(k.replace(/^(iban|name):/, ""))}</td><td class="small">${esc(suggestionLabel({ ...r, period: ui.month }))}</td><td>${btn("delRule", "✕", "sm link", k)}</td></tr>`).join("")}</table>` : '<p class="muted">Regeln entstehen beim Zuordnen von Bankumsätzen („Regel merken“).</p>'}</div>
+    <div class="card"><h2>✨ KI-Assistent (Claude)</h2>
+      <p class="small muted" style="margin-bottom:8px">Für Belegerkennung, Fragen an deine Daten und Briefentwürfe. Schlüssel unter console.anthropic.com → API Keys erstellen; Kosten nach Nutzung (meist wenige Cent pro Anfrage). Der Schlüssel wird nur auf diesem Gerät gespeichert und ist nicht Teil der Datensicherung. Beim Nutzen der KI werden die betroffenen Daten an Anthropic übertragen.</p>
+      <div class="inline"><input type="password" placeholder="sk-ant-…" value="${K.hasKey() ? "••••••••••••" : ""}" data-change="kiKey" style="max-width:340px" autocomplete="off"> ${K.hasKey() ? '<span class="badge ok">aktiv</span>' : '<span class="badge grey">nicht eingerichtet</span>'}</div></div>
     <div class="card"><h2>Datensicherung</h2>
       <p class="muted" style="margin-bottom:10px">Alle Daten liegen nur in diesem Browser. Sichere sie regelmäßig als Datei (z. B. in iCloud/Google Drive) – damit kannst du sie auch auf ein anderes Gerät übertragen.</p>
-      <div class="toolbar">${btn("backup", "⬇ Sicherung herunterladen", "primary")}<label class="btn">⬆ Sicherung einspielen<input type="file" accept=".json" data-change="restore" hidden></label>${btn("loadDemo", "Demo-Daten laden")}${btn("reset", "Alle Daten löschen", "danger")}</div></div>`;
+      <div class="toolbar">${btn("backup", "⬇ Sicherung herunterladen", "primary")}${btn("backupFull", "⬇ Sicherung inkl. Belege")}<label class="btn">⬆ Sicherung einspielen<input type="file" accept=".json" data-change="restore" hidden></label>${btn("loadDemo", "Demo-Daten laden")}${btn("reset", "Alle Daten löschen", "danger")}</div></div>`;
+}
+
+// ---------------------------------------------------------------- Belege & Dokumente
+
+const DOC_KINDS = { beleg: "Rechnung / Beleg", bescheid: "Bescheid (Grundsteuer, Abgaben)", abrechnung: "Versorger-/Jahresabrechnung", vertrag: "Mietvertrag / Vertrag", protokoll: "Übergabeprotokoll", zaehler: "Zählerstand / Foto", korrespondenz: "Schriftverkehr", sonstiges: "Sonstiges" };
+const KI_DOC_KIND = { rechnung: "beleg", bescheid: "bescheid", abrechnung: "abrechnung", vertrag: "vertrag", zaehlerstand: "zaehler", kontoauszug: "sonstiges", sonstiges: "sonstiges" };
+
+async function addFiles(fileList, { scan = false, expenseId = null } = {}) {
+  const files = [...fileList];
+  if (!files.length) return [];
+  const added = [];
+  for (const file of files) {
+    try {
+      const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+      if (!isPdf && !file.type.startsWith("image/")) { toast(`${file.name}: nur Fotos und PDFs möglich`); continue; }
+      if (file.size > 25 * 1024 * 1024) { toast(`${file.name} ist größer als 25 MB`); continue; }
+      const id = C.uid("d_");
+      let blob = file, thumb = "", type = isPdf ? "application/pdf" : file.type;
+      if (!isPdf) { const r = await F.prepareImage(file, scan); blob = r.blob; thumb = r.thumb; type = "image/jpeg"; }
+      await F.putFile(id, blob);
+      const doc = { id, name: file.name || `Scan ${d(today())}`, type, size: blob.size, thumb, created: new Date().toISOString(), kind: "beleg", objectId: "", contractId: "", expenseId, status: expenseId ? "verarbeitet" : "neu", note: "", ki: null };
+      state.documents.push(doc);
+      if (expenseId) { const e = byId("expenses", expenseId); if (e) e.fileIds = [...(e.fileIds || []), id]; }
+      added.push(doc);
+    } catch (err) { alert(`${file.name}: ${err.message}`); }
+  }
+  commit(`${added.length} Datei(en) gespeichert`);
+  if (!expenseId && ui.autoKi && K.hasKey()) for (const doc of added) await kiReadDoc(doc.id);
+  return added;
+}
+
+async function openDoc(id) {
+  const blob = await F.getFile(id);
+  if (!blob) return toast("Datei nicht gefunden (anderes Gerät?)");
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank");
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// Lädt Bilder aus IndexedDB in <img data-doc="…"> (Druckansichten)
+async function hydrateDocImages() {
+  for (const img of document.querySelectorAll("img[data-doc]")) {
+    const blob = await F.getFile(img.dataset.doc).catch(() => null);
+    if (blob) img.src = URL.createObjectURL(blob);
+  }
+}
+
+function guessObject(hint) {
+  const n = C.normalize(hint);
+  if (!n) return "";
+  let best = "", score = 0;
+  for (const o of state.objects) {
+    const words = C.normalize(`${o.name} ${o.street} ${o.city}`).split(" ").filter((w) => w.length > 2);
+    const s = words.filter((w) => n.includes(w)).length;
+    if (s > score) { score = s; best = o.id; }
+  }
+  return best;
+}
+
+async function kiReadDoc(id) {
+  const doc = byId("documents", id);
+  if (!K.hasKey()) { toast("Für die KI-Erkennung zuerst unter Einstellungen den API-Schlüssel eintragen."); location.hash = "#/einstellungen"; return; }
+  const blob = await F.getFile(id);
+  if (!blob) return toast("Datei nicht gefunden");
+  ui.kiBusy = { ...(ui.kiBusy || {}), [id]: true }; render();
+  try {
+    const r = await K.readReceipt({ base64: await F.blobToBase64(blob), mediaType: doc.type, objects: state.objects.map((o) => `${o.name} (${o.street}, ${o.city})`) });
+    doc.ki = r;
+    doc.kind = KI_DOC_KIND[r.doc_type] || doc.kind;
+    doc.objectId = doc.objectId || guessObject(r.object_hint);
+    if (r.vendor) doc.name = `${r.vendor}${r.date ? " " + d(r.date) : ""}`;
+    S.save(state);
+    toast(`Ausgelesen: ${r.vendor} · ${eur(Math.round(r.amount * 100))} (Sicherheit ${r.confidence})`);
+  } catch (e) {
+    alert("KI-Erkennung fehlgeschlagen: " + K.friendlyError(e));
+  } finally {
+    delete ui.kiBusy[id]; render();
+  }
+}
+
+// Beleg → Ausgabe: neu anlegen, an vorhandene Ausgabe hängen oder mit Bankumsatz verknüpfen
+function bookDoc(id) {
+  const doc = byId("documents", id);
+  const k = doc.ki || {};
+  const amount = Math.abs(Math.round((k.amount || 0) * 100));
+  const date = k.date || today();
+  const near = (iso) => Math.abs(new Date(iso) - new Date(date)) <= 75 * 86400000;
+  const expC = state.expenses.filter((e) => e.amount === amount && amount && near(e.date) && !(e.fileIds || []).length);
+  const txC = state.transactions.filter((t) => !t.link && t.amount === -amount && amount && near(t.date));
+  const linkOpts = [["neu", "Neue Ausgabe anlegen"], ...expC.map((e) => [`e:${e.id}`, `An vorhandene Ausgabe hängen: ${d(e.date)} ${e.vendor} ${eur(e.amount)}`]), ...txC.map((t) => [`t:${t.id}`, `Mit Bankumsatz verknüpfen: ${d(t.date)} ${t.name} ${eur(t.amount)}`])];
+  const spec = [{ k: "linkTo", l: "Buchung", t: "select", opts: linkOpts, full: 1 }, ...SPEC.expense];
+  formDialog({
+    title: "Beleg als Ausgabe buchen", spec, wide: true,
+    data: { linkTo: linkOpts[1]?.[0] || "neu", date, amount, category: k.category || "sonstiges", betrkv: k.betrkv && k.betrkv !== "keine" ? k.betrkv : "", objectId: doc.objectId || guessObject(k.object_hint), vendor: k.vendor || "", belegNr: k.invoice_number || "", note: [k.summary, k.consumption && `Verbrauch: ${k.consumption}`, k.period_from && `Zeitraum ${d(k.period_from)}–${d(k.period_to)}`].filter(Boolean).join("\n") },
+    intro: `<div class="inline" style="align-items:flex-start;margin-bottom:10px">${doc.thumb ? `<img src="${doc.thumb}" style="width:90px;border-radius:6px;border:1px solid var(--line)">` : '<span class="big">📄</span>'}
+      <div class="small">${doc.ki ? `KI-Vorschlag (Sicherheit: <b>${esc(k.confidence)}</b>) – bitte prüfen.${k.umlagefaehig ? ' <span class="badge ok">umlagefähig</span>' : ' <span class="badge grey">nicht umlagefähig</span>'}` : "Bitte Daten vom Beleg eintragen."}
+      ${txC.length || expC.length ? `<br><b>Tipp:</b> Es gibt einen passenden Bankumsatz/eine Ausgabe – verknüpfen statt doppelt buchen.` : ""}</div></div>`,
+    onSave: (v) => {
+      const { linkTo, ...vals } = v;
+      let e;
+      if (linkTo.startsWith("e:")) { e = byId("expenses", linkTo.slice(2)); Object.assign(e, { betrkv: vals.betrkv || e.betrkv, belegNr: vals.belegNr || e.belegNr, objectId: vals.objectId || e.objectId, category: vals.category }); }
+      else {
+        e = { id: C.uid("e_"), txId: null, ...vals, amount: Math.abs(vals.amount) };
+        if (linkTo.startsWith("t:")) { const tx = byId("transactions", linkTo.slice(2)); e.txId = tx.id; e.date = tx.date; e.amount = -tx.amount; tx.link = { type: "expense", id: e.id }; }
+        state.expenses.push(e);
+      }
+      e.fileIds = [...new Set([...(e.fileIds || []), doc.id])];
+      Object.assign(doc, { expenseId: e.id, status: "verarbeitet", objectId: e.objectId || doc.objectId });
+      commit("Beleg gebucht");
+    },
+  });
+}
+
+function editDoc(id) {
+  const doc = byId("documents", id);
+  formDialog({
+    title: "Dokument bearbeiten", data: doc,
+    spec: [
+      { k: "name", l: "Bezeichnung", req: 1, full: 1 },
+      { k: "kind", l: "Art", t: "select", opts: Object.entries(DOC_KINDS) },
+      { k: "objectId", l: "Objekt", t: "select", opts: () => objectOpts() },
+      { k: "contractId", l: "Mietvertrag / Mieter", t: "select", opts: () => [["", "–"], ...contractOpts()], full: 1 },
+      { k: "status", l: "Status", t: "select", opts: [["neu", "Eingang (unbearbeitet)"], ["verarbeitet", "erledigt / abgelegt"]] },
+      { k: "note", l: "Notiz", t: "textarea" },
+    ],
+    onSave: (v) => { Object.assign(doc, v); commit("Gespeichert"); },
+    onDelete: async () => {
+      for (const e of state.expenses) if ((e.fileIds || []).includes(id)) e.fileIds = e.fileIds.filter((x) => x !== id);
+      state.documents = state.documents.filter((x) => x.id !== id);
+      await F.deleteFile(id).catch(() => {});
+      commit("Dokument gelöscht");
+    },
+  });
+}
+
+function docCard(doc) {
+  const busy = ui.kiBusy?.[doc.id];
+  const e = byId("expenses", doc.expenseId);
+  return `<div class="doc">
+    <div class="thumb" data-act="openDoc" data-id="${doc.id}">${doc.thumb ? `<img src="${doc.thumb}" alt="">` : `<span>PDF</span>`}</div>
+    <div class="meta"><b>${esc(doc.name)}</b>
+      <div class="small muted">${esc(DOC_KINDS[doc.kind] || "")}${doc.objectId ? " · " + esc(byId("objects", doc.objectId)?.name || "") : ""}${doc.contractId ? " · " + esc(tenantNames(byId("contracts", doc.contractId))) : ""}</div>
+      ${doc.ki && !e ? `<div class="small">✨ ${esc(doc.ki.vendor)} · ${eur(Math.round(doc.ki.amount * 100))}${doc.ki.date ? " · " + d(doc.ki.date) : ""}</div>` : ""}
+      ${e ? `<div class="small"><span class="badge ok">gebucht</span> ${d(e.date)} ${eur(e.amount)}</div>` : doc.status === "neu" ? '<span class="badge warn">Eingang</span>' : ""}
+      <div class="toolbar" style="margin-top:6px">
+        ${!e && ["beleg", "bescheid", "abrechnung"].includes(doc.kind) ? `${btn("kiDoc", busy ? "⏳ liest…" : "✨ KI auslesen", "sm", doc.id)}${btn("bookDoc", "Buchen", "sm primary", doc.id)}` : ""}
+        ${btn("editDoc", "✎", "sm", doc.id)}
+      </div></div></div>`;
+}
+
+function viewDocs() {
+  const f = ui.docFilter || "neu";
+  let docs = [...state.documents].sort((a, b) => (a.created < b.created ? 1 : -1));
+  if (f === "neu") docs = docs.filter((x) => x.status === "neu");
+  else if (f !== "alle") docs = docs.filter((x) => x.kind === f);
+  const counts = { neu: state.documents.filter((x) => x.status === "neu").length };
+  return head("Belege & Dokumente", "Fotografieren, scannen oder PDFs hochladen – die KI liest Belege aus und bucht sie", "") + `
+    <div class="card noprint drop" data-drop="1">
+      <div class="toolbar">
+        <label class="btn primary">📷 Foto aufnehmen<input type="file" accept="image/*" capture="environment" data-change="docUpload" hidden></label>
+        <label class="btn">🖨 Dokument scannen<input type="file" accept="image/*" capture="environment" data-change="docScan" hidden></label>
+        <label class="btn">📄 PDFs / Bilder wählen<input type="file" accept="image/*,application/pdf" multiple data-change="docUpload" hidden></label>
+        <label class="small inline"><input type="checkbox" data-change="autoKi" ${ui.autoKi ? "checked" : ""}> nach dem Hochladen automatisch mit KI auslesen</label>
+      </div>
+      <p class="small muted" style="margin-top:8px">Dateien hierher ziehen geht auch. „Scannen“ macht aus dem Handyfoto ein kontrastreiches Schwarz-Weiß-Dokument. Alles wird nur auf diesem Gerät gespeichert.${K.hasKey() ? "" : ' Für die automatische Erkennung unter <a href="#/einstellungen">Einstellungen</a> den KI-Schlüssel eintragen.'}</p>
+    </div>
+    <div class="card">
+      <div class="tabs">${[["neu", `Eingang (${counts.neu})`], ["alle", "Alle"], ...Object.entries(DOC_KINDS)].map(([k, l]) => `<button data-act="docFilter" data-id="${k}" class="${f === k ? "active" : ""}">${esc(l.split(" (")[0].split(" /")[0])}</button>`).join("")}</div>
+      ${docs.length ? `<div class="docs">${docs.map(docCard).join("")}</div>` : `<p class="muted">${f === "neu" ? "Keine unbearbeiteten Dokumente. 🎉" : "Keine Dokumente."}</p>`}
+    </div>`;
+}
+
+// ---------------------------------------------------------------- Briefe an Mieter
+
+function letterFacts(contractId) {
+  const c = byId("contracts", contractId);
+  const u = byId("units", c?.unitId), s = state.settings;
+  const key = C.monthKey(today());
+  const back = c ? C.sollIst(state, C.addMonths(key, -12), key).filter((r) => r.contractId === c.id && r.diff < 0) : [];
+  const lastNk = (state.nkStatements || []).filter((x) => x.objectId === u?.objectId).sort((a, b) => (a.to < b.to ? 1 : -1))[0];
+  const nkRes = lastNk ? C.nkAbrechnung(state, lastNk).contracts.find((x) => x.contractId === contractId) : null;
+  const r = c ? C.rentForMonth(c, key) : null;
+  return {
+    vermieter: { name: s.ownerName, anschrift: [s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean).join(", "), iban: s.invoiceIban, telefon: s.ownerPhone, email: s.ownerEmail },
+    mieter: c ? tenantNames(c) : "", wohnung: u ? `${u.name}, ${addrOf(u)}` : "", wohnflaeche: u?.area || "",
+    mietbeginn: c ? d(c.start) : "", mietende: c?.end ? d(c.end) : "", personen: c?.persons || "",
+    miete_aktuell: r ? { kalt: eur(r.kalt), nebenkosten: eur(r.nk), zuschlaege: eur(r.extra), gesamt: eur(r.total) } : null,
+    kaution: c?.kaution ? eur(c.kaution) : "",
+    rueckstaende: back.map((x) => ({ monat: C.fmtMonth(x.key), offen: eur(-x.diff) })), rueckstand_summe: eur(-sum(back, (x) => x.diff)),
+    letzte_nk_abrechnung: nkRes ? { zeitraum: `${d(lastNk.from)}–${d(lastNk.to)}`, ergebnis: nkRes.saldo > 0 ? `Nachzahlung ${eur(nkRes.saldo)}` : `Guthaben ${eur(-nkRes.saldo)}`, neue_vorauszahlung: eur(nkRes.newMonthly) } : null,
+  };
+}
+
+const LETTERS = {
+  zahlungserinnerung: ["Zahlungserinnerung", (f) => [`Zahlungserinnerung – ${f.wohnung}`, `${greet(f)}
+
+bei der Durchsicht unserer Unterlagen ist uns aufgefallen, dass folgende Mietzahlungen noch nicht vollständig eingegangen sind:
+
+${f.rueckstaende.map((x) => `- ${x.monat}: ${x.offen}`).join("\n") || "- [Monat]: [Betrag]"}
+
+Offener Betrag insgesamt: ${f.rueckstand_summe}
+
+Sicher handelt es sich nur um ein Versehen. Bitte überweisen Sie den Betrag bis zum ${d(addDays(today(), 14))} auf das Konto ${f.vermieter.iban || "[IBAN]"}. Sollten Sie die Zahlung inzwischen veranlasst haben, betrachten Sie dieses Schreiben bitte als gegenstandslos.
+
+Mit freundlichen Grüßen
+${f.vermieter.name}`]],
+  mahnung: ["Mahnung (2. Stufe)", (f) => [`Mahnung – Mietrückstand ${f.wohnung}`, `${greet(f)}
+
+trotz unserer Zahlungserinnerung ist der folgende Mietrückstand weiterhin offen:
+
+${f.rueckstaende.map((x) => `- ${x.monat}: ${x.offen}`).join("\n") || "- [Monat]: [Betrag]"}
+
+Gesamt: ${f.rueckstand_summe}
+
+Bitte gleichen Sie den Betrag bis spätestens ${d(addDays(today(), 10))} aus. Wir weisen darauf hin, dass ein Rückstand in Höhe von mehr als einer Monatsmiete über zwei aufeinanderfolgende Termine oder in Höhe von zwei Monatsmieten zur fristlosen Kündigung berechtigen kann (§ 543 Abs. 2 Nr. 3 BGB). Wenn Sie in Zahlungsschwierigkeiten sind, sprechen Sie uns bitte an – gemeinsam finden wir eine Lösung, z. B. eine Ratenzahlung.
+
+Mit freundlichen Grüßen
+${f.vermieter.name}`]],
+  vorauszahlung: ["Anpassung Nebenkosten-Vorauszahlung", (f) => [`Anpassung der Betriebskostenvorauszahlung – ${f.wohnung}`, `${greet(f)}
+
+auf Grundlage der Betriebskostenabrechnung ${f.letzte_nk_abrechnung?.zeitraum || "[Zeitraum]"} (Ergebnis: ${f.letzte_nk_abrechnung?.ergebnis || "[Ergebnis]"}) passen wir die monatliche Vorauszahlung gemäß § 560 Abs. 4 BGB an.
+
+Neue Betriebskostenvorauszahlung: ${f.letzte_nk_abrechnung?.neue_vorauszahlung || "[Betrag]"} monatlich
+gültig ab: ${C.fmtMonth(C.addMonths(C.monthKey(today()), 2))}
+
+Ihre Gesamtmiete beträgt damit ab diesem Monat [neue Gesamtmiete]. Bitte passen Sie Ihren Dauerauftrag entsprechend an.
+
+Mit freundlichen Grüßen
+${f.vermieter.name}`]],
+  ankuendigung: ["Ankündigung Termin (Ablesung, Handwerker)", (f) => [`Ankündigung: [Ablesung / Handwerkertermin] – ${f.wohnung}`, `${greet(f)}
+
+am [Datum] zwischen [Uhrzeit] und [Uhrzeit] findet in Ihrer Wohnung [die Ablesung der Zähler / folgende Arbeit: …] statt. Bitte ermöglichen Sie den Zugang zur Wohnung oder hinterlegen Sie einen Schlüssel. Passt Ihnen der Termin nicht, melden Sie sich bitte unter ${f.vermieter.telefon || "[Telefon]"}.
+
+Vielen Dank für Ihre Mithilfe!
+
+Mit freundlichen Grüßen
+${f.vermieter.name}`]],
+  mieterhoehung: ["Mieterhöhung (Zustimmungsverlangen § 558 BGB)", (f) => [`Mieterhöhungsverlangen nach § 558 BGB – ${f.wohnung}`, `${greet(f)}
+
+hiermit bitten wir Sie um Zustimmung zur Erhöhung der Nettokaltmiete für die Wohnung ${f.wohnung} (${f.wohnflaeche || "[x]"} m²) von derzeit ${f.miete_aktuell?.kalt || "[Betrag]"} auf [neuer Betrag] monatlich mit Wirkung ab dem [Beginn des dritten Monats nach Zugang].
+
+Begründung: Die neue Miete entspricht der ortsüblichen Vergleichsmiete. Wir beziehen uns auf den [Mietspiegel der Stadt …, Feld …, Spanne … €/m²]. Die Kappungsgrenze (in 3 Jahren max. 20 % bzw. 15 % in Gebieten mit Kappungsgrenzenverordnung) ist eingehalten; die Miete war seit mindestens 15 Monaten unverändert.
+
+Bitte erteilen Sie Ihre Zustimmung bis zum Ablauf des zweiten Kalendermonats nach Zugang dieses Schreibens, z. B. durch Unterschrift auf der beiliegenden Kopie.
+
+Mit freundlichen Grüßen
+${f.vermieter.name}`]],
+  wohnungsgeber: ["Wohnungsgeberbestätigung (§ 19 BMG)", (f) => [`Wohnungsgeberbestätigung nach § 19 Bundesmeldegesetz`, `Hiermit bestätige ich als Wohnungsgeber den Einzug der folgenden Person(en):
+
+Name(n) der meldepflichtigen Person(en): ${f.mieter}
+Anschrift der Wohnung: ${f.wohnung}
+Datum des Einzugs: ${f.mietbeginn}
+
+Name und Anschrift des Wohnungsgebers: ${f.vermieter.name}, ${f.vermieter.anschrift}
+Der Wohnungsgeber ist zugleich Eigentümer der Wohnung.
+
+Ich bestätige mit meiner Unterschrift den Einzug der oben genannten Person(en) in die bezeichnete Wohnung und dass ich als Wohnungsgeber oder als beauftragte Person diese Bescheinigung ausstellen darf. Es ist verboten, eine Wohnanschrift für eine Anmeldung anzubieten oder zur Verfügung zu stellen, obwohl ein tatsächlicher Bezug der Wohnung weder stattfindet noch beabsichtigt ist (§ 19 Abs. 6 BMG).
+
+${d(today())}, ____________________________
+${f.vermieter.name}`]],
+  mietbescheinigung: ["Mietbescheinigung", (f) => [`Mietbescheinigung`, `Hiermit bestätigen wir, dass ${f.mieter} seit dem ${f.mietbeginn} die Wohnung ${f.wohnung} (${f.wohnflaeche || "[x]"} m²) von uns gemietet hat${f.mietende ? ` (Mietende ${f.mietende})` : ""}.
+
+Die monatliche Miete beträgt derzeit:
+- Nettokaltmiete: ${f.miete_aktuell?.kalt || ""}
+- Betriebs-/Heizkostenvorauszahlung: ${f.miete_aktuell?.nebenkosten || ""}
+${f.miete_aktuell?.zuschlaege && f.miete_aktuell.zuschlaege !== eur(0) ? `- Zuschläge: ${f.miete_aktuell.zuschlaege}\n` : ""}- Gesamtmiete: ${f.miete_aktuell?.gesamt || ""}
+
+Die Miete wurde bisher [regelmäßig und pünktlich] gezahlt.
+
+${d(today())}
+
+${f.vermieter.name}`]],
+  kuendigungsbestaetigung: ["Bestätigung der Kündigung", (f) => [`Bestätigung Ihrer Kündigung – ${f.wohnung}`, `${greet(f)}
+
+wir bestätigen den Eingang Ihrer Kündigung vom [Datum]. Das Mietverhältnis endet damit zum [Datum Mietende].
+
+Für die Wohnungsübergabe schlagen wir den [Datum, Uhrzeit] vor. Bitte geben Sie alle Schlüssel zurück und teilen Sie uns Ihre neue Anschrift sowie Ihre Bankverbindung für die Abrechnung der Kaution (${f.kaution || "[Betrag]"}) mit. Über die Kaution rechnen wir nach Übergabe und Erstellung der nächsten Betriebskostenabrechnung ab.
+
+Mit freundlichen Grüßen
+${f.vermieter.name}`]],
+  frei: ["Freier Brief", (f) => ["", `${greet(f)}
+
+[Text]
+
+Mit freundlichen Grüßen
+${f.vermieter.name}`]],
+};
+function greet(f) { return f.mieter && !/familie|,| und /i.test(f.mieter) ? `Guten Tag ${f.mieter},` : "Sehr geehrte Damen und Herren,"; }
+
+function viewLetters() {
+  const L = ui.letter || (ui.letter = { kind: "zahlungserinnerung", contractId: state.contracts[0]?.id || "", subject: "", body: "", instr: "" });
+  if (!L.body && L.contractId !== undefined) { const [s, b] = LETTERS[L.kind][1](letterFacts(L.contractId)); L.subject = s; L.body = b; }
+  const archive = [...(state.letters || [])].sort((a, b) => (a.date < b.date ? 1 : -1));
+  return head("Briefe an Mieter", "Vorlagen, KI-Formulierung, Druck/PDF und Briefarchiv", "") + `
+    <div class="card">
+      <div class="fgrid">
+        <label class="f"><span>Vorlage</span><select data-letter="kind">${opt(Object.entries(LETTERS).map(([k, v]) => [k, v[0]]), L.kind)}</select></label>
+        <label class="f"><span>Mieter / Vertrag</span><select data-letter="contractId">${opt([["", "–"], ...contractOpts()], L.contractId)}</select></label>
+        <label class="f full"><span>Betreff</span><input data-letter="subject" value="${esc(L.subject)}"></label>
+        <label class="f full"><span>Text</span><textarea data-letter="body" style="min-height:320px">${esc(L.body)}</textarea></label>
+      </div>
+      <p class="small muted">[Platzhalter] in eckigen Klammern vor dem Versand ersetzen. Mieterhöhung und Kündigung bei Unsicherheit von Haus & Grund oder einem Anwalt prüfen lassen.</p>
+      <div class="inline" style="margin:10px 0"><input placeholder="✨ KI-Anweisung, z. B. „freundlicher“, „Ratenzahlung 3×200 € anbieten“, „auf Türkisch übersetzen“" data-letter="instr" value="${esc(L.instr || "")}" style="flex:1;min-width:220px">${btn("letterKi", ui.letterBusy ? "⏳ schreibt…" : "✨ Mit KI formulieren", "")}</div>
+      <div class="toolbar">${btn("letterReset", "Vorlage neu laden", "")}${btn("letterSave", "Speichern & drucken", "primary")}${btn("letterMail", "✉ Per E-Mail", "")}</div>
+    </div>
+    <div class="card"><h2>Briefarchiv (${archive.length})</h2>${archive.length ? `<table>${archive.map((l) => `<tr><td class="nowrap">${d(l.date)}</td><td>${esc(l.subject)}<div class="small muted">${esc(contractLabel(byId("contracts", l.contractId)))}</div></td><td class="nowrap"><a class="btn sm" href="#/brief/${l.id}">🖨</a> ${btn("letterDel", "✕", "sm link", l.id)}</td></tr>`).join("")}</table>` : '<p class="muted">Noch keine Briefe gespeichert. Auch NK-Abrechnungen landen hier, wenn du sie archivierst.</p>'}</div>`;
+}
+
+function viewLetter(id) {
+  const l = (state.letters || []).find((x) => x.id === id);
+  if (!l) return head("Brief nicht gefunden");
+  const s = state.settings, c = byId("contracts", l.contractId), u = byId("units", c?.unitId);
+  const tenants = (c?.tenantIds || []).map((x) => byId("tenants", x)).filter(Boolean);
+  const sender = [s.ownerName, s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean);
+  return `<div class="head noprint"><a href="#/briefe">← Briefe</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
+    <div class="paper">
+      <div class="top"><div><div class="sender">${esc(sender.join(" · "))}</div>
+        <div><b>${esc(tenants.map((t) => t.name).join(", ") || l.recipient || "")}</b><br>${esc(tenants[0]?.address || (u ? addrOf(u) : ""))}</div></div>
+        <div><b>${esc(s.ownerName)}</b><br>${sender.slice(1).map(esc).join("<br>")}${s.ownerPhone ? `<br>Tel. ${esc(s.ownerPhone)}` : ""}${s.ownerEmail ? `<br>${esc(s.ownerEmail)}` : ""}<br><br>${d(l.date)}</div></div>
+      ${l.subject ? `<h1 style="font-size:16px">${esc(l.subject)}</h1>` : ""}
+      <div style="white-space:pre-wrap;line-height:1.6">${esc(l.body)}</div>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- KI-Assistent
+
+function buildContext() {
+  const key = C.monthKey(today()), y = Number(key.slice(0, 4));
+  const si = C.sollIst(state, C.addMonths(key, -11), key);
+  const fewo = fewoUnits().map((u) => u.id);
+  return {
+    vermieter: { name: state.settings.ownerName, kleinunternehmer: state.settings.kleinunternehmer, kontenrahmen: `SKR ${state.settings.skr}` },
+    objekte: state.objects.map((o) => ({ name: o.name, adresse: [o.street, o.zip, o.city].filter(Boolean).join(" "), art: C.OBJECT_TYPES[o.type], baujahr: o.year, kaufdatum: o.purchaseDate, gebaeudeanteil: o.buildingShare ? eur(o.buildingShare) : null, afa_satz: o.afaRate, eigentuemer: o.owners || null,
+      einheiten: state.units.filter((u) => u.objectId === o.id).map((u) => { const c = activeContract(u.id, key); const r = c ? C.rentForMonth(c, key) : null;
+        return { name: u.name, art: C.UNIT_TYPES[u.type], flaeche_m2: u.area, zimmer: u.rooms, mieter: c ? tenantNames(c) : (u.type === "ferienwohnung" ? "Ferienvermietung" : "leer"), mietbeginn: c?.start, mietende: c?.end || null, kalt: r && eur(r.kalt), nk: r && eur(r.nk), gesamt: r && eur(r.total), kaution: c?.kaution ? eur(c.kaution) : null, personen: c?.persons, ausstattung: u.features || null }; }) })),
+    mietrueckstaende_12_monate: si.filter((r) => r.diff < 0).map((r) => ({ vertrag: contractLabel(byId("contracts", r.contractId)), monat: r.key, offen: eur(-r.diff) })),
+    soll_ist_aktueller_monat: C.sollIst(state, key, key).map((r) => ({ vertrag: contractLabel(byId("contracts", r.contractId)), soll: eur(r.soll), ist: eur(r.ist) })),
+    offene_bankumsaetze: state.transactions.filter((t) => !t.link).slice(0, 40).map((t) => ({ datum: t.date, betrag: eur(t.amount), name: t.name, zweck: t.purpose })),
+    ausgaben: [y - 1, y].map((yy) => ({ jahr: yy, nach_kategorie: Object.fromEntries(Object.entries(state.expenses.filter((e) => e.date.startsWith(String(yy))).reduce((m, e) => { m[C.EXPENSE_CATEGORIES[e.category]?.label || e.category] = (m[C.EXPENSE_CATEGORIES[e.category]?.label || e.category] || 0) + e.amount; return m; }, {})).map(([k, v]) => [k, eur(v)])) })),
+    letzte_ausgaben: [...state.expenses].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 30).map((e) => ({ datum: e.date, betrag: eur(e.amount), empfaenger: e.vendor, kategorie: C.EXPENSE_CATEGORIES[e.category]?.label, objekt: byId("objects", e.objectId)?.name || null, beleg: (e.fileIds || []).length ? "ja" : "nein" })),
+    anlage_v: [y - 1, y].map((yy) => ({ jahr: yy, objekte: C.anlageV(state, yy).map((r) => ({ objekt: r.name, einnahmen: eur(r.incomeTotal), werbungskosten: eur(r.costTotal), afa: eur(r.costs.afa), ergebnis: eur(r.result) })) })),
+    nebenkostenabrechnungen: (state.nkStatements || []).map((st) => { const r = C.nkAbrechnung(state, st); return { objekt: byId("objects", st.objectId)?.name, zeitraum: `${st.from} bis ${st.to}`, frist: r.deadline, gesamtkosten: eur(r.total), positionen: st.items.map((i) => `${i.label}: ${eur(i.amount)} nach ${C.NK_KEYS[i.key]}`), ergebnisse: r.contracts.map((c) => ({ vertrag: contractLabel(byId("contracts", c.contractId)), kosten: eur(c.total), vorauszahlung: eur(c.prepaid), saldo: eur(c.saldo) })), leerstand_vermieter: eur(r.owner.total), warnungen: r.warnings }; }),
+    ferienwohnung: fewo.length ? { kennzahlen_jahr: (() => { const k = C.fewoStats(state, fewo, `${y}-01-01`, `${y + 1}-01-01`); return { auslastung: `${Math.round(k.occupancy * 100)} %`, adr: eur(k.adr), revpar: eur(k.revpar), logis_umsatz: eur(k.lodging), buchungen: k.bookings, storno: `${Math.round(k.cancelRate * 100)} %`, direkt: `${Math.round(k.directShare * 100)} %` }; })(),
+      naechste_buchungen: state.bookings.filter((b) => b.to >= today() && b.status !== "storniert").sort((a, b) => (a.from < b.from ? -1 : 1)).slice(0, 15).map((b) => ({ gast: b.guest, von: b.from, bis: b.to, personen: Number(b.adults || 0) + Number(b.children || 0), kanal: b.channel, preis: eur((b.total || 0) + (b.cleaning || 0)), status: b.status })) } : null,
+    offene_rechnungen: state.invoices.filter((i) => ["offen", "teilbezahlt"].includes(i.status)).map((i) => ({ nr: i.number, an: i.recipient?.name, betrag: eur(C.invoiceTotals(i).gross), bezahlt: eur(C.paidForInvoice(state, i.id)) })),
+    dokumente_im_eingang: state.documents.filter((x) => x.status === "neu").map((x) => x.name),
+    offene_fragen_steuer: C.taxOpenPoints(state, y - 1),
+  };
+}
+
+function viewKi() {
+  const chat = ui.chat || (ui.chat = []);
+  const examples = ["Wer ist mit der Miete im Rückstand und wie viel?", "Wie hoch war mein Überschuss letztes Jahr je Objekt?", "Welche Kosten darf ich in der Nebenkostenabrechnung umlegen?", "Prüfe meine letzte Nebenkostenabrechnung auf Fehler.", "Welche Belege fehlen noch für den Steuerberater?", "Lohnt sich eine Mieterhöhung? Was muss ich beachten?", "Schreib eine freundliche Nachricht an meine nächsten Feriengäste."];
+  if (!K.hasKey()) return head("KI-Assistent") + `<div class="card empty"><div class="big">✨</div><p>Der KI-Assistent beantwortet Fragen zu deinen Immobilien, prüft Abrechnungen, liest Belege aus und formuliert Briefe.</p><p class="small" style="margin:10px 0">Dafür wird ein eigener Claude-API-Schlüssel benötigt (console.anthropic.com → API Keys). Abgerechnet wird nach Nutzung, meist wenige Cent pro Anfrage.</p><a class="btn primary" href="#/einstellungen">Schlüssel in den Einstellungen eintragen</a></div>`;
+  return head("KI-Assistent", "Fragen zu deinen Daten, Mietrecht, Nebenkosten und Steuern – Antworten auf Basis deiner App-Daten", chat.length ? btn("kiClear", "Neues Gespräch") : "") + `
+    <div class="card chat">
+      ${chat.length ? chat.map((m, i) => `<div class="msg q">${esc(m.q)}</div><div class="msg a">${m.a ? fmtAnswer(m.a) : '<span class="muted">⏳ denkt nach …</span>'}${m.a ? `<div class="toolbar" style="margin-top:6px">${btn("kiCopy", "Kopieren", "sm", i)}${btn("kiToLetter", "Als Brief übernehmen", "sm", i)}</div>` : ""}</div>`).join("") : `<p class="muted">Beispiele:</p><div class="toolbar">${examples.map((x) => `<button class="btn sm" data-act="kiExample" data-id="${esc(x)}">${esc(x)}</button>`).join("")}</div>`}
+    </div>
+    <form class="card inline" data-form="ki"><textarea name="q" placeholder="Deine Frage …" style="flex:1;min-height:60px" ${ui.kiAsking ? "disabled" : ""}></textarea><button class="btn primary" ${ui.kiAsking ? "disabled" : ""}>Senden</button></form>
+    <p class="small muted">Beim Senden werden die App-Daten (Objekte, Mieter, Beträge) an die Claude API von Anthropic übertragen. Keine Rechts- oder Steuerberatung.</p>`;
+}
+
+function fmtAnswer(t) {
+  return esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/^#{1,4} (.+)$/gm, "<b>$1</b>").replace(/\n/g, "<br>");
+}
+
+async function kiAsk(q) {
+  if (!q.trim() || ui.kiAsking) return;
+  ui.chat = ui.chat || [];
+  const history = ui.chat.filter((m) => m.a && !m.err).slice(-8);
+  const entry = { q, a: "" };
+  ui.chat.push(entry); ui.kiAsking = true; render();
+  try { entry.a = await K.ask({ question: q, history, context: buildContext() }); }
+  catch (e) { entry.a = "⚠️ " + K.friendlyError(e); entry.err = true; }
+  ui.kiAsking = false; render();
+  window.scrollTo(0, document.body.scrollHeight);
 }
 
 // ---------------------------------------------------------------- Routing & Events
@@ -1221,10 +1607,11 @@ function viewSettings() {
 function render() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [route, arg] = hash.split("/");
-  $("#nav").innerHTML = NAV.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
-  const views = { "": viewDashboard, objekte: viewObjects, mieter: viewTenants, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg) };
+  $("#nav").innerHTML = NAV.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && ["bericht", "paket"].includes(route)) || (r === "nebenkosten" && route === "nkbrief") || (r === "briefe" && route === "brief") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
+  const views = { "": viewDashboard, objekte: viewObjects, mieter: viewTenants, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi };
   try {
     $("#view").innerHTML = (views[route] || viewDashboard)();
+    if (document.querySelector("img[data-doc]")) hydrateDocImages();
   } catch (e) {
     console.error(e);
     $("#view").innerHTML = `<div class="card"><h2>Fehler in dieser Ansicht</h2><pre class="small">${esc(e.stack || e)}</pre></div>`;
@@ -1232,7 +1619,33 @@ function render() {
 }
 
 const actions = {
-  newObject: () => editObject(), editObject, newUnit: (id) => editUnit(null, id), editUnit,
+  newObject: () => editObject(), editObject,
+  openDoc, editDoc, bookDoc, kiDoc: (id) => kiReadDoc(id),
+  docFilter: (f) => { ui.docFilter = f; render(); },
+  letterReset: () => { ui.letter.body = ""; render(); },
+  letterKi: async () => {
+    const L = ui.letter; if (!K.hasKey()) return toast("Bitte zuerst den KI-Schlüssel in den Einstellungen eintragen.");
+    ui.letterBusy = true; render();
+    try { const r = await K.draftLetter({ kind: LETTERS[L.kind][0], instructions: L.instr, facts: letterFacts(L.contractId), current: `${L.subject}\n\n${L.body}` }); L.subject = r.subject; L.body = r.body; }
+    catch (e) { alert(K.friendlyError(e)); }
+    ui.letterBusy = false; render();
+  },
+  letterSave: () => { const L = ui.letter; const l = { id: C.uid("l_"), date: today(), contractId: L.contractId, kind: L.kind, subject: L.subject, body: L.body }; state.letters.push(l); S.save(state); location.hash = `#/brief/${l.id}`; },
+  letterMail: () => { const L = ui.letter; const c = byId("contracts", L.contractId); const mail = (c?.tenantIds || []).map((x) => byId("tenants", x)?.email).filter(Boolean).join(","); location.href = `mailto:${mail}?subject=${encodeURIComponent(L.subject)}&body=${encodeURIComponent(L.body)}`; },
+  letterDel: (id) => { if (confirm("Brief aus dem Archiv löschen?")) { state.letters = state.letters.filter((x) => x.id !== id); commit("Gelöscht"); } },
+  kiExample: (q) => kiAsk(q),
+  kiClear: () => { ui.chat = []; render(); },
+  kiCopy: (i) => copyText(ui.chat[Number(i)].a),
+  kiToLetter: (i) => { ui.letter = { kind: "frei", contractId: "", subject: "", body: ui.chat[Number(i)].a, instr: "" }; location.hash = "#/briefe"; },
+  nkArchive: (v) => { const [stId, cid] = v.split("|"); const st = state.nkStatements.find((x) => x.id === stId); state.letters.push({ id: C.uid("l_"), date: today(), contractId: cid, kind: "nk", subject: `Betriebskostenabrechnung ${d(st.from)} – ${d(st.to)}`, body: "(siehe gedruckte Abrechnung)", nkStatementId: stId }); commit("Im Briefarchiv vermerkt"); },
+  nkAttach: () => { ui.nkAttach = !ui.nkAttach; render(); },
+  nkKiCheck: async () => {
+    if (!K.hasKey()) return toast("Bitte zuerst den KI-Schlüssel in den Einstellungen eintragen.");
+    ui.chat = ui.chat || [];
+    location.hash = "#/ki";
+    const nk = nkDraft();
+    await kiAsk(`Prüfe die aktuelle Nebenkostenabrechnung für ${byId("objects", nk.objectId)?.name} (${d(nk.from)}–${d(nk.to)}) auf Fehler und Risiken: Sind alle Positionen nach BetrKV umlagefähig, passen die Umlageschlüssel, fehlen typische Kostenarten, ist die Frist eingehalten? Positionen: ${nk.items.map((i) => `${i.label} ${eur(i.amount)} nach ${C.NK_KEYS[i.key]}`).join("; ")}.`);
+  }, newUnit: (id) => editUnit(null, id), editUnit,
   newTenant: () => editTenant(), editTenant, newContract: (unitId) => editContract(null, unitId), editContract, addStep,
   newPayment: () => editPayment(), editPayment, newExpense: () => editExpense(), editExpense,
   newAccount: () => editAccount(), editAccount,
@@ -1262,6 +1675,12 @@ const actions = {
   datev: () => datevExport(ui.datevFrom || `${ui.month}-01`, ui.datevTo || `${ui.month}-${C.daysInMonth(ui.month)}`),
   journal: () => journalCsv(ui.datevFrom || `${ui.month}-01`, ui.datevTo || `${ui.month}-${C.daysInMonth(ui.month)}`),
   delRule: (k) => { delete state.rules[k]; commit("Regel gelöscht"); },
+  backupFull: async () => {
+    toast("Sicherung wird erstellt …");
+    const files = await F.allFiles(); const out = {};
+    for (const [id, blob] of Object.entries(files)) out[id] = { type: blob.type, data: await F.blobToBase64(blob) };
+    download(`hausops-immobilien-sicherung-mit-belegen-${today()}.json`, JSON.stringify({ ...state, _files: out }), "application/json");
+  },
   backup: () => download(`hausops-immobilien-sicherung-${today()}.json`, JSON.stringify(state, null, 1), "application/json"),
   loadDemo: () => { if (state.objects.length && !confirm("Vorhandene Daten werden durch Demo-Daten ersetzt. Fortfahren?")) return; state = S.demoState(); commit("Demo-Daten geladen – probiere „Bank“ → Vorschläge übernehmen"); },
   reset: () => { if (confirm("Wirklich ALLE Daten löschen? Vorher Sicherung herunterladen!") && confirm("Letzte Bestätigung: alles löschen?")) { state = S.emptyState(); commit("Alle Daten gelöscht"); } },
@@ -1300,8 +1719,18 @@ document.addEventListener("change", async (e) => {
     else if (nkf === "share") { it.shares = it.shares || {}; it.shares[e.target.dataset.u] = it.key === "direkt" ? C.parseAmount(v) : Number(String(v).replace(",", ".")) || 0; }
     render(); return;
   }
+  const lf = e.target.dataset?.letter;
+  if (lf) {
+    const L = ui.letter; L[lf] = e.target.value;
+    if (lf === "kind" || lf === "contractId") { L.body = ""; render(); }
+    return;
+  }
   const k = e.target.dataset?.change;
   if (!k) return;
+  if (k === "docUpload" || k === "docScan") { await addFiles(e.target.files, { scan: k === "docScan" }); e.target.value = ""; return; }
+  if (k === "autoKi") { ui.autoKi = e.target.checked; return; }
+  if (k === "attachExpense") { const id = e.target.dataset.id; if (!byId("expenses", id)) return toast("Bitte die Ausgabe zuerst speichern."); $("#modal").close(); await addFiles(e.target.files, { expenseId: id }); editExpense(id); return; }
+  if (k === "kiKey") { K.setKey(e.target.value); toast(e.target.value ? "KI-Schlüssel gespeichert (nur auf diesem Gerät)" : "KI-Schlüssel entfernt"); render(); return; }
   const v = e.target.value;
   if (k === "month") { if (v) { ui.month = v; ui.year = Number(v.slice(0, 4)); } render(); }
   else if (k === "bankSearch") { ui.bankSearch = v; render(); }
@@ -1316,15 +1745,30 @@ document.addEventListener("change", async (e) => {
     if (!file) return;
     try {
       const next = S.importBackup(await file.text());
-      if (confirm(`Sicherung mit ${next.objects.length} Objekten und ${next.transactions.length} Umsätzen einspielen? Aktuelle Daten werden ersetzt.`)) { state = next; commit("Sicherung eingespielt"); }
+      const files = next._files || {}; delete next._files;
+      if (confirm(`Sicherung mit ${next.objects.length} Objekten, ${next.transactions.length} Umsätzen und ${Object.keys(files).length} Belegdateien einspielen? Aktuelle Daten werden ersetzt.`)) {
+        for (const [id, f] of Object.entries(files)) await F.putFile(id, await F.base64ToBlob(f.data, f.type));
+        state = next; commit("Sicherung eingespielt");
+      }
     } catch (err) { alert(err.message); }
   }
 });
+
+document.addEventListener("input", (e) => {
+  const lf = e.target.dataset?.letter;
+  if (lf && ["subject", "body", "instr"].includes(lf)) ui.letter[lf] = e.target.value;
+});
+
+// Drag & Drop von Dateien auf die Belege-Seite
+document.addEventListener("dragover", (e) => { if (e.target.closest?.("[data-drop]")) { e.preventDefault(); e.target.closest("[data-drop]").classList.add("over"); } });
+document.addEventListener("dragleave", (e) => { e.target.closest?.("[data-drop]")?.classList.remove("over"); });
+document.addEventListener("drop", (e) => { const z = e.target.closest?.("[data-drop]"); if (z) { e.preventDefault(); z.classList.remove("over"); addFiles(e.dataTransfer.files); } });
 
 document.addEventListener("submit", (e) => {
   const f = e.target.dataset?.form;
   if (!f) return;
   e.preventDefault();
+  if (f === "ki") { kiAsk(e.target.q.value); return; }
   const fd = Object.fromEntries(new FormData(e.target));
   const s = state.settings;
   if (f === "owner") Object.assign(s, fd, { invoiceIban: C.normIban(fd.invoiceIban) });

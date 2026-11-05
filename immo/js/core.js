@@ -742,11 +742,12 @@ export function nkItemsFromExpenses(state, objectId, from, to) {
   const items = {};
   for (const e of state.expenses || []) {
     if (e.objectId !== objectId || e.date < from || e.date > to) continue;
-    const kind = map[e.category];
-    if (!kind) continue;
+    const kind = e.betrkv && e.betrkv !== "keine" ? e.betrkv : map[e.category];
+    if (!kind || !BETRKV.some((x) => x[0] === kind)) continue;
     const def = BETRKV.find((x) => x[0] === kind);
-    items[kind] = items[kind] || { kind, label: def[1], amount: 0, key: def[2], pct: 70, shares: {}, umlage: true };
+    items[kind] = items[kind] || { kind, label: def[1], amount: 0, key: def[2], pct: 70, shares: {}, umlage: true, expenseIds: [] };
     items[kind].amount += e.amount;
+    items[kind].expenseIds.push(e.id);
   }
   return Object.values(items);
 }
