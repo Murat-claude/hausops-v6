@@ -2069,10 +2069,14 @@ function moveWizard(unitId) {
       <div id="wizWarn"></div>`;
   };
   dialog({
-    title: "Neuer Mieter / Mieterwechsel", wide: true, submit: "Mieterwechsel speichern", body: body(uid0),
+    title: currentContract(uid0) ? "Mieterwechsel" : "Neuer Mieter", wide: true, submit: currentContract(uid0) ? "Mieterwechsel speichern" : "Mieter speichern", body: body(uid0),
     onOpen: (form) => {
       const check = () => {
         const c = currentContract(form.unitId.value);
+        // Überschrift und Knopf passen sich an: leere Einheit = neuer Mieter, bewohnte Einheit mit Auszug = Mieterwechsel
+        const wechsel = !!c && !!form.doMoveOut?.checked;
+        $(".dh", form).textContent = wechsel ? "Mieterwechsel" : "Neuer Mieter";
+        $("button[type=submit]", form).textContent = wechsel ? "Mieterwechsel speichern" : "Mieter speichern";
         const res = C.checkMove(c, form.doMoveOut?.checked ? form.outDate?.value : c?.end, form.inDate.value);
         $("#wizWarn", form).innerHTML = [...res.warnings.map((w) => `<div class="note warn">${esc(w)}</div>`), res.vacancyDays ? `<div class="note">Leerstand zwischen den Mietern: ${res.vacancyDays} Tage (Nebenkosten dafür trägt der Vermieter).</div>` : ""].join("");
       };
