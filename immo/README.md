@@ -190,6 +190,7 @@ netlify/functions/immo-ical-feed.js       Export-Kalender je Ferienwohnung für 
 netlify/functions/smoobu-sync.js          Smoobu-Buchungen (HMAC), auch von Livora Clean genutzt
 netlify/lib/immo-sync-lib.js              gemeinsame Sync-Logik (HMAC, JWT, iCal, Zugriffsschutz)
 immo/js/recht.js                          rechtliche Prüfungen (Kaution, Mieterhöhung, USt Stellplatz, CO2, DSGVO …)
+immo/js/steuer.js                         Steuererklärung: Vorprüfung, Werte Anlage V / V-FeWo, Umsatzsteuer-Voranmeldung
   vendor/       Anthropic SDK (Browser-Bundle) + Lizenz
   tests/        node --test (npm test)
 ```
