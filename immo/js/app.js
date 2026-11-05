@@ -16,9 +16,18 @@ const eur = C.fmtEUR, d = C.fmtDate;
 const byId = (list, id) => (state[list] || []).find((x) => x.id === id);
 const sum = (arr, f = (x) => x) => arr.reduce((s, x) => s + (f(x) || 0), 0);
 
-function persist() { S.save(state); scheduleSync(); }
+function persist() { if (blockedWrite()) return; S.save(state); scheduleSync(); }
+
+// Nur-Lesen-Modus (Testphase abgelaufen / Abo beendet): Änderung verwerfen und Tarif anbieten
+function blockedWrite() {
+  if (!isCloud() || canWrite()) return false;
+  if (auth.snapshot) state = S.normalizeState(JSON.parse(auth.snapshot));
+  render(); paywall();
+  return true;
+}
 
 function commit(msg) {
+  if (blockedWrite()) return;
   if (!S.save(state) && !isCloud()) toast("⚠️ Speichern fehlgeschlagen (Speicher voll?) – bitte Datensicherung exportieren.");
   else if (msg) toast(msg);
   scheduleSync();
@@ -136,7 +145,8 @@ function dialog({ title, body, onSubmit, onDelete, submit = "Speichern", wide = 
     e.preventDefault();
     const bad = [...form.querySelectorAll("[required]")].find((el) => !el.value.trim());
     if (bad) { bad.focus(); toast("Bitte Pflichtfelder ausfüllen."); return; }
-    if (onSubmit(form) !== false) dlg.close();
+    const r = onSubmit(form);
+    if (r !== false && form.isConnected) dlg.close(); // ein währenddessen geöffneter neuer Dialog bleibt offen
   });
   form.querySelector('[data-dlg="cancel"]').onclick = () => dlg.close();
   const del = form.querySelector('[data-dlg="delete"]');
@@ -1245,6 +1255,7 @@ const DOC_KINDS = { beleg: "Rechnung / Beleg", bescheid: "Bescheid (Grundsteuer,
 const KI_DOC_KIND = { rechnung: "beleg", bescheid: "bescheid", abrechnung: "abrechnung", vertrag: "vertrag", zaehlerstand: "zaehler", kontoauszug: "sonstiges", sonstiges: "sonstiges" };
 
 async function addFiles(fileList, { scan = false, expenseId = null } = {}) {
+  if (isCloud() && !canWrite()) { paywall(); return []; }
   const files = [...fileList];
   if (!files.length) return [];
   const added = [];
@@ -1938,6 +1949,37 @@ const auth = { mode: "local", user: null, profile: null, settings: null, plans: 
 const isCloud = () => auth.mode === "cloud" && !!auth.user;
 const isAdmin = () => isCloud() && auth.profile?.role === "admin";
 const planOf = () => auth.plans.find((p) => p.id === auth.profile?.plan);
+const canWrite = () => { const p = auth.profile; return !p || p.role === "admin" || p.plan !== "trial" || !p.trial_ends_at || new Date(p.trial_ends_at) > new Date(); };
+const buyablePlans = () => auth.plans.filter((x) => x.active && !["trial", "intern"].includes(x.id));
+
+async function startBilling(action, planId) {
+  try {
+    toast(action === "portal" ? "Öffne Kundenportal …" : "Öffne sichere Bezahlseite (Stripe) …");
+    await syncNow();
+    const r = await Cloud.billing(action, planId);
+    if (r.notConfigured) {
+      const st = auth.settings || {}, plan = auth.plans.find((x) => x.id === planId);
+      if (!st.support_email) return alert("Die Online-Bezahlung ist noch nicht eingerichtet. Bitte wende dich an den Anbieter.");
+      location.href = `mailto:${st.support_email}?subject=${encodeURIComponent(`Tarif ${plan?.name || ""} buchen`)}&body=${encodeURIComponent(`Bitte stellt mein Konto ${auth.profile.email} auf den Tarif ${plan?.name || ""} um.`)}`;
+      return;
+    }
+    location.href = r.url;
+  } catch (e) { alert("Bezahlung konnte nicht gestartet werden: " + e.message); }
+}
+
+function planCards(current) {
+  return `<div class="plans">${buyablePlans().map((x) => `<div class="plan ${x.id === current ? "current" : ""}"><b>${esc(x.name)}</b><div class="v">${eur(x.price_month_cents)}<span class="small"> / Monat</span></div><div class="small">${esc(x.description)}${x.max_units ? ` · bis ${x.max_units} Einheiten` : " · unbegrenzt"}</div>
+    ${x.id === current ? '<span class="badge ok">aktuell</span>' : btn("buyPlan", hasSubscription() ? "Wechseln" : "Jetzt buchen", "sm primary", x.id)}</div>`).join("")}</div>`;
+}
+const hasSubscription = () => ["active", "trialing", "past_due"].includes(auth.profile?.subscription_status);
+
+function paywall() {
+  dialog({
+    title: "Testphase abgelaufen – Tarif wählen", wide: true,
+    body: `<p style="margin-bottom:12px">Deine Daten sind sicher gespeichert und bleiben lesbar und exportierbar. Zum Bearbeiten wähle bitte einen Tarif:</p>${planCards(null)}
+      <p class="small muted" style="margin-top:10px">Monatlich kündbar. Bezahlung sicher über Stripe (Karte, SEPA-Lastschrift u. a.). Rechnungen findest du danach unter „Mein Konto“.</p>`,
+  });
+}
 
 // Belege: lokal zwischenspeichern, im Cloud-Modus zusätzlich hochladen / nachladen
 async function putDocBlob(id, blob) {
@@ -1968,7 +2010,9 @@ async function syncNow() {
   if (!isCloud() || !auth.pending) return;
   auth.pending = false;
   try {
+    const sent = JSON.stringify(state);
     auth.version = await Cloud.saveState(state, auth.version);
+    auth.snapshot = sent;
     setSync("ok");
   } catch (e) {
     if (e.code === "conflict") {
@@ -1981,6 +2025,10 @@ async function syncNow() {
       state = S.normalizeState(remote.data); auth.version = remote.version; S.save(state);
       alert(`Dein Tarif „${planOf()?.name || ""}“ erlaubt höchstens ${e.limit} Einheiten. Bitte Tarif wechseln (Mein Konto).`);
       setSync("ok"); render();
+    } else if (e.code === "trial_expired") {
+      auth.profile = await Cloud.profile(auth.user.id).catch(() => auth.profile);
+      if (auth.snapshot) state = S.normalizeState(JSON.parse(auth.snapshot));
+      setSync("ok"); render(); paywall();
     } else if (e.code === "blocked") {
       setSync("error"); alert("Dein Konto ist gesperrt. Bitte wende dich an den Support.");
     } else {
@@ -2012,6 +2060,19 @@ async function boot() {
   });
   const s = await Cloud.session().catch(() => null);
   if (s) await enterAccount(s.user); else render();
+  const ret = new URLSearchParams(location.search).get("checkout");
+  if (ret && s) {
+    history.replaceState(null, "", location.pathname + location.hash);
+    if (ret === "success") {
+      toast("Danke! Zahlung erfolgreich – dein Tarif wird freigeschaltet …");
+      for (let i = 0; i < 8; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        auth.profile = await Cloud.profile(s.user.id).catch(() => auth.profile);
+        if (hasSubscription()) break;
+      }
+      render(); toast(hasSubscription() ? `Tarif „${planOf()?.name}“ ist aktiv.` : "Die Freischaltung dauert etwas – bitte gleich neu laden.");
+    }
+  }
 }
 
 async function enterAccount(user) {
@@ -2023,6 +2084,7 @@ async function enterAccount(user) {
     const remote = await Cloud.loadState(user.id);
     auth.version = remote.version;
     state = S.normalizeState(remote.data);
+    auth.snapshot = JSON.stringify(state);
     S.save(state);
     Cloud.touch();
     // Erster Login: vorhandene lokale Daten (aus dem lokalen Modus) übernehmen?
@@ -2097,7 +2159,10 @@ function banners() {
   const out = [];
   if (auth.settings?.announcement) out.push(`<div class="note warn noprint">📣 ${esc(auth.settings.announcement)}</div>`);
   const t = trialInfo();
-  if (t && (t.expired || t.days <= 7)) out.push(`<div class="note warn noprint">${t.expired ? "Deine Testphase ist abgelaufen." : `Deine Testphase endet in ${t.days} Tag(en).`} <a href="#/konto">Tarif wählen →</a></div>`);
+  if (t && (t.expired || t.days <= 7)) out.push(`<div class="note warn noprint">${t.expired ? "🔒 Deine Testphase ist abgelaufen – Nur-Lesen-Modus. Daten bleiben erhalten und exportierbar." : `Deine Testphase endet in ${t.days} Tag(en).`} ${btn("paywall", "Tarif wählen", "sm primary")}</div>`);
+  const p = auth.profile;
+  if (p?.subscription_status === "past_due") out.push(`<div class="note warn noprint">⚠️ Die letzte Zahlung ist fehlgeschlagen. Bitte Zahlungsmethode aktualisieren. ${btn("billingPortal", "Zahlungsmethode ändern", "sm primary")}</div>`);
+  if (p?.cancel_at_period_end && p.current_period_end) out.push(`<div class="note noprint">Dein Abo ist gekündigt und endet am ${d(p.current_period_end.slice(0, 10))}. ${btn("billingPortal", "Kündigung zurücknehmen", "sm")}</div>`);
   return out.join("");
 }
 
@@ -2112,9 +2177,10 @@ function viewKonto() {
     <div class="card"><h2>Tarif</h2>
       <p><b>${esc(plan?.name || p.plan)}</b> ${plan?.price_month_cents ? `· ${eur(plan.price_month_cents)} / Monat` : ""} ${t ? (t.expired ? '<span class="badge bad">Testphase abgelaufen</span>' : `<span class="badge warn">Test bis ${d(t.end)}</span>`) : ""}</p>
       <p class="small muted">Nutzung: ${state.units.length} Einheiten${plan?.max_units ? ` von max. ${plan.max_units}` : ""} · ${state.objects.length} Objekte · ${state.documents.length} Dokumente</p>
-      <div class="plans" style="margin-top:10px">${auth.plans.filter((x) => x.active && !["trial", "intern"].includes(x.id)).map((x) => `<div class="plan ${x.id === p.plan ? "current" : ""}"><b>${esc(x.name)}</b><div class="v">${eur(x.price_month_cents)}<span class="small"> / Monat</span></div><div class="small">${esc(x.description)}</div>
-        ${x.id === p.plan ? '<span class="badge ok">aktuell</span>' : `<a class="btn sm" href="mailto:${esc(st.support_email || "")}?subject=${encodeURIComponent(`Tarifwechsel auf ${x.name}`)}&body=${encodeURIComponent(`Bitte stellt mein Konto ${p.email} auf den Tarif ${x.name} um.`)}">Wechseln</a>`}</div>`).join("")}</div>
-      <p class="small muted" style="margin-top:8px">Der Tarifwechsel wird aktuell per E-Mail beauftragt und vom Admin freigeschaltet.</p></div>
+      ${p.subscription_status ? `<p class="small">Abo: ${esc({ active: "aktiv", trialing: "Testzeitraum", past_due: "Zahlung offen", canceled: "beendet", unpaid: "unbezahlt", incomplete: "unvollständig" }[p.subscription_status] || p.subscription_status)}${p.current_period_end ? ` · ${p.cancel_at_period_end ? "endet" : "verlängert sich"} am ${d(p.current_period_end.slice(0, 10))}` : ""}</p>` : ""}
+      <div style="margin-top:10px">${planCards(p.plan)}</div>
+      <div class="toolbar" style="margin-top:10px">${p.stripe_customer_id ? btn("billingPortal", "💳 Zahlungen, Rechnungen & Kündigung", "") : ""}</div>
+      <p class="small muted" style="margin-top:8px">Monatlich kündbar. Bezahlung sicher über Stripe; Rechnungen werden automatisch per E-Mail versandt.</p></div>
     <form class="card" data-form="password"><h2>Passwort ändern</h2>
       <label class="f"><span>Neues Passwort (mind. 8 Zeichen)</span><input name="password" type="password" minlength="8" required autocomplete="new-password" style="max-width:340px"></label>
       <button class="btn">Passwort ändern</button></form>
@@ -2163,12 +2229,12 @@ function viewAdmin() {
     nutzer: `<div class="inline" style="margin-bottom:10px"><input placeholder="Suchen (E-Mail, Name, Firma) …" value="${esc(ui.adminSearch || "")}" data-change="adminSearch" style="max-width:320px">${btn("adminReload", "⟳ Aktualisieren", "sm")}</div>
       <div class="table-wrap"><table><thead><tr><th>Nutzer</th><th>Tarif</th><th>Status</th><th class="num">Objekte / Einh.</th><th class="num">Dokumente</th><th>Registriert</th><th>Zuletzt aktiv</th></tr></thead><tbody>
       ${list.map((u) => `<tr class="click" data-act="adminUser" data-id="${u.id}"><td><b>${esc(u.full_name || u.email)}</b>${u.role === "admin" ? ' <span class="badge">Admin</span>' : ""}<div class="small muted">${esc(u.email)}${u.company ? " · " + esc(u.company) : ""}</div></td>
-        <td>${esc(planById[u.plan]?.name || u.plan)}${u.plan === "trial" && u.trial_ends_at ? `<div class="small ${days(u.trial_ends_at) > 0 ? "neg" : "muted"}">bis ${d(u.trial_ends_at.slice(0, 10))}</div>` : ""}</td>
+        <td>${esc(planById[u.plan]?.name || u.plan)}${u.subscription_status ? ` <span class="badge ${u.subscription_status === "active" ? "ok" : u.subscription_status === "past_due" ? "bad" : "grey"}">${esc(u.subscription_status === "active" ? (u.cancel_at_period_end ? "gekündigt" : "Abo") : u.subscription_status)}</span>` : ""}${u.plan === "trial" && u.trial_ends_at ? `<div class="small ${days(u.trial_ends_at) > 0 ? "neg" : "muted"}">bis ${d(u.trial_ends_at.slice(0, 10))}</div>` : ""}</td>
         <td>${u.status === "active" ? '<span class="badge ok">aktiv</span>' : '<span class="badge bad">gesperrt</span>'}</td>
         <td class="num">${u.stats?.objects ?? 0} / ${u.stats?.units ?? 0}</td><td class="num">${u.stats?.documents ?? 0}<div class="small muted">${fmtBytes(Number(u.storage_bytes))}</div></td>
         <td class="small">${d(u.created_at.slice(0, 10))}</td><td class="small">${u.last_seen_at ? d(u.last_seen_at.slice(0, 10)) : "–"}</td></tr>`).join("")}</tbody></table></div>`,
-    tarife: `<div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th class="num">Preis / Monat</th><th class="num">Max. Einheiten</th><th>KI inkl.</th><th>Aktiv</th><th></th></tr></thead><tbody>
-      ${auth.plans.map((p) => `<tr><td class="small">${esc(p.id)}</td><td>${esc(p.name)}<div class="small muted">${esc(p.description)}</div></td><td class="num">${eur(p.price_month_cents)}</td><td class="num">${p.max_units ?? "∞"}</td><td>${p.ki_included ? "✓" : ""}</td><td>${p.active ? "✓" : "–"}</td><td>${btn("adminPlan", "✎", "sm", p.id)}</td></tr>`).join("")}</tbody></table></div>
+    tarife: `<div class="table-wrap"><table><thead><tr><th>ID</th><th>Name</th><th class="num">Preis / Monat</th><th class="num">Max. Einheiten</th><th>KI inkl.</th><th>Stripe</th><th>Aktiv</th><th></th></tr></thead><tbody>
+      ${auth.plans.map((p) => `<tr><td class="small">${esc(p.id)}</td><td>${esc(p.name)}<div class="small muted">${esc(p.description)}</div></td><td class="num">${eur(p.price_month_cents)}</td><td class="num">${p.max_units ?? "∞"}</td><td>${p.ki_included ? "✓" : ""}</td><td class="small">${p.stripe_price_id ? "✓ online buchbar" : '<span class="muted">manuell</span>'}</td><td>${p.active ? "✓" : "–"}</td><td>${btn("adminPlan", "✎", "sm", p.id)}</td></tr>`).join("")}</tbody></table></div>
       ${btn("adminPlan", "+ Tarif", "", "")}
       <p class="small muted" style="margin-top:8px">Das Einheiten-Limit wird serverseitig geprüft. Online-Zahlung (z. B. Stripe) ist der nächste Ausbauschritt – bis dahin Tarife hier manuell zuweisen.</p>`,
     einstellungen: `<form data-form="appsettings"><div class="fgrid">
@@ -2219,6 +2285,7 @@ function adminPlanDialog(id) {
       { k: "id", l: "ID (klein, ohne Leerzeichen)", req: 1 }, { k: "name", l: "Name", req: 1 },
       { k: "price_month_cents", l: "Preis pro Monat (€)", t: "money" }, { k: "max_units", l: "Max. Einheiten (leer = unbegrenzt)", t: "number" },
       { k: "description", l: "Beschreibung", full: 1 }, { k: "sort", l: "Reihenfolge", t: "number" },
+      { k: "stripe_price_id", l: "Stripe Preis-ID (price_…) – leer = nicht online buchbar", full: 1, hint: "Stripe Dashboard → Produktkatalog → Produkt → Preis (monatlich, wiederkehrend) → ID kopieren" },
       { k: "ki_included", l: "KI inklusive", t: "checkbox" }, { k: "active", l: "Buchbar / sichtbar", t: "checkbox" },
     ],
     onSave: async (v) => {
@@ -2259,6 +2326,9 @@ function render() {
 const actions = {
   newObject: () => editObject(), editObject,
   moveWizard: (unitId) => moveWizard(unitId || null),
+  buyPlan: (planId) => startBilling("checkout", planId),
+  billingPortal: () => startBilling("portal"),
+  paywall: () => paywall(),
   letterFor: (v) => { const [kind, contractId] = v.split("|"); if ($("#modal").open) $("#modal").close(); ui.letter = { kind, contractId, subject: "", body: "", instr: "" }; location.hash = "#/briefe"; render(); },
   wizStep: (n) => { nkWizState().step = Number(n); render(); window.scrollTo(0, 0); },
   wizResearch: (id) => wizResearch(id),

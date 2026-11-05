@@ -188,7 +188,7 @@ body.authscreen main { max-width: none; padding: 0; }
 .auth-box { align-self: center; justify-self: center; width: min(440px, calc(100% - 32px)); margin: 32px 16px; }
 .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .plan { border: 1px solid rgba(255,255,255,.25); border-radius: 10px; padding: 12px; }
-.card .plan, .plans .plan.current { border-color: var(--line); }
+.card .plan, dialog .plan, .plans .plan.current { border-color: var(--line); }
 .plan.current { outline: 2px solid var(--brand); }
 .plan .v { font-size: 20px; font-weight: 700; margin: 4px 0; }
 @media (max-width: 900px) {

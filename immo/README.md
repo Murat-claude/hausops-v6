@@ -57,9 +57,29 @@ Die App läuft in zwei Modi:
 
 Getestet: Die Zugriffsregeln laufen mit `immo/supabase/tests/rls_test.sql` gegen ein lokales Postgres mit nachgebauter Supabase-Umgebung (`tests/supabase_stub.sql`). Geprüft werden Datentrennung, Rechte, Tarif-Limit, Versionskonflikt, Sperre und geschlossene Registrierung.
 
+### Online-Bezahlung mit Stripe (Abos)
+
+So funktioniert es für deine Kunden:
+- **Tarif buchen**: Unter „Mein Konto“ oder im Hinweis nach der Testphase auf „Jetzt buchen“ klicken. Das öffnet die Stripe-Bezahlseite (Karte, SEPA-Lastschrift u. a., Gutscheincodes, Rechnungsadresse, USt-IdNr.).
+- **Automatische Freischaltung**: Nach der Zahlung meldet Stripe das per Webhook. Der Tarif wird gesetzt und die Testphase beendet.
+- **Kundenportal** („Zahlungen, Rechnungen & Kündigung“): Zahlungsart ändern, Rechnungen herunterladen, Tarif wechseln, kündigen oder die Kündigung zurücknehmen.
+- **Zahlung fehlgeschlagen**: Der Kunde sieht einen Hinweis mit Link zum Portal; im Admin-Bereich erscheint „past_due“.
+- **Testphase abgelaufen oder Abo beendet**: Das Konto wechselt in den **Nur-Lesen-Modus**. Daten bleiben sichtbar und exportierbar, Änderungen und Uploads sperrt der Server, bis ein Tarif gebucht ist. Admins und Tarife ohne Testphase sind davon nicht betroffen.
+- Tarife ohne Stripe-Preis-ID bleiben manuell (Admin weist zu, oder es geht eine E-Mail an den Support).
+
+Einrichtung:
+1. In Supabase zusätzlich `immo/supabase/migrations/20261106000000_billing.sql` ausführen.
+2. Bei https://dashboard.stripe.com je Tarif ein **Produkt mit monatlichem, wiederkehrendem Preis** anlegen und die **Preis-ID** (`price_…`) im Admin-Bereich unter „Tarife“ eintragen.
+3. Stripe → **Einstellungen → Billing → Kundenportal** aktivieren: Zahlungsmethode ändern, Rechnungen, Kündigung und Tarifwechsel (die Produkte freigeben).
+4. Stripe → **Entwickler → Webhooks**: Endpoint `https://<deine-seite>/.netlify/functions/immo-stripe-webhook` mit den Ereignissen `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted` und `invoice.payment_failed`.
+5. In Netlify zusätzlich `STRIPE_SECRET_KEY` (sk_…) und `STRIPE_WEBHOOK_SECRET` (whsec_…) setzen, optional `IMMO_PUBLIC_URL` (z. B. `https://deine-domain.de`).
+6. Zuerst im **Testmodus** (Testschlüssel und Testkarte 4242 4242 4242 4242) durchspielen, dann auf Live-Schlüssel umstellen.
+7. Steuern: Für Rechnungen mit USt in Stripe die Firmendaten und **Stripe Tax** oder feste Steuersätze einrichten (Kleinunternehmer: ohne USt, Hinweis § 19 UStG in den Rechnungseinstellungen).
+
+Getestet: Signaturprüfung, Formularkodierung und die Abbildung aller Abo-Ereignisse auf Tarif und Schreibrecht (`tests/billing.test.cjs`), die Schreibsperre in der Datenbank (`supabase/tests/billing_test.sql`) und im Browser der Ablauf Sperre → Tarif buchen → Rückkehr → Freischaltung → Zahlungsausfall → Portal.
+
 ### Vor dem Verkauf noch offen
 
-- **Online-Zahlung** (z. B. Stripe Checkout und Kundenportal): Bisher weist der Admin Tarife manuell zu.
 - **KI für Kunden**: Derzeit trägt jeder Nutzer seinen eigenen Claude-API-Schlüssel ein. Für „KI inklusive“-Tarife braucht es eine Server-Funktion mit deinem Schlüssel und einem Nutzungslimit.
 - Rechtliches: Impressum, Datenschutzerklärung mit Auftragsverarbeitung (Supabase, Netlify, Anthropic), AGB, AV-Vertrag für Kunden.
 - Eigene Domain und Branding (Produktname ist im Admin-Bereich einstellbar).
@@ -110,7 +130,10 @@ immo/
   js/ki.js      KI-Funktionen (Belegerkennung, Assistent, Briefe) über die Claude API
   js/cloud.js   Anmeldung, Cloud-Speicherung, Admin (Supabase)
   js/app.js     Oberfläche
-  supabase/     Datenbank-Migration + RLS-Tests
+  supabase/     Datenbank-Migrationen + RLS-/Billing-Tests
+netlify/functions/immo-billing.js         Stripe Checkout + Kundenportal
+netlify/functions/immo-stripe-webhook.js  Stripe-Webhook (Signatur geprüft) → Tarif im Profil
+netlify/lib/immo-billing-lib.js           gemeinsame Stripe-/Supabase-Logik
   vendor/       Anthropic SDK (Browser-Bundle) + Lizenz
   tests/        node --test (npm test)
 ```

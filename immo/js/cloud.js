@@ -99,6 +99,7 @@ export async function saveState(data, version) {
     const m = error.message || "";
     if (m.includes("version_conflict")) throw Object.assign(new Error("version_conflict"), { code: "conflict" });
     if (m.includes("plan_limit")) throw Object.assign(new Error(m), { code: "plan_limit", limit: Number(m.split(":")[1]) });
+    if (m.includes("trial_expired")) throw Object.assign(new Error(m), { code: "trial_expired" });
     if (m.includes("account_blocked")) throw Object.assign(new Error(m), { code: "blocked" });
     throw error;
   }
@@ -176,4 +177,18 @@ export function friendlyAuthError(e) {
   if (/rate limit/i.test(m)) return "Zu viele Versuche – bitte kurz warten.";
   if (/fetch|network/i.test(m)) return "Keine Verbindung zum Server.";
   return m;
+}
+
+// ---------------------------------------------------------------- Bezahlung (Stripe über Netlify-Function)
+export async function billing(action, planId) {
+  const s = await session();
+  const res = await fetch("/.netlify/functions/immo-billing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${s.access_token}` },
+    body: JSON.stringify({ action, planId }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (res.status === 501 || res.status === 404) return { notConfigured: true };
+  if (!res.ok || !out.success) throw new Error(out.error || `Fehler ${res.status}`);
+  return out;
 }
