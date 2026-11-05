@@ -179,3 +179,45 @@ export async function research(question) {
   if (!sources.size) for (const b of res.content) if (b.type === "web_search_tool_result" && Array.isArray(b.content)) for (const r of b.content.slice(0, 5)) if (r.url) sources.set(r.url, r.title || r.url);
   return { text, sources: [...sources].map(([url, title]) => ({ url, title })) };
 }
+
+// ---------------------------------------------------------------- Mietvertrag auslesen
+
+const LEASE_SCHEMA = {
+  type: "object", additionalProperties: false,
+  required: ["mieter", "vermieter", "objekt_adresse", "einheit", "flaeche_m2", "mietbeginn", "mietende", "kaltmiete", "nebenkosten_vz", "heizkosten_vz", "zuschlaege", "kaution", "mietart", "staffeln", "kuendigungsfrist", "bk_klausel", "sonstige_bk", "personen", "besonderheiten", "risiken", "confidence"],
+  properties: {
+    mieter: { type: "array", items: { type: "string" }, description: "Namen aller Mieter" },
+    vermieter: { type: "string" },
+    objekt_adresse: { type: "string" },
+    einheit: { type: "string", description: "Bezeichnung/Lage der Wohnung, Garage, Stellplatz, Keller" },
+    flaeche_m2: { type: "number", description: "0 wenn nicht angegeben" },
+    mietbeginn: { type: "string", description: "YYYY-MM-DD oder leer" },
+    mietende: { type: "string", description: "YYYY-MM-DD bei Befristung, sonst leer" },
+    kaltmiete: { type: "number", description: "Nettokaltmiete in Euro pro Monat" },
+    nebenkosten_vz: { type: "number", description: "Betriebskostenvorauszahlung in Euro pro Monat (ohne Heizung), 0 wenn keine" },
+    heizkosten_vz: { type: "number", description: "Heizkostenvorauszahlung in Euro pro Monat, 0 wenn keine/in NK enthalten" },
+    zuschlaege: { type: "number", description: "Zuschläge (Stellplatz, Garage, Möblierung) pro Monat, 0 wenn keine" },
+    kaution: { type: "number" },
+    mietart: { type: "string", enum: ["standard", "staffel", "index"] },
+    staffeln: { type: "array", items: { type: "object", additionalProperties: false, required: ["ab", "kaltmiete"], properties: { ab: { type: "string", description: "YYYY-MM" }, kaltmiete: { type: "number" } } } },
+    kuendigungsfrist: { type: "string", description: "kurz, z. B. '3 Monate (gesetzlich)'" },
+    bk_klausel: { type: "boolean", description: "Wurde die Umlage der Betriebskosten (z. B. nach § 2 BetrKV) wirksam vereinbart?" },
+    sonstige_bk: { type: "array", items: { type: "string" }, description: "Ausdrücklich benannte sonstige Betriebskosten (§ 2 Nr. 17 BetrKV)" },
+    personen: { type: "number", description: "0 wenn nicht angegeben" },
+    besonderheiten: { type: "array", items: { type: "string" }, description: "Wichtige Regelungen: Schönheitsreparaturen, Kleinreparaturen, Tierhaltung, Untervermietung, Keller/Stellplatz inklusive …" },
+    risiken: { type: "array", items: { type: "string" }, description: "Klauseln, die nach aktueller BGH-Rechtsprechung unwirksam sein könnten (z. B. starre Fristen für Schönheitsreparaturen, Quotenabgeltung, Kaution über 3 Kaltmieten), aus Vermietersicht kurz erklärt" },
+    confidence: { type: "string", enum: ["hoch", "mittel", "niedrig"] },
+  },
+};
+
+export async function readLease({ base64, mediaType }) {
+  const fileBlock = mediaType === "application/pdf"
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+    : { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } };
+  return call({
+    effort: "medium",
+    format: LEASE_SCHEMA,
+    system: "Du liest deutsche Miet- und Garagenverträge für den Vermieter aus. Übernimm Daten exakt aus dem Vertrag; was nicht drinsteht, bleibt leer bzw. 0. Beträge in Euro. Prüfe zusätzlich, ob die Betriebskostenumlage wirksam vereinbart ist und welche sonstigen Betriebskosten ausdrücklich genannt sind, und weise auf Klauseln hin, die nach aktueller BGH-Rechtsprechung unwirksam sein könnten – sachlich, kurz, aus Vermietersicht.",
+    messages: [{ role: "user", content: [fileBlock, { type: "text", text: "Lies diesen Mietvertrag aus." }] }],
+  });
+}

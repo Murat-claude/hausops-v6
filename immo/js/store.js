@@ -18,7 +18,7 @@ export function emptyState() {
     version: 1,
     objects: [], units: [], tenants: [], contracts: [],
     accounts: [], transactions: [], payments: [], expenses: [],
-    bookings: [], invoices: [], rules: {}, nkStatements: [], documents: [], letters: [], meterReadings: [],
+    bookings: [], invoices: [], rules: {}, nkStatements: [], documents: [], letters: [], meterReadings: [], notes: [],
     settings: {
       ownerName: "", ownerStreet: "", ownerZip: "", ownerCity: "", ownerEmail: "", ownerPhone: "",
       taxNumber: "", vatId: "", invoiceIban: "", invoiceBic: "", invoiceBank: "",

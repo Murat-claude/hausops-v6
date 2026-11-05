@@ -212,3 +212,22 @@ body.authscreen main { max-width: none; padding: 0; }
 .cols ul { margin: 4px 0 0 16px; }
 .research { background: #eef4fb; }
 .positions td { font-size: 12px; }
+
+/* Mieterordner */
+#gsearch { margin: 0 0 12px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); color: #fff; }
+#gsearch::placeholder { color: #c8d8dc; }
+.folders { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+.folder { display: block; position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 4px 10px 10px 10px; padding: 14px 14px 12px; margin-top: 16px; text-decoration: none; color: var(--ink); box-shadow: var(--shadow); }
+.folder:hover { border-color: var(--brand); }
+.folder .tab { position: absolute; top: -18px; left: -1px; background: #e7d39a; color: #5a4a1a; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 6px 6px 0 0; max-width: 85%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.folder .fhead { display: flex; justify-content: space-between; gap: 6px; align-items: baseline; margin-bottom: 2px; }
+.fbadges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; }
+.kv { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.docline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.timeline { border-left: 3px solid var(--accent); padding: 6px 12px; margin-bottom: 10px; cursor: pointer; }
+.timeline.done { border-color: var(--line); opacity: .65; }
+.result { display: flex; gap: 12px; padding: 10px 6px; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
+.result:hover { background: var(--soft); }
+.result .ic { font-size: 20px; width: 26px; text-align: center; }
+@media (max-width: 900px) { .facts { grid-template-columns: minmax(0, 1fr); } #gsearch { margin-bottom: 8px; } }
