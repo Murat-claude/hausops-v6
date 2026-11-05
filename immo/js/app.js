@@ -893,11 +893,12 @@ function viewRents() {
       <div class="kpi"><div class="l">Ist</div><div class="v">${eur(sum(rows, (r) => r.ist))}</div></div>
       <div class="kpi"><div class="l">Differenz</div><div class="v ${sum(rows, (r) => r.diff) < 0 ? "neg" : "pos"}">${eur(sum(rows, (r) => r.diff))}</div></div>
     </div>
-    <div class="card"><h2>${C.fmtMonth(key)}</h2>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit · Mieter</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Differenz</th><th>Status</th><th>Zahlungen</th></tr></thead><tbody>
+    <div class="card"><h2>${C.fmtMonth(key)}</h2>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit · Mieter</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Differenz</th><th>Status</th><th>Zahlungen</th><th></th></tr></thead><tbody>
       ${rows.map((r) => { const ps = state.payments.filter((p) => p.kind === "miete" && p.contractId === r.contractId && p.period === key);
         const rc = byId("contracts", r.contractId), noTenant = !(rc?.tenantIds || []).some((id) => byId("tenants", id));
         return `<tr><td><button class="btn link" style="padding:0;text-align:left" data-act="editContract" data-id="${esc(r.contractId)}" title="Vertrag ansehen, ändern oder löschen">${esc(contractLabel(rc))}</button>${noTenant ? ` <span class="badge warn">ohne Mieter</span> ${btn("deleteContract", "🗑 Löschen", "sm danger", r.contractId)}` : ""}</td><td class="num">${eur(r.soll)}</td><td class="num">${eur(r.ist)}</td><td class="num ${r.diff < 0 ? "neg" : ""}">${eur(r.diff)}</td><td>${statusBadge(r.diff, r.soll)}</td>
-        <td class="small">${ps.map((p) => `${d(p.date)} ${eur(p.amount)} ${p.txId ? "🏦" : `💶 <button class="btn sm link" data-act="editPayment" data-id="${p.id}">✎</button>`}`).join("<br>")}</td></tr>`; }).join("")}
+        <td class="small">${ps.map((p) => `${d(p.date)} ${eur(p.amount)} ${p.txId ? `🏦 <button class="btn sm link" data-act="unlinkPayment" data-id="${p.id}" title="Zuordnung zur Bank-Buchung lösen">✕</button>` : `💶 <button class="btn sm link" data-act="editPayment" data-id="${p.id}" title="Zahlung bearbeiten oder löschen">✎</button>`}`).join("<br>")}</td>
+        <td class="right nowrap">${btn("editContract", "✎ Bearbeiten", "sm", r.contractId)}</td></tr>`; }).join("")}
       </tbody></table></div>` : '<p class="muted">Keine aktiven Mietverträge in diesem Monat.</p>'}</div>
     <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Jahresübersicht ${ui.year}</h2><div class="toolbar noprint">${btn("year", "‹", "sm", ui.year - 1)}${btn("year", "›", "sm", ui.year + 1)}</div></div>
       <div class="table-wrap"><table class="matrix"><thead><tr><th>Vertrag</th>${months.map((m) => `<th class="m">${C.MONTHS_DE[Number(m.slice(5)) - 1].slice(0, 3)}</th>`).join("")}<th class="num">Saldo</th></tr></thead><tbody>
@@ -4685,6 +4686,12 @@ const actions = {
   accept: (id) => { const tx = byId("transactions", id); applyAssignment(tx, C.suggestAssignment(tx, state), false); commit("Zugeordnet"); },
   acceptAll: () => { let n = 0; for (const tx of state.transactions.filter((t) => !t.link)) { const s = C.suggestAssignment(tx, state); if (s && s.score >= 60) { applyAssignment(tx, s, false); n++; } } commit(`${n} Umsätze zugeordnet`); },
   unlink: (id) => unlink(byId("transactions", id)),
+  unlinkPayment: (pid) => {
+    const tx = state.transactions.find((t) => t.link?.type === "payment" && t.link.id === pid);
+    if (!tx) return editPayment(pid);
+    if (!confirm("Zuordnung lösen? Die Bank-Buchung bleibt erhalten und erscheint wieder unter „Konto & Zahlungen → Offen“, wo du sie neu zuordnen kannst.")) return;
+    unlink(tx);
+  },
   bankFilter: (f) => { ui.bankFilter = f; render(); },
   year: (y) => { ui.year = Number(y); ui.datevFrom = ui.datevTo = null; render(); },
   newBooking: () => editBooking(), editBooking,
