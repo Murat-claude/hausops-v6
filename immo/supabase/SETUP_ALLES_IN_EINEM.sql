@@ -1,4 +1,4 @@
--- HausOps Immobilien – KOMPLETTE Einrichtung in EINEM Schritt
+-- Homevio – KOMPLETTE Einrichtung in EINEM Schritt
 -- Supabase → SQL Editor → New query → diesen ganzen Inhalt einfügen → Run. Nur einmal ausführen (bei einem neuen, leeren Projekt).
 
 
@@ -970,3 +970,8 @@ end;
 $$;
 revoke all on function public.admin_account_types() from public, anon;
 grant execute on function public.admin_account_types() to authenticated;
+
+-- ===== 20261111000000_brand.sql =====
+-- Homevio: neuer Produktname (alter Standardname wird ersetzt, eigene Namen bleiben)
+alter table public.app_settings alter column product_name set default 'Homevio';
+update public.app_settings set product_name = 'Homevio' where product_name in ('', 'HausOps Immobilien');

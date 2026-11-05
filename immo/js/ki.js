@@ -107,7 +107,7 @@ Gib im Feld hinweis_vermieter einen kurzen, konkreten Tipp, wie der Vermieter m�
 
 // ---------------------------------------------------------------- Assistent
 
-const ASSISTANT_SYSTEM = `Du bist der Assistent in „HausOps Immobilien“, der Verwaltungs-App eines privaten Vermieters in Deutschland (Wohnungen, Garagen, Stellplätze, Ferienwohnungen).
+const ASSISTANT_SYSTEM = `Du bist der Assistent in „Homevio“, der Verwaltungs-App eines privaten Vermieters in Deutschland (Wohnungen, Garagen, Stellplätze, Ferienwohnungen).
 Du bekommst die aktuellen Daten der App als JSON. Beantworte Fragen ausschließlich auf Basis dieser Daten und deines Fachwissens zu Vermietung, Nebenkosten (BetrKV, HeizkostenV, § 556 BGB), Mietrecht und Steuern (Anlage V, AfA, Umsatzsteuer bei Ferienwohnungen).
 - Antworte auf Deutsch, kurz, konkret, mit Zahlen aus den Daten (Beträge im Format 1.234,56 €).
 - Wenn etwas nicht in den Daten steht, sag das und nenne, wo man es in der App erfasst.

@@ -30,6 +30,7 @@ async function tx(mode, fn) {
 export const putFile = (id, blob) => tx("readwrite", (s) => s.put(blob, id));
 export const getFile = (id) => tx("readonly", (s) => s.get(id));
 export const deleteFile = (id) => tx("readwrite", (s) => s.delete(id));
+export const clearAll = () => tx("readwrite", (s) => s.clear());
 
 export async function allFiles() {
   const d = await db();

@@ -56,7 +56,7 @@ export function save(state) {
 
 export function importBackup(text) {
   const data = JSON.parse(text);
-  if (!data || !Array.isArray(data.objects)) throw new Error("Keine gültige HausOps-Sicherung.");
+  if (!data || !Array.isArray(data.objects)) throw new Error("Keine gültige Homevio-Sicherung.");
   const base = emptyState();
   return { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}) } };
 }

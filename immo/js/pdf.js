@@ -16,7 +16,7 @@ export function pdfSafe(text) {
 
 export function invoicePdfDoc(m) {
   const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
-  doc.setProperties({ title: pdfSafe(m.title), subject: pdfSafe(m.title), author: pdfSafe(m.author || ""), creator: "HausOps Immobilien" });
+  doc.setProperties({ title: pdfSafe(m.title), subject: pdfSafe(m.title), author: pdfSafe(m.author || ""), creator: "Homevio" });
   const L = 20, R = 190, BOTTOM = 258;
   const grey = [110, 110, 110], dark = [25, 25, 25];
   const font = (size, style = "normal", color = dark) => { doc.setFont("helvetica", style); doc.setFontSize(size); doc.setTextColor(...color); };

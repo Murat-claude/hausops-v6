@@ -812,7 +812,7 @@ const statusBadge = (diff, soll) => diff >= 0 ? (diff > 0 ? `<span class="badge"
 
 function viewDashboard() {
   if (!state.objects.length) {
-    return head("Willkommen bei HausOps Immobilien") + `<div class="card empty"><div class="big">🏠</div>
+    return head(`Willkommen bei ${productName()}`) + `<div class="card empty"><div class="big">🏠</div>
       <p style="margin-bottom:14px">Verwalte Wohnungen, Häuser, Garagen, Stellplätze und Ferienwohnungen – mit Bankabgleich, Rechnungen und DATEV-Export.</p>
       <div class="toolbar" style="justify-content:center">${btn("newObject", "+ Erstes Objekt anlegen", "primary")}${btn("loadDemo", "Demo-Daten ansehen")}</div></div>`;
   }
@@ -1537,7 +1537,7 @@ function viewPackage(yearArg) {
   <div class="head noprint"><a href="#/steuer">← Steuer & DATEV</a><div class="toolbar">${btn("pkgYear", "‹", "", y - 1)}<b>${y}</b>${btn("pkgYear", "›", "", y + 1)}<button class="btn primary" onclick="window.print()">Drucken / PDF</button></div></div>
   ${page(`<h1>Unterlagen Vermietung & Verpachtung ${y}</h1><p class="muted">${esc(s.ownerName)}${s.taxNumber ? ` · St.-Nr. ${esc(s.taxNumber)}` : ""} · erstellt am ${d(today())}</p>
     <h3>Inhalt</h3><ol style="margin-left:20px"><li>Übersicht aller Objekte</li><li>Monatstabellen je Objekt und Einheit</li><li>Werbungskosten je Objekt</li><li>Anschaffungs-/Herstellungskosten (Einordnung StB)</li><li>Nebenkostenabrechnungen</li><li>Beleg-Checkliste</li><li>Offene Fragen</li></ol>
-    <p class="small muted" style="margin-top:12px">Zusammenstellung aus HausOps Immobilien. Einordnungen sind Vorschläge – die Entscheidung trifft der Steuerberater. DATEV-Buchungsstapel liegt separat bei.</p>`)}
+    <p class="small muted" style="margin-top:12px">Zusammenstellung aus ${productName()}. Einordnungen sind Vorschläge – die Entscheidung trifft der Steuerberater. DATEV-Buchungsstapel liegt separat bei.</p>`)}
   ${page(`<h2>1. Übersicht</h2><div class="table-wrap"><table><thead><tr><th>Objekt</th><th>Eigentümer</th><th class="num">Einnahmen</th><th class="num">Werbungskosten</th><th class="num">davon AfA</th><th class="num">Überschuss</th></tr></thead><tbody>
     ${av.map((r) => { const o = byId("objects", r.objectId); const ow = ownersOf(o);
       return `<tr><td>${esc(r.name)}<div class="small muted">${esc(addrOf({ objectId: r.objectId }))}</div></td><td class="small">${ow.length ? ow.map((x) => `${esc(x.name)} ${x.share} %: ${eur(Math.round(r.result * x.share / 100))}`).join("<br>") : esc(s.ownerName)}</td><td class="num">${eur(r.incomeTotal)}</td><td class="num">${eur(r.costTotal)}</td><td class="num">${eur(r.costs.afa)}</td><td class="num"><b>${eur(r.result)}</b></td></tr>`; }).join("")}
@@ -3025,6 +3025,10 @@ function setupFinish() {
 
 // ---------------------------------------------------------------- Konten, Cloud-Sync & Admin
 
+// Markenname: aus den Admin-Einstellungen, alter Standardname wird automatisch zu „Homevio“
+const BRAND = "Homevio";
+const productName = () => { const n = (auth.settings?.product_name || "").trim(); return !n || /^HausOps/i.test(n) ? BRAND : n; };
+const brandLogo = (cls = "") => `<div class="logo ${cls}"><img src="./assets/icon.svg" alt="" class="logo-icon"><span class="wm">${productName() === BRAND ? "home<em>vio</em>" : esc(productName())}</span></div>`;
 const auth = { mode: "local", user: null, profile: null, settings: null, plans: [], version: 0, sync: "ok", syncTimer: null, pending: false, ws: null, role: "owner", workspaces: [], lastChange: null };
 const isCloud = () => auth.mode === "cloud" && !!auth.user;
 // Team: aktueller Bestand (Inhaber-ID) und eigene Rolle darin
@@ -3091,7 +3095,7 @@ function viewCancelForm() {
     <p class="small muted" style="margin-top:12px">${r.mailed ? "Eine Bestätigung wurde zusätzlich an Ihre E-Mail-Adresse gesendet." : "Bitte speichern oder drucken Sie diese Bestätigung."}</p></div></div>`;
   return `<div class="cancel-page"><div class="head">${back}</div><form class="card" data-form="cancel" style="max-width:640px">
     <h1>${ui.cancelKind === "widerruf" ? "Vertrag widerrufen" : "Verträge hier kündigen"}</h1>
-    <p class="small muted" style="margin-bottom:12px">Kündigung deines Abos bei ${esc(st.product_name || "HausOps Immobilien")}. Ohne Angabe eines Datums wirkt sie zum nächstmöglichen Zeitpunkt (Ende des bezahlten Monats). Deine Daten kannst du bis dahin exportieren.</p>
+    <p class="small muted" style="margin-bottom:12px">Kündigung deines Abos bei ${esc(productName())}. Ohne Angabe eines Datums wirkt sie zum nächstmöglichen Zeitpunkt (Ende des bezahlten Monats). Deine Daten kannst du bis dahin exportieren.</p>
     <div class="fgrid">
       <label class="f"><span>Dein Name *</span><input name="name" required value="${esc(auth.profile?.full_name || "")}"></label>
       <label class="f"><span>E-Mail für die Bestätigung *</span><input name="email" type="email" required value="${esc(auth.profile?.email || "")}"></label>
@@ -3411,7 +3415,7 @@ function viewAuth() {
       <button class="btn primary" style="width:100%;justify-content:center">Speichern</button></form>`,
   }[tab];
   return `<div class="auth">
-    <div class="auth-hero"><div class="logo">${esc(st.product_name || "HausOps Immobilien")}</div>
+    <div class="auth-hero">${brandLogo()}
       <h1>Deine Immobilien. Einfach verwaltet.</h1>
       <ul><li>Wohnungen, Häuser, Garagen, Stellplätze & Ferienwohnungen</li><li>Bankabgleich: Mieteingänge automatisch erkannt</li><li>Nebenkostenabrechnung nach BetrKV mit Mieterbrief</li><li>Belege fotografieren – die KI liest sie aus</li><li>Anlage V, DATEV-Export & Steuerberater-Paket</li></ul>
       ${plans.length ? `<div class="plans">${plans.map((p) => `<div class="plan"><b>${esc(p.name)}</b><div class="v">${p.price_month_cents ? eur(p.price_month_cents) + "<span class=\"small\"> / Monat</span>" : "kostenlos"}</div><div class="small">${esc(p.description)}</div></div>`).join("")}</div><p class="small" style="margin-top:8px;color:#dce8eb">${esc(st.price_note || "")}</p>` : ""}
@@ -3945,7 +3949,7 @@ const pfact = (l, v) => (v ? `<div><span class="muted small">${l}</span><br>${v}
 function viewTenantPortal() {
   const p = curPortal();
   const isLandlord = auth.profile?.account_type !== "mieter";
-  const top = `<div class="tp-top"><div class="logo">🔑 Mieterportal</div><div class="toolbar">${isLandlord ? btn("portalLeave", "← Zu meinem Bestand", "sm") : ""}${btn("logout", "Abmelden", "sm")}</div></div>`;
+  const top = `<div class="tp-top"><div class="logo"><img src="./assets/icon.svg" alt="" class="logo-icon">Mieterportal</div><div class="toolbar">${isLandlord ? btn("portalLeave", "← Zu meinem Bestand", "sm") : ""}${btn("logout", "Abmelden", "sm")}</div></div>`;
   if (!p) return `<div class="tp">${top}<div class="card"><h2>Noch kein Zugang freigeschaltet</h2><p>Ihr Konto ist angelegt. Sobald Ihr Vermieter Sie einlädt (Einladung an <b>${esc(auth.user.email)}</b>), erscheint hier Ihr Portal. Bitte melden Sie sich dann erneut an.</p></div></div>`;
   if (!ui.tp || ui.tp.id !== p.id) { ui.tp = { id: p.id, items: null }; loadTenantItems(); }
   const info = p.info || {}, items = ui.tp.items, r = info.rent;
@@ -4071,7 +4075,7 @@ function viewTenantAuth() {
       <label class="f"><span>Passwort</span><input name="password" type="password" autocomplete="current-password" required></label>
       <button class="btn primary" style="width:100%;justify-content:center">Anmelden</button>
       <p class="small" style="margin-top:10px"><button type="button" class="btn link" data-act="authTab" data-id="reset">Passwort vergessen?</button></p></form>`}
-    <p class="small muted" style="margin-top:12px">${legalLink("impressum", "Impressum")} · ${legalLink("datenschutz", "Datenschutz")}${st.product_name ? ` · ${esc(st.product_name)}` : ""}</p></div></div>`;
+    <p class="small muted" style="margin-top:12px">${legalLink("impressum", "Impressum")} · ${legalLink("datenschutz", "Datenschutz")}${` · ${esc(productName())}`}</p></div></div>`;
 }
 
 async function handlePortalInvites() {
@@ -4143,7 +4147,7 @@ function monthPdfModel(key) {
         rows: r.expenses.map((e) => [d(e.date), e.vendor, C.EXPENSE_CATEGORIES[e.category]?.label || e.category, e.beleg ? "ja" : "fehlt", n(e.amount)]), total: ["Summe", "", "", "", n(t.expenses)] },
       { heading: "6. Offene Punkte", cols: [{ label: "Hinweis", w: 1 }], rows: r.open.map((x) => [x]) },
     ],
-    footer: `Erstellt mit ${auth.settings?.product_name || "Homevio"} · Zahlen aus den in der App erfassten Daten; DATEV-Buchungsstapel liegt bei.`,
+    footer: `Erstellt mit ${productName()} · Zahlen aus den in der App erfassten Daten; DATEV-Buchungsstapel liegt bei.`,
   };
 }
 
@@ -4542,7 +4546,13 @@ const actions = {
     ui.nkWiz = null; location.hash = "#/nebenkosten"; toast("Übernommen – Verteilung je Mieter prüfen und speichern");
   },
   nkMeters: (i) => { fillFromMeters(Number(i)); render(); },
-  logout: async () => { await syncNow(); await Cloud.signOut(); location.hash = "#/"; },
+  logout: async () => {
+    await syncNow();
+    // Datenschutz auf gemeinsam genutzten Geräten: lokale Kopien der Daten und Belege dieses Kontos entfernen
+    try { Object.keys(localStorage).filter((k) => k.startsWith("hausops-immo-v1:")).forEach((k) => localStorage.removeItem(k)); } catch {}
+    await F.clearAll().catch(() => {});
+    await Cloud.signOut(); location.hash = "#/";
+  },
   authTab: (t) => { ui.authTab = t; ui.authMsg = ""; render(); },
   legal: showLegal,
   editRepair: (id) => { if ($("#modal").open) $("#modal").close(); editRepair(id); },

@@ -348,3 +348,12 @@ img.pphoto { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; b
 @media (max-width: 900px) {
   .btn { max-width: 100%; white-space: normal; text-align: center; }
 }
+/* Homevio-Logo */
+.logo { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: -.3px; }
+.logo span { color: var(--accent); }
+.logo-icon { width: 30px; height: 30px; border-radius: 8px; flex: none; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.auth-hero .logo { font-size: 30px; }
+.auth-hero .logo-icon { width: 46px; height: 46px; border-radius: 12px; }
+.tp-top .logo-icon { width: 26px; height: 26px; }
+.logo .wm { color: inherit; }
+.logo .wm em { font-style: normal; color: var(--accent); }
