@@ -7,6 +7,7 @@ import * as Cloud from "./cloud.js";
 import * as B from "./betrkv.js";
 import * as R from "./recht.js";
 import * as T from "./steuer.js";
+import * as I from "./instand.js";
 
 let state = S.load();
 const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
@@ -228,6 +229,8 @@ const SPEC = {
     { k: "kalt", l: "Kaltmiete (€/Monat)", t: "money" }, { k: "nk", l: "NK-/Heizkosten-Vorauszahlung (€/Monat)", t: "money" },
     { k: "extra", l: "Zuschläge (Stellplatz, Möblierung …)", t: "money" }, { k: "kaution", l: "Kaution (€)", t: "money" },
     { k: "persons", l: "Personen im Haushalt (für Umlage nach Personen)", t: "number" },
+    { k: "kleinRepCase", l: "Kleinreparaturen: Grenze je Fall (€)", t: "money", hint: "Nur wenn im Vertrag vereinbart – üblich bis ca. 100–120 €" },
+    { k: "kleinRepYear", l: "Kleinreparaturen: Höchstbetrag pro Jahr (€)", t: "money", hint: "Pflicht für eine wirksame Klausel – üblich 6–8 % der Jahreskaltmiete" },
     { k: "mietart", l: "Mietart", t: "select", opts: [["standard", "Normale Miete (Erhöhung nach § 558 BGB)"], ["staffel", "Staffelmiete (§ 557a BGB)"], ["index", "Indexmiete (§ 557b BGB)"]] },
     { k: "notes", l: "Notizen (Kündigungsfrist, Sondervereinbarungen …)", t: "textarea" },
   ],
@@ -2240,6 +2243,9 @@ function editNote(id, preset = {}) {
     },
     onDelete: id && (() => { state.notes = state.notes.filter((x) => x.id !== id); commit("Vorgang gelöscht"); }),
   });
+  const hasRepair = n.repairId && (state.repairs || []).some((r) => r.id === n.repairId);
+  if (id && n.type === "mangel" && !hasRepair) $("#modal .df").insertAdjacentHTML("afterbegin", `<button type="button" class="btn" data-act="repairFromNote" data-id="${n.id}">🔧 Als Reparaturauftrag übernehmen</button>`);
+  else if (hasRepair) $("#modal .df").insertAdjacentHTML("afterbegin", `<button type="button" class="btn" data-act="editRepair" data-id="${n.repairId}">🔧 Zum Reparaturauftrag</button>`);
 }
 
 function openTasks() {
@@ -2444,6 +2450,7 @@ function searchAll(qRaw) {
   for (const o of state.objects) if (hit(`${o.name} ${o.street} ${o.city}`)) out.push({ icon: "🏢", title: o.name, sub: [o.street, o.city].filter(Boolean).join(", "), href: "#/objekte" });
   for (const u of state.units) if (hit(`${u.name} ${C.UNIT_TYPES[u.type]} ${u.features || ""}`)) { const c = currentContract(u.id); out.push({ icon: "🚪", title: unitLabel(u), sub: c ? tenantNames(c) : "frei", href: c ? `#/mieter/${c.tenantIds[0]}` : "#/objekte" }); }
   for (const x of state.documents) if (hit(`${x.name} ${x.note} ${DOC_KINDS[x.kind] || ""}`)) { const c = byId("contracts", x.contractId); out.push({ icon: "📄", title: x.name, sub: `${DOC_KINDS[x.kind] || ""}${c ? " · " + tenantNames(c) : ""}`, href: c ? `#/mieter/${c.tenantIds[0]}` : "#/dokumente", doc: x.id }); }
+  for (const r of state.repairs || []) if (hit(`${r.title} ${r.description || ""} ${r.contractor?.name || ""}`)) out.push({ icon: "🔧", title: r.title, sub: `${I.REPAIR_STATUS[r.status] || ""} · ${byId("objects", r.objectId)?.name || ""}`, href: "#/instand", repair: r.id });
   for (const n of state.notes || []) if (hit(`${n.title} ${n.text}`)) out.push({ icon: "📝", title: n.title, sub: `${d(n.date)} · ${byId("tenants", n.tenantId)?.name || ""}`, href: `#/mieter/${n.tenantId}`, folderTab: "vorgaenge" });
   for (const e of state.expenses) if (hit(`${e.vendor} ${e.note} ${e.belegNr}`)) out.push({ icon: "🧾", title: `${e.vendor} ${eur(e.amount)}`, sub: `${d(e.date)} · ${C.EXPENSE_CATEGORIES[e.category]?.label || ""}`, href: "#/ausgaben" });
   for (const b of state.bookings) if (hit(`${b.guest} ${b.email || ""}`)) out.push({ icon: "☀", title: b.guest, sub: `${d(b.from)}–${d(b.to)} · ${byId("units", b.unitId)?.name || ""}`, href: "#/ferien" });
@@ -2829,7 +2836,7 @@ function navGroups() {
   const hasFewo = fewoUnits().length > 0 || state.bookings.length > 0;
   return [
     [null, [["", "🏠", "Start"]]],
-    ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["briefe", "✉️", "Briefe"]]],
+    ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["instand", "🔧", "Reparaturen"], ["briefe", "✉️", "Briefe"]]],
     ["Geld & Belege", [["bank", "🏦", "Konto & Zahlungen"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📷", "Belege & Dokumente"]]],
     ...(hasFewo ? [["Ferienwohnung", [["ferien", "🏖️", "Belegung & Buchungen"], ["rechnungen", "🧾", "Gäste-Rechnungen"]]]] : []),
     ["Steuer", [["erklaerung", "🧮", "Steuererklärung"], ["steuer", "📊", "Anlage V & DATEV"]]],
@@ -2873,7 +2880,8 @@ function quickAdd() {
       ${tile("🔑", "Neuer Mieter / Einzug", 'data-act="moveWizard" data-id=""')}
       ${tile("📉", "Ausgabe erfassen", 'data-act="newExpense"')}
       ${tile("💶", "Miete bar erhalten", 'data-act="newPayment"')}
-      ${tile("📝", "Notiz / Mangel", 'data-act="quickNote"')}
+      ${tile("🔧", "Reparatur / Schaden", 'data-act="editRepair" data-id=""')}
+      ${tile("📝", "Notiz", 'data-act="quickNote"')}
       ${fewoUnits().length ? tile("🏖️", "Ferien-Buchung", 'data-act="newBooking"') : ""}
       ${tile("🏢", "Haus / Wohnung", 'data-act="newObject"')}
     </div>`,
@@ -2906,6 +2914,10 @@ function buildTodos() {
   for (const r of back) byC[r.contractId] = (byC[r.contractId] || 0) - r.diff;
   for (const [cid, v] of Object.entries(byC).slice(0, 3)) t.push({ ic: "⚠️", text: `${esc(tenantNames(byId("contracts", cid)))} ist mit ${eur(v)} im Rückstand`, btn: btnRaw("letterFor", "Erinnerung schreiben", `zahlungserinnerung|${cid}`) });
   for (const n of openTasks().slice(0, 3)) t.push({ ic: n.type === "mangel" ? "🔧" : "📅", text: `${esc(n.title)} – ${esc(byId("tenants", n.tenantId)?.name || "")}${n.due ? ` (fällig ${d(n.due)})` : ""}`, btn: `<a class="btn sm" href="#/mieter/${n.tenantId}" data-folder-tab="vorgaenge">Öffnen</a>` });
+  for (const r of (state.repairs || []).filter((x) => I.REPAIR_OPEN.includes(x.status) && x.priority !== "normal").slice(0, 3)) t.push({ ic: "🚨", text: `${esc(r.title)} – ${esc(byId("objects", r.objectId)?.name || "")} (${I.PRIORITIES[r.priority]})`, btn: btnRaw("editRepair", "Öffnen", r.id) });
+  const newRep = (state.repairs || []).filter((x) => x.status === "gemeldet" && x.priority === "normal").length;
+  if (newRep) t.push({ ic: "🔧", text: `${newRep} gemeldete Reparatur${newRep > 1 ? "en" : ""} noch nicht beauftragt`, btn: `<a class="btn sm" href="#/instand">Ansehen</a>` });
+  for (const m of I.maintenanceDue(state, today()).slice(0, 3)) t.push({ ic: "🛠", text: `Wartung ${m.overdue ? "überfällig" : "fällig"}: ${esc(m.title)} – ${esc(byId("objects", m.objectId)?.name || "")} (${d(m.due)})`, btn: btnRaw("maintDone", "✓ Erledigt", m.id) });
   const inbox = state.documents.filter((x) => x.status === "neu").length;
   if (inbox) t.push({ ic: "📷", text: `${inbox} Beleg${inbox > 1 ? "e" : ""} im Eingang – buchen`, btn: `<a class="btn sm primary" href="#/dokumente">Buchen</a>` });
   const drafts = state.invoices.filter((i) => i.status === "entwurf").length;
@@ -3437,6 +3449,247 @@ function viewKonto() {
       <div class="small" style="margin-top:10px">${legalLink("impressum", "Impressum")} · ${legalLink("datenschutz", "Datenschutz")} · ${legalLink("agb", "AGB")} · ${legalLink("avv", "Auftragsverarbeitung")} · ${legalLink("widerruf", "Widerruf")} · <a href="#/kuendigen" data-act="setKuendigung">Verträge hier kündigen</a> · <a href="#/kuendigen" data-act="setWiderruf">Vertrag widerrufen</a></div></div>`;
 }
 
+// ---------------------------------------------------------------- Reparaturen & Instandhaltung
+
+const objName = (id) => byId("objects", id)?.name || "";
+const repairWhere = (r) => [objName(r.objectId), byId("units", r.unitId)?.name].filter(Boolean).join(" · ");
+const repBadge = (s) => `<span class="badge ${s === "erledigt" ? "ok" : s === "abgelehnt" ? "grey" : s === "gemeldet" ? "warn" : ""}">${I.REPAIR_STATUS[s] || s}</span>`;
+const activeContractFor = (unitId) => state.contracts.find((c) => c.unitId === unitId && c.start <= today() && (!c.end || c.end >= today()));
+
+function viewInstand() {
+  const tab = ui.instTab || "auftraege", y = ui.year, obj = ui.instObj || "";
+  const st = I.repairStats(state, y, obj);
+  const due = I.maintenanceDue(state, today(), 60);
+  const tabs = [["auftraege", `Aufträge (${st.open} offen)`], ["wartung", `Wartungsplan${due.length ? ` (${due.length} fällig)` : ""}`], ["kosten", "Kosten & Steuer"]];
+  const filter = ui.instFilter || "offen";
+  const list = (state.repairs || []).filter((r) => (!obj || r.objectId === obj) && (filter === "alle" || (filter === "offen" ? I.REPAIR_OPEN.includes(r.status) : r.status === "erledigt")))
+    .sort((a, b) => (I.REPAIR_OPEN.includes(a.status) && a.priority !== "normal" ? -1 : 0) - (I.REPAIR_OPEN.includes(b.status) && b.priority !== "normal" ? -1 : 0) || ((b.reportedAt || "") > (a.reportedAt || "") ? 1 : -1));
+  const card = (r) => {
+    const cost = I.repairCost(state, r);
+    return `<div class="todoitem click" data-act="editRepair" data-id="${r.id}"><span class="ic">${r.priority === "notfall" ? "🚨" : r.priority === "dringend" ? "⚠️" : r.kind === "wartung" ? "🛠" : "🔧"}</span>
+      <span class="tx"><b>${esc(r.title)}</b> ${repBadge(r.status)}<br><span class="small muted">${esc(repairWhere(r))} · gemeldet ${d(r.reportedAt)}${r.reportedBy === "mieter" ? " vom Mieter" : ""}${r.contractor?.name ? ` · ${esc(r.contractor.name)}` : ""}${(r.docIds || []).length ? ` · 📷 ${(r.docIds || []).length}` : ""}</span></span>
+      <span class="num small rc">${cost ? `<b>${eur(cost)}</b>` : r.quote ? `Angebot ${eur(r.quote)}` : ""}${r.payer && r.payer !== "vermieter" ? `<br><span class="muted">${esc(I.PAYERS[r.payer].split(" (")[0].split(" – ")[1] || I.PAYERS[r.payer])}</span>` : ""}</span></div>`;
+  };
+  const maintRows = (state.maintenance || []).filter((m) => !obj || m.objectId === obj).map((m) => ({ ...m, due: I.nextDue(m) })).sort((a, b) => ((a.due || "9") < (b.due || "9") ? -1 : 1));
+  const fp = state.objects.map((o) => ({ o, f: I.fifteenPercent(state, o, today()) })).filter((x) => x.f && x.f.active && (!obj || x.o.id === obj));
+  const body = {
+    auftraege: `<div class="inline" style="margin-bottom:10px"><div class="tabs" style="margin:0">${[["offen", "Offen"], ["erledigt", "Erledigt"], ["alle", "Alle"]].map(([k, l]) => `<button data-act="instFilter" data-id="${k}" class="${filter === k ? "active" : ""}">${l}</button>`).join("")}</div></div>
+      ${list.length ? list.map(card).join("") : `<p class="muted">${filter === "offen" ? "Keine offenen Reparaturen. 👍" : "Noch keine Einträge."}</p>`}`,
+    wartung: `<p class="small muted" style="margin-bottom:10px">Regelmäßige Wartungen und Prüfungen mit Erinnerung auf der Startseite. Umlagefähige Wartungen landen beim Erfassen der Kosten automatisch in der Nebenkostenabrechnung.</p>
+      ${maintRows.length ? `<div class="table-wrap"><table><thead><tr><th>Wartung</th><th>Objekt</th><th>Intervall</th><th>Zuletzt</th><th>Nächste</th><th></th></tr></thead><tbody>${maintRows.map((m) => `<tr><td class="click" data-act="editMaint" data-id="${m.id}"><b>${esc(m.title)}</b>${m.contractor ? `<div class="small muted">${esc(m.contractor)}</div>` : ""}<div class="small muted">${esc(m.note || "")}</div></td><td>${esc(objName(m.objectId))}</td><td>${m.months} Mon.</td><td>${m.lastDone ? d(m.lastDone) : "–"}</td><td class="${m.due && m.due < today() ? "neg" : ""}">${m.due ? d(m.due) : "–"}</td><td>${btn("maintDone", "✓ Erledigt", "sm", m.id)}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Noch kein Wartungsplan.</p>'}
+      <div class="toolbar" style="margin-top:10px">${btn("editMaint", "+ Wartung", "")}${btn("maintTemplates", "⚡ Typische Wartungen vorschlagen", "primary")}</div>`,
+    kosten: `<div class="kpis">
+        <div class="kpi"><div class="l">Kosten ${y}</div><div class="v">${eur(st.total)}</div><div class="s">${st.count} Aufträge</div></div>
+        <div class="kpi"><div class="l">davon Vermieter</div><div class="v">${eur(st.landlord)}</div><div class="s">Erhaltungsaufwand (Anlage V)</div></div>
+        <div class="kpi"><div class="l">Mieter / Versicherung</div><div class="v">${eur((st.byPayer.kleinreparatur || 0) + (st.byPayer.mieter_schaden || 0) + (st.byPayer.versicherung || 0))}</div><div class="s">weiterberechnet bzw. erstattet</div></div>
+        <div class="kpi"><div class="l">Offene Angebote</div><div class="v">${eur(st.quotesOpen)}</div></div></div>
+      <div class="card"><h3>Nach Art</h3><table>${Object.entries(st.byKind).map(([k, v]) => `<tr><td>${esc(I.REPAIR_KINDS[k] || k)}</td><td class="num">${eur(v)}</td></tr>`).join("") || '<tr><td class="muted">Keine Kosten im Jahr.</td></tr>'}</table></div>
+      ${fp.map(({ o, f }) => `<div class="note ${f.pct > 0.8 ? "warn" : ""}"><b>${esc(o.name)}: 15-%-Grenze</b> (anschaffungsnahe Herstellungskosten, § 6 Abs. 1 Nr. 1a EStG) – bis ${d(f.until)} höchstens ca. ${eur(f.limit)} netto für Instandsetzung, sonst nur über AfA absetzbar. Bisher: ${eur(f.sum)} (${Math.round(f.pct * 100)} %), Rest ${eur(Math.max(0, f.left))}.${f.pct > 0.8 ? " Größere Maßnahmen ggf. nach Ablauf der 3 Jahre planen." : ""}</div>`).join("")}
+      <p class="small muted">Tipp: Größere Erhaltungsaufwendungen an Wohngebäuden können auf 2–5 Jahre verteilt werden (§ 82b EStDV) – Einstellung beim Erfassen der Kosten. Modernisierungen können zu einer Mieterhöhung berechtigen (§ 559 BGB, 8 % der Kosten pro Jahr; Ankündigung 3 Monate vorher, § 555c BGB).</p>`,
+  };
+  return head("Reparaturen & Instandhaltung", "Mängel, Aufträge an Handwerker, Kosten und Wartungsplan",
+    `<select data-change="instObj" style="width:auto">${opt([["", "Alle Objekte"], ...state.objects.map((o) => [o.id, o.name])], obj)}</select>` + (tab === "kosten" ? btn("year", "‹", "", y - 1) + `<b style="padding:0 6px">${y}</b>` + btn("year", "›", "", y + 1) : "") + btn("editRepair", "+ Reparatur", "primary")) + `
+    <div class="bigstats four"><div><b>${st.open}</b><span>offen</span></div><div><b>${st.urgent}</b><span>dringend</span></div><div><b>${due.length}</b><span>Wartungen fällig</span></div><div><b>${eur(st.total)}</b><span>Kosten ${y}</span></div></div>
+    <div class="tabs">${tabs.map(([k, l]) => `<button data-act="instTab" data-id="${k}" class="${tab === k ? "active" : ""}">${l}</button>`).join("")}</div>
+    <div class="card">${body[tab]}</div>`;
+}
+
+function editRepair(id, preset = {}) {
+  if (!state.objects.length) return toast("Bitte zuerst ein Objekt anlegen.");
+  const r = (state.repairs || []).find((x) => x.id === id) || { id: C.uid("r_"), status: "gemeldet", kind: "reparatur", priority: "normal", reportedAt: today(), payer: "vermieter", objectId: ui.instObj || state.objects[0].id, expenseIds: [], docIds: [], ...preset };
+  const c = activeContractFor(r.unitId);
+  const cost = I.repairCost(state, r);
+  const kr = r.payer === "kleinreparatur" && c ? I.kleinreparaturCheck(c, cost || r.quote || 0, kleinRepSpent(c, r.id), (c.kalt || 0) * 12) : null;
+  const docs = (r.docIds || []).map((x) => byId("documents", x)).filter(Boolean);
+  const exps = (r.expenseIds || []).map((x) => byId("expenses", x)).filter(Boolean);
+  const isNew = !(state.repairs || []).some((x) => x.id === r.id);
+  dialog({
+    title: isNew ? "Neue Reparatur / Mangel" : `🔧 ${r.title}`, wide: true,
+    body: `<div class="fgrid">
+        <label class="f full"><span>Was ist kaputt? *</span><input name="title" value="${esc(r.title || "")}" placeholder="z. B. Heizung im Bad wird nicht warm" required></label>
+        <label class="f"><span>Objekt</span><select name="objectId">${opt(state.objects.map((o) => [o.id, o.name]), r.objectId)}</select></label>
+        <label class="f"><span>Einheit (optional)</span><select name="unitId">${opt([["", "Gemeinschaftseigentum / ganzes Haus"], ...state.units.filter((u) => u.objectId === r.objectId).map((u) => [u.id, u.name])], r.unitId || "")}</select></label>
+        <label class="f"><span>Art</span><select name="kind">${opt(Object.entries(I.REPAIR_KINDS), r.kind)}</select></label>
+        <label class="f"><span>Dringlichkeit</span><select name="priority">${opt(Object.entries(I.PRIORITIES), r.priority)}</select></label>
+        <label class="f"><span>Status</span><select name="status">${opt(Object.entries(I.REPAIR_STATUS), r.status)}</select></label>
+        <label class="f"><span>Gemeldet am</span><input type="date" name="reportedAt" value="${esc(r.reportedAt || today())}"></label>
+        <label class="f full"><span>Beschreibung</span><textarea name="description" placeholder="Was genau, seit wann, Zugang/Termin beim Mieter …">${esc(r.description || "")}</textarea></label>
+        <label class="f"><span>Handwerker / Firma</span><input name="cname" value="${esc(r.contractor?.name || "")}" list="contractorList"></label>
+        <label class="f"><span>Telefon</span><input name="cphone" value="${esc(r.contractor?.phone || "")}"></label>
+        <label class="f"><span>E-Mail Handwerker</span><input name="cemail" type="email" value="${esc(r.contractor?.email || "")}"></label>
+        <label class="f"><span>Termin / fällig bis</span><input type="date" name="dueDate" value="${esc(r.dueDate || "")}"></label>
+        <label class="f"><span>Angebot / Kostenvoranschlag (€)</span><input name="quote" inputmode="decimal" value="${r.quote ? esc(C.fmtNum(r.quote)) : ""}"></label>
+        <label class="f"><span>Kosten (€) ${exps.length ? "– aus verknüpften Ausgaben" : ""}</span><input name="cost" inputmode="decimal" value="${cost ? esc(C.fmtNum(cost)) : ""}" ${exps.length ? "disabled" : ""}></label>
+        <label class="f full"><span>Wer trägt die Kosten?</span><select name="payer">${opt(Object.entries(I.PAYERS), r.payer || "vermieter")}</select></label>
+      </div>
+      <datalist id="contractorList">${[...new Set((state.repairs || []).map((x) => x.contractor?.name).filter(Boolean))].map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+      ${kr ? `<div class="note ${kr.applies ? "" : "warn"} small">${esc(kr.reason)}${(kr.warn || []).map((w) => `<br>⚠️ ${esc(w)}`).join("")}</div>` : ""}
+      ${r.payer === "kleinreparatur" && !c ? '<div class="note warn small">Für die Kleinreparaturklausel bitte die vermietete Einheit auswählen (aktiver Mietvertrag mit Klausel nötig).</div>' : ""}
+      ${!isNew ? `<h3 style="margin:12px 0 6px">Fotos & Belege</h3><div class="inline">${docs.map((x) => `<span class="att" data-act="openDoc" data-id="${x.id}">${x.thumb ? `<img src="${x.thumb}">` : "📄"} ${esc(x.name.slice(0, 22))}</span>`).join("")}
+          <label class="btn sm">📷 Foto<input type="file" accept="image/*" capture="environment" data-change="repairUpload" data-id="${r.id}" hidden></label><label class="btn sm">📄 Datei<input type="file" accept="image/*,application/pdf" multiple data-change="repairUpload" data-id="${r.id}" hidden></label></div>
+        <h3 style="margin:12px 0 6px">Rechnungen / Kosten</h3>${exps.map((e) => `<div class="small click" data-act="editExpense" data-id="${e.id}">📉 ${d(e.date)} · ${esc(e.vendor || C.EXPENSE_CATEGORIES[e.category]?.label || "")} · <b>${eur(e.amount)}</b></div>`).join("") || '<p class="small muted">Noch keine Rechnung erfasst.</p>'}
+        <div class="toolbar" style="margin-top:8px">${btnRaw("repairExpense", "+ Handwerkerrechnung erfassen", r.id)}${btnRaw("repairOrder", "✉️ Auftrag an Handwerker", r.id)}${r.unitId ? btnRaw("repairNotice", "📣 Mieter informieren", r.id) : ""}</div>
+        ${(r.log || []).length ? `<h3 style="margin:12px 0 6px">Verlauf</h3>${r.log.slice(-8).map((l) => `<div class="small muted">${new Date(l.at).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })} · ${esc(l.text)}</div>`).join("")}` : ""}` : '<p class="small muted">Nach dem Speichern kannst du Fotos anhängen, den Auftrag an den Handwerker schicken und die Rechnung erfassen.</p>'}`,
+    onOpen: (form) => { form.objectId.addEventListener("change", () => { form.unitId.innerHTML = opt([["", "Gemeinschaftseigentum / ganzes Haus"], ...state.units.filter((u) => u.objectId === form.objectId.value).map((u) => [u.id, u.name])], ""); }); },
+    onDelete: !isNew && (() => { state.repairs = state.repairs.filter((x) => x.id !== r.id); commit("Auftrag gelöscht"); }),
+    onSubmit: (form) => {
+      if (!form.title.value.trim()) { toast("Bitte kurz beschreiben, was kaputt ist."); return false; }
+      const before = r.status;
+      const v = {
+        title: form.title.value.trim(), objectId: form.objectId.value, unitId: form.unitId.value, kind: form.kind.value, priority: form.priority.value, status: form.status.value,
+        reportedAt: form.reportedAt.value || today(), description: form.description.value.trim(), dueDate: form.dueDate.value,
+        contractor: { name: form.cname.value.trim(), phone: form.cphone.value.trim(), email: form.cemail.value.trim() },
+        quote: C.parseAmount(form.quote.value) || 0, payer: form.payer.value,
+      };
+      if (!exps.length) v.cost = C.parseAmount(form.cost.value) || 0;
+      if (v.status === "erledigt" && !r.doneAt) v.doneAt = today();
+      const log = [...(r.log || [])];
+      if (isNew) log.push({ at: new Date().toISOString(), text: "angelegt" });
+      else if (before !== v.status) log.push({ at: new Date().toISOString(), text: `Status: ${I.REPAIR_STATUS[v.status]}` });
+      state.repairs = state.repairs || [];
+      upsert("repairs", { ...r, ...v, log });
+      const note = (state.notes || []).find((n) => n.repairId === r.id);
+      if (note && v.status === "erledigt" && !note.done) { note.done = true; note.doneAt = today(); }
+      commit(isNew ? "Reparatur angelegt" : "Gespeichert");
+      if (isNew) setTimeout(() => editRepair(r.id), 50);
+    },
+  });
+}
+
+// Bereits im laufenden Jahr vom Mieter getragene Kleinreparaturen
+function kleinRepSpent(c, exceptId) {
+  const y = today().slice(0, 4);
+  return sum((state.repairs || []).filter((x) => x.id !== exceptId && x.payer === "kleinreparatur" && x.unitId === c.unitId && (x.doneAt || x.reportedAt || "").startsWith(y)), (x) => I.repairCost(state, x));
+}
+
+function repairExpense(id) {
+  const r = state.repairs.find((x) => x.id === id);
+  const e = { id: C.uid("e_"), date: today(), category: r.kind === "modernisierung" ? "herstellung" : r.payer === "umlage" ? "versorgung" : "erhaltung", objectId: r.objectId, vendor: r.contractor?.name || "", note: `Reparatur: ${r.title}`, amount: r.quote || 0, txId: null, distribute: "1" };
+  if ($("#modal").open) $("#modal").close();
+  formDialog({
+    title: `Handwerkerrechnung zu „${r.title}“`, spec: SPEC.expense, data: e,
+    intro: `<div class="note small">Wird als Ausgabe gebucht (Anlage V, DATEV) und mit dem Auftrag verknüpft. ${r.payer === "kleinreparatur" ? "Kleinreparatur: Den Betrag vom Mieter anfordern (Brief „Kostenbeteiligung“) – die Erstattung als Einnahme erfassen." : r.payer === "versicherung" ? "Versicherungsfall: Die Erstattung der Versicherung später als Einnahme erfassen." : ""}</div>`,
+    onSave: (v) => {
+      const exp = { ...e, ...v, amount: Math.abs(v.amount), repairId: r.id };
+      state.expenses.push(exp);
+      r.expenseIds = [...(r.expenseIds || []), exp.id];
+      (r.log ||= []).push({ at: new Date().toISOString(), text: `Rechnung ${eur(exp.amount)} erfasst` });
+      if (r.status !== "erledigt" && confirm("Auftrag als erledigt markieren?")) { r.status = "erledigt"; r.doneAt = today(); }
+      commit("Kosten erfasst");
+      setTimeout(() => editRepair(r.id), 50);
+    },
+  });
+}
+
+function repairOrderText(id) {
+  const r = state.repairs.find((x) => x.id === id), s = state.settings, o = byId("objects", r.objectId), u = byId("units", r.unitId);
+  const c = activeContractFor(r.unitId), t = c ? state.tenants.find((x) => c.tenantIds.includes(x.id)) : null;
+  const text = `Sehr geehrte Damen und Herren,
+
+hiermit beauftrage ich Sie mit folgender Arbeit:
+
+${r.title}${r.description ? `\n${r.description}` : ""}
+
+Ort: ${[o?.street, [o?.zip, o?.city].filter(Boolean).join(" ")].filter(Boolean).join(", ")}${u ? `, ${u.name}` : ""}
+${t ? `Ansprechpartner vor Ort (Mieter): ${t.name}${t.phone ? `, Tel. ${t.phone}` : ""}\n` : ""}${r.dueDate ? `Gewünschter Termin bis: ${d(r.dueDate)}\n` : ""}${r.quote ? `Grundlage: Ihr Angebot über ${eur(r.quote)}.\n` : "Bitte informieren Sie mich vorab, falls die Kosten 500 € übersteigen.\n"}
+Bitte stellen Sie die Rechnung auf:
+${s.ownerName}, ${[s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+und weisen Sie den Lohnanteil gesondert aus (Steuerermäßigung § 35a EStG für den Mieter bei umlagefähigen Kosten).
+
+Mit freundlichen Grüßen
+${s.ownerName}${s.ownerPhone ? `\nTel. ${s.ownerPhone}` : ""}`;
+  textShareDialog(`Auftrag an ${r.contractor?.name || "Handwerker"}`, text, r.contractor?.email, `Auftrag: ${r.title}`, () => {
+    if (r.status === "gemeldet") r.status = "beauftragt";
+    (r.log ||= []).push({ at: new Date().toISOString(), text: `Auftrag an ${r.contractor?.name || "Handwerker"} verschickt` });
+    commit("Als beauftragt markiert");
+  });
+}
+
+// Ankündigung an den Mieter (Erhaltungsmaßnahme § 555a BGB: rechtzeitig ankündigen, Duldungspflicht)
+function repairNoticeText(id) {
+  const r = state.repairs.find((x) => x.id === id), s = state.settings, u = byId("units", r.unitId);
+  const c = activeContractFor(r.unitId), t = c ? state.tenants.find((x) => c.tenantIds.includes(x.id)) : null;
+  const text = `Guten Tag${t ? " " + t.name : ""},
+
+${r.reportedBy === "mieter" ? "vielen Dank für Ihre Meldung. " : ""}wegen „${r.title}“ in Ihrer Wohnung (${u?.name || ""}) habe ich ${r.contractor?.name ? `die Firma ${r.contractor.name}` : "einen Handwerker"} beauftragt.${r.dueDate ? ` Geplant ist der Termin bis ${d(r.dueDate)}.` : ""}${r.contractor?.phone ? ` Die Firma meldet sich zur Terminabsprache bei Ihnen (Tel. ${r.contractor.phone}).` : ""}
+
+Bitte ermöglichen Sie den Zugang zur Wohnung. Es handelt sich um eine Erhaltungsmaßnahme (§ 555a BGB).
+
+Mit freundlichen Grüßen
+${s.ownerName}`;
+  textShareDialog("Mieter informieren", text, t?.email, `Reparatur: ${r.title}`, () => { (r.log ||= []).push({ at: new Date().toISOString(), text: "Mieter informiert" }); commit(); });
+}
+
+function textShareDialog(title, text, email, subject, onSent) {
+  if ($("#modal").open) $("#modal").close();
+  dialog({
+    title, submit: "📋 Kopieren", wide: true,
+    body: `<label class="f"><span>Text (anpassbar)</span><textarea name="text" style="min-height:300px">${esc(text)}</textarea></label>
+      <div class="toolbar"><a class="btn" data-mail href="#">✉️ Im Mail-Programm öffnen${email ? ` (${esc(email)})` : ""}</a><a class="btn" data-wa target="_blank" rel="noopener" href="#">💬 WhatsApp</a></div>`,
+    onOpen: (form) => {
+      form.querySelector("[data-mail]").onclick = (e) => { e.preventDefault(); location.href = `mailto:${encodeURIComponent(email || "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(form.text.value)}`; onSent?.(); $("#modal").close(); };
+      form.querySelector("[data-wa]").onclick = () => { form.querySelector("[data-wa]").href = `https://wa.me/?text=${encodeURIComponent(form.text.value)}`; onSent?.(); };
+    },
+    onSubmit: (form) => { copyText(form.text.value); onSent?.(); },
+  });
+}
+
+function editMaint(id, preset = {}) {
+  const m = (state.maintenance || []).find((x) => x.id === id) || { id: C.uid("w_"), months: 12, objectId: ui.instObj || state.objects[0]?.id, active: true, ...preset };
+  formDialog({
+    title: id ? "Wartung bearbeiten" : "Neue Wartung / Prüfung", data: { ...m, active: m.active !== false },
+    spec: [
+      { k: "title", l: "Was?", req: 1, full: 1, ph: "z. B. Heizungswartung" },
+      { k: "objectId", l: "Objekt", t: "select", opts: () => objectOpts() },
+      { k: "months", l: "Intervall (Monate)", t: "number" },
+      { k: "lastDone", l: "Zuletzt erledigt", t: "date" },
+      { k: "firstDue", l: "Erstmals fällig (wenn noch nie erledigt)", t: "date" },
+      { k: "contractor", l: "Firma / Ansprechpartner" },
+      { k: "betrkv", l: "Kostenart in der NK-Abrechnung", t: "select", opts: () => [["", "nicht umlagefähig"], ...C.BETRKV.map(([k, l]) => [k, l])] },
+      { k: "note", l: "Hinweis", full: 1 },
+      { k: "active", l: "aktiv (Erinnerung)", t: "checkbox" },
+    ],
+    onSave: (v) => { state.maintenance = state.maintenance || []; upsert("maintenance", { ...m, ...v, months: Number(v.months) || 12 }); commit("Wartung gespeichert"); },
+    onDelete: id && (() => { state.maintenance = state.maintenance.filter((x) => x.id !== id); commit("Wartung gelöscht"); }),
+  });
+}
+
+function maintDone(id) {
+  const m = state.maintenance.find((x) => x.id === id);
+  formDialog({
+    title: `✓ ${m.title} erledigt`, data: { date: today(), amount: "" },
+    spec: [{ k: "date", l: "Erledigt am", t: "date", req: 1 }, { k: "amount", l: "Kosten brutto (€, optional)", t: "moneyOpt" }, { k: "vendor", l: "Firma", ph: m.contractor || "" }],
+    intro: `<p class="small muted" style="margin-bottom:8px">Der nächste Termin wird automatisch berechnet (${m.months} Monate).${m.betrkv ? " Die Kosten werden als umlagefähige Betriebskosten gebucht." : ""}</p>`,
+    onSave: (v) => {
+      m.lastDone = v.date;
+      if (typeof v.amount === "number" && v.amount > 0) {
+        const exp = { id: C.uid("e_"), date: v.date, amount: Math.abs(v.amount), category: m.betrkv ? "versorgung" : "erhaltung", objectId: m.objectId, betrkv: m.betrkv || "", vendor: v.vendor || m.contractor || "", note: `Wartung: ${m.title}`, txId: null, distribute: "1" };
+        state.expenses.push(exp);
+        state.repairs = state.repairs || [];
+        state.repairs.push({ id: C.uid("r_"), title: m.title, objectId: m.objectId, unitId: "", kind: "wartung", priority: "normal", status: "erledigt", reportedAt: v.date, doneAt: v.date, payer: m.betrkv ? "umlage" : "vermieter", expenseIds: [exp.id], docIds: [], contractor: { name: v.vendor || m.contractor || "" }, log: [{ at: new Date().toISOString(), text: "aus Wartungsplan" }] });
+      }
+      commit(`Erledigt – nächster Termin ${d(I.nextDue(m))}`);
+    },
+  });
+}
+
+function maintTemplates() {
+  if (!state.objects.length) return toast("Bitte zuerst ein Objekt anlegen.");
+  const objId = ui.instObj || state.objects[0].id;
+  const have = new Set((state.maintenance || []).filter((m) => m.objectId === objId).map((m) => m.key));
+  dialog({
+    title: `Typische Wartungen für ${objName(objId)}`, submit: "Übernehmen",
+    body: `<p class="small muted" style="margin-bottom:8px">Häkchen setzen, was es im Haus gibt. Erstmals fällig: in 30 Tagen (anpassbar).</p>
+      ${I.MAINT_TEMPLATES.map((t) => `<label class="f inline"><input type="checkbox" name="t_${t.key}" ${have.has(t.key) ? "disabled" : ["heizung", "rauchmelder", "schornstein"].includes(t.key) ? "checked" : ""}> <span><b>${esc(t.title)}</b> · alle ${t.months} Monate<br><span class="small muted">${esc(t.note)}</span></span></label>`).join("")}`,
+    onSubmit: (form) => {
+      state.maintenance = state.maintenance || [];
+      let n = 0;
+      for (const t of I.MAINT_TEMPLATES) if (form[`t_${t.key}`]?.checked && !have.has(t.key)) { state.maintenance.push({ id: C.uid("w_"), key: t.key, title: t.title, months: t.months, betrkv: t.betrkv, note: t.note, objectId: objId, firstDue: addDays(today(), 30), active: true }); n++; }
+      commit(`${n} Wartungen in den Plan übernommen`);
+    },
+  });
+}
+
 // ---------------------------------------------------------------- Team & Zugriff
 
 async function loadTeam() {
@@ -3687,7 +3940,7 @@ function render() {
   $("#nav").innerHTML = navHtml(route);
   if (!$("#tabbar")) document.body.insertAdjacentHTML("beforeend", '<nav id="tabbar" class="noprint"></nav>');
   $("#tabbar").innerHTML = tabbarHtml(route);
-  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
+  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
     $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
@@ -3746,6 +3999,18 @@ const actions = {
   logout: async () => { await syncNow(); await Cloud.signOut(); location.hash = "#/"; },
   authTab: (t) => { ui.authTab = t; ui.authMsg = ""; render(); },
   legal: showLegal,
+  editRepair: (id) => { if ($("#modal").open) $("#modal").close(); editRepair(id); },
+  instTab: (t) => { ui.instTab = t; render(); }, instFilter: (f) => { ui.instFilter = f; render(); },
+  repairExpense, repairOrder: repairOrderText, repairNotice: repairNoticeText,
+  editMaint: (id) => editMaint(id), maintDone, maintTemplates,
+  repairFromNote: (nid) => {
+    const n = state.notes.find((x) => x.id === nid), c = byId("contracts", n.contractId) || state.contracts.find((x) => x.tenantIds.includes(n.tenantId));
+    const u = byId("units", c?.unitId);
+    $("#modal").close();
+    const rid = C.uid("r_");
+    n.repairId = rid;
+    editRepair(null, { id: rid, title: n.title, description: n.text || "", objectId: u?.objectId || state.objects[0]?.id, unitId: u?.id || "", reportedAt: n.date, reportedBy: "mieter", tenantId: n.tenantId, payer: c && (c.kleinRepCase || c.kleinreparatur) ? "vermieter" : "vermieter" });
+  },
   teamInvite: () => inviteDialog(),
   teamShareInvite: (v) => { const [token, email] = v.split("|"); shareInvite(token, email); },
   teamRevoke: async (token) => { if (!confirm("Einladung zurückziehen? Der Link funktioniert danach nicht mehr.")) return; try { await Cloud.teamRevokeInvite(token); toast("Einladung zurückgezogen"); loadTeam(); } catch (e) { alert(e.message); } },
@@ -3927,6 +4192,13 @@ document.addEventListener("change", async (e) => {
   if (k === "tenantSearch") { ui.tenantSearch = e.target.value; render(); return; }
   if (k === "adminSearch") { ui.adminSearch = e.target.value; render(); return; }
   if (k === "switchWs") { switchWorkspace(e.target.value); return; }
+  if (k === "instObj") { ui.instObj = e.target.value; render(); return; }
+  if (k === "repairUpload") {
+    const r = state.repairs.find((x) => x.id === e.target.dataset.id);
+    const added = await addFiles(e.target.files, { scan: false, meta: { kind: "foto", objectId: r.objectId, repairId: r.id, note: `Reparatur: ${r.title}` } });
+    r.docIds = [...(r.docIds || []), ...added.map((x) => x.id)]; commit(); e.target.value = "";
+    $("#modal").close(); editRepair(r.id); return;
+  }
   if (k === "autoInvoiceDrafts") { state.settings.autoInvoiceDrafts = e.target.checked; commit(e.target.checked ? "Neue Smoobu-Buchungen bekommen automatisch einen Rechnungsentwurf" : "Automatische Rechnungsentwürfe aus"); return; }
   if (k === "adminMemberRole") { try { await Cloud.adminSetMemberRole(e.target.dataset.owner, e.target.dataset.id, e.target.value); toast("Rolle geändert"); await loadAdmin(); } catch (err) { alert(err.message); } return; }
   if (k === "teamRole") { try { await Cloud.teamSetRole(e.target.dataset.id, e.target.value); toast("Rolle geändert"); loadTeam(); } catch (err) { alert(err.message); } return; }
