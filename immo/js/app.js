@@ -339,9 +339,9 @@ function editContract(id, unitId) {
   const c = byId("contracts", id) || { id: C.uid("c_"), unitId: unitId || "", tenantIds: [], steps: [], start: today().slice(0, 8) + "01" };
   formDialog({
     title: id ? "Mietvertrag bearbeiten" : "Neuer Mietvertrag", spec: SPEC.contract, data: c,
-    intro: (state.tenants.length ? "" : `<div class="note warn">Lege zuerst unter „Mieter“ den Mieter an – dann kannst du ihn hier auswählen.</div>`) + (id ? legalNotes(contractLegal(c)) : ""),
+    intro: (id ? "" : `<div class="note">Tipp: Für einen <b>neuen Mieter</b> ist <button type="button" class="btn sm primary" data-act="moveWizardFromContract" data-id="${esc(unitId || "")}">+ Neuer Mieter / Einzug</button> einfacher – Mieter und Vertrag werden dort zusammen angelegt.</div>`) + (id ? legalNotes(contractLegal(c)) : ""),
     onSave: (v) => {
-      if (!v.tenantIds.length && !confirm("Kein Mieter ausgewählt – trotzdem speichern?")) return false;
+      if (!v.tenantIds.length) { toast("Bitte einen Mieter auswählen. Neuer Mieter? Dann „+ Neuer Mieter / Einzug“ nutzen – dort legst du Mieter und Vertrag in einem Schritt an."); return false; }
       if (!confirmLegal(contractLegal({ ...c, ...v }))) return false;
       upsert("contracts", { ...c, ...v }); commit("Mietvertrag gespeichert");
     },
@@ -871,7 +871,7 @@ function viewObjects() {
         ${units.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit</th><th>Art</th><th>Lage</th><th class="num">m²</th><th class="num">Zi.</th><th>Mieter / Status</th><th class="num">Miete warm</th></tr></thead><tbody>
           ${units.map((u) => {
             const c = activeContract(u.id, key);
-            const status = u.type === "ferienwohnung" ? `<span class="badge">Ferienvermietung</span>` : c ? esc(tenantNames(c)) : `<span class="badge warn">frei</span> ${btn("newContract", "Vermieten", "sm link", u.id)}`;
+            const status = u.type === "ferienwohnung" ? `<span class="badge">Ferienvermietung</span>` : c ? esc(tenantNames(c)) : `<span class="badge warn">frei</span> ${btn("moveWizard", "+ Mieter eintragen", "sm primary", u.id)}`;
             return `<tr class="click" data-act="editUnit" data-id="${u.id}"><td><b>${esc(u.name)}</b>${u.features ? `<div class="small muted">${esc(u.features.slice(0, 80))}</div>` : ""}</td><td>${esc(C.UNIT_TYPES[u.type])}</td><td>${esc(u.floor || "")}</td><td class="num">${u.area || ""}</td><td class="num">${u.rooms || ""}</td><td>${status}</td><td class="num">${c ? eur(C.rentForMonth(c, key).total) : ""}</td></tr>`;
           }).join("")}</tbody></table></div>` : '<p class="muted">Noch keine Einheiten.</p>'}
         ${o.notes ? `<div class="note small">${esc(o.notes)}</div>` : ""}
@@ -895,7 +895,8 @@ function viewRents() {
     </div>
     <div class="card"><h2>${C.fmtMonth(key)}</h2>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit · Mieter</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Differenz</th><th>Status</th><th>Zahlungen</th></tr></thead><tbody>
       ${rows.map((r) => { const ps = state.payments.filter((p) => p.kind === "miete" && p.contractId === r.contractId && p.period === key);
-        return `<tr><td>${esc(contractLabel(byId("contracts", r.contractId)))}</td><td class="num">${eur(r.soll)}</td><td class="num">${eur(r.ist)}</td><td class="num ${r.diff < 0 ? "neg" : ""}">${eur(r.diff)}</td><td>${statusBadge(r.diff, r.soll)}</td>
+        const rc = byId("contracts", r.contractId), noTenant = !(rc?.tenantIds || []).some((id) => byId("tenants", id));
+        return `<tr><td><button class="btn link" style="padding:0;text-align:left" data-act="editContract" data-id="${esc(r.contractId)}" title="Vertrag ansehen, ändern oder löschen">${esc(contractLabel(rc))}</button>${noTenant ? ` <span class="badge warn">ohne Mieter</span> ${btn("deleteContract", "🗑 Löschen", "sm danger", r.contractId)}` : ""}</td><td class="num">${eur(r.soll)}</td><td class="num">${eur(r.ist)}</td><td class="num ${r.diff < 0 ? "neg" : ""}">${eur(r.diff)}</td><td>${statusBadge(r.diff, r.soll)}</td>
         <td class="small">${ps.map((p) => `${d(p.date)} ${eur(p.amount)} ${p.txId ? "🏦" : `💶 <button class="btn sm link" data-act="editPayment" data-id="${p.id}">✎</button>`}`).join("<br>")}</td></tr>`; }).join("")}
       </tbody></table></div>` : '<p class="muted">Keine aktiven Mietverträge in diesem Monat.</p>'}</div>
     <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Jahresübersicht ${ui.year}</h2><div class="toolbar noprint">${btn("year", "‹", "sm", ui.year - 1)}${btn("year", "›", "sm", ui.year + 1)}</div></div>
@@ -4671,6 +4672,13 @@ const actions = {
     await kiAsk(`Prüfe die aktuelle Nebenkostenabrechnung für ${byId("objects", nk.objectId)?.name} (${d(nk.from)}–${d(nk.to)}) auf Fehler und Risiken: Sind alle Positionen nach BetrKV umlagefähig, passen die Umlageschlüssel, fehlen typische Kostenarten, ist die Frist eingehalten? Positionen: ${nk.items.map((i) => `${i.label} ${eur(i.amount)} nach ${C.NK_KEYS[i.key]}`).join("; ")}.`);
   }, newUnit: (id) => editUnit(null, id), editUnit,
   newTenant: () => editTenant(), editTenant, newContract: (unitId) => editContract(null, unitId), editContract, addStep,
+  moveWizardFromContract: (unitId) => { $("#modal").close(); moveWizard(unitId || undefined); },
+  deleteContract: (id) => {
+    const c = byId("contracts", id); if (!c) return;
+    if (state.payments.some((p) => p.contractId === id)) return alert("Zu diesem Vertrag gibt es Zahlungen. Bitte die Zahlungen zuerst einem anderen Vertrag zuordnen oder den Vertrag mit Mietende beenden.");
+    if (!confirm(`Vertrag „${contractLabel(c)}“ wirklich löschen?`)) return;
+    state.contracts = state.contracts.filter((x) => x.id !== id); commit("Vertrag gelöscht");
+  },
   newPayment: () => editPayment(), editPayment, newExpense: () => editExpense(), editExpense,
   newAccount: () => editAccount(), editAccount,
   assign: assignDialog,
