@@ -2890,7 +2890,7 @@ function tabbarHtml(route) {
 }
 
 function openMenu() {
-  dialog({ title: "Menü", body: `<nav class="menu-sheet">${navHtml(location.hash.replace(/^#\/?/, "").split("/")[0])}</nav>` });
+  dialog({ title: "Menü", body: `<nav class="menu-sheet">${navHtml(location.hash.replace(/^#\/?/, "").split("/")[0])}${isCloud() ? `<button class="logout-btn wide" data-act="logout">⎋ Abmelden</button>` : ""}</nav>` });
   $("#modal").classList.add("sheet");
   $("#modal .menu-sheet").addEventListener("click", (e) => { if (e.target.closest("a")) $("#modal").close(); });
 }
@@ -4504,7 +4504,12 @@ function render() {
     setTimeout(hydratePortalImages, 0);
     return;
   }
-  $("#foot").innerHTML = isCloud() ? `<b>${esc(auth.profile?.full_name || auth.user.email)}</b><br>${wsFoot()}<span id="sync">${syncLabel()}</span><br><span id="lastchange">${lastChangeLabel()}</span><span id="livesync"></span>` : `Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.<br><span id="livesync"></span>`;
+  const who = auth.profile?.full_name || auth.user?.email || "";
+  const initials = who.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map((x) => x[0].toUpperCase()).join("") || "?";
+  $("#foot").innerHTML = isCloud() ? `<div class="me"><span class="avatar">${esc(initials)}</span><div class="me-tx"><b>${esc(who)}</b><span class="small">${wsFoot()}<span id="sync">${syncLabel()}</span><br><span id="lastchange">${lastChangeLabel()}</span><span id="livesync"></span></span></div></div>
+    <button class="logout-btn" data-act="logout">⎋ Abmelden</button>` : `Lokaler Modus: Daten nur in diesem Browser. Regelmäßig unter Einstellungen → Datensicherung sichern.<br><span id="livesync"></span>`;
+  if (!$("#mlogout")) $(".side .logo").insertAdjacentHTML("afterend", `<button id="mlogout" class="mlogout" data-act="logout">Abmelden</button>`);
+  $("#mlogout").hidden = !isCloud();
   setTimeout(setSyncBadge, 0);
   if (!$("#gsearch")) $("#nav").insertAdjacentHTML("beforebegin", `<input id="gsearch" type="search" placeholder="🔎 Suchen … ( / )" autocomplete="off">`);
   if (route === "mieter" && arg && ui.folderTenant !== arg) { ui.folderTenant = arg; ui.folderTab = ui.nextFolderTab || "ueberblick"; ui.nextFolderTab = null; }
