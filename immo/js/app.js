@@ -1,0 +1,1081 @@
+// HausOps Immobilien — Oberfläche (Vanilla JS, ohne Build-Schritt)
+import * as C from "./core.js";
+import * as S from "./store.js";
+
+let state = S.load();
+const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
+
+function today() { return new Date().toISOString().slice(0, 10); }
+const $ = (sel, el = document) => el.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const eur = C.fmtEUR, d = C.fmtDate;
+const byId = (list, id) => (state[list] || []).find((x) => x.id === id);
+const sum = (arr, f = (x) => x) => arr.reduce((s, x) => s + (f(x) || 0), 0);
+
+function commit(msg) {
+  if (!S.save(state)) toast("⚠️ Speichern fehlgeschlagen (Speicher voll?) – bitte Datensicherung exportieren.");
+  else if (msg) toast(msg);
+  render();
+}
+
+function toast(msg) {
+  document.querySelectorAll(".toast").forEach((x) => x.remove());
+  const t = document.createElement("div");
+  t.className = "toast"; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+
+function download(name, content, type = "text/plain;charset=utf-8") {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// ---------------------------------------------------------------- Bezeichnungen
+
+const unitLabel = (u) => (u ? `${byId("objects", u.objectId)?.short || byId("objects", u.objectId)?.name || ""} · ${u.name}` : "–");
+const tenantNames = (c) => (c?.tenantIds || []).map((id) => byId("tenants", id)?.name).filter(Boolean).join(", ") || "–";
+const contractLabel = (c) => (c ? `${unitLabel(byId("units", c.unitId))} – ${tenantNames(c)}` : "–");
+const fewoUnits = () => state.units.filter((u) => u.type === "ferienwohnung");
+const activeContract = (unitId, key = ui.month) => state.contracts.find((c) => c.unitId === unitId && C.contractActiveIn(c, key));
+
+function linkLabel(tx) {
+  if (!tx.link) return "";
+  if (tx.link.type === "ignore") return `<span class="badge grey">ignoriert</span>`;
+  if (tx.link.type === "payment") {
+    const p = byId("payments", tx.link.id);
+    if (!p) return "";
+    if (p.kind === "miete") return `<span class="badge ok">Miete ${C.fmtMonth(p.period)}</span> <span class="small">${esc(contractLabel(byId("contracts", p.contractId)))}</span>`;
+    if (p.kind === "fewo") return `<span class="badge ok">Rechnung ${esc(byId("invoices", p.invoiceId)?.number || "")}</span>`;
+    return `<span class="badge ok">${esc(C.INCOME_KINDS[p.kind])}</span> <span class="small">${esc(p.contractId ? contractLabel(byId("contracts", p.contractId)) : "")}</span>`;
+  }
+  const e = byId("expenses", tx.link.id);
+  if (!e) return "";
+  return `<span class="badge">${esc(C.EXPENSE_CATEGORIES[e.category]?.label)}</span> <span class="small">${esc(byId("objects", e.objectId)?.name || "")}</span>`;
+}
+
+function suggestionLabel(s) {
+  if (!s) return "";
+  if (s.kind === "miete") return `Miete ${C.fmtMonth(s.period)} · ${contractLabel(byId("contracts", s.contractId))}`;
+  if (s.kind === "fewo") return `Rechnung ${byId("invoices", s.invoiceId)?.number || ""}`;
+  if (s.kind === "ausgabe") return `${C.EXPENSE_CATEGORIES[s.category]?.label}${s.objectId ? " · " + (byId("objects", s.objectId)?.name || "") : ""}`;
+  if (s.kind === "ignorieren") return "Ignorieren";
+  return C.INCOME_KINDS[s.kind] || s.kind;
+}
+
+// ---------------------------------------------------------------- Formulare
+
+const opt = (pairs, v) => pairs.map(([k, l]) => `<option value="${esc(k)}" ${String(k) === String(v ?? "") ? "selected" : ""}>${esc(l)}</option>`).join("");
+const objectOpts = (empty = "– ohne –") => [["", empty], ...state.objects.map((o) => [o.id, o.name])];
+const unitOpts = (filter = () => true) => state.units.filter(filter).map((u) => [u.id, unitLabel(u)]);
+const contractOpts = () => state.contracts.map((c) => [c.id, contractLabel(c)]);
+
+function fieldHtml(f, data) {
+  const v = data[f.k];
+  const cls = f.full || f.t === "textarea" || f.t === "checks" ? "f full" : "f";
+  const attrs = `name="${f.k}" ${f.req ? "required" : ""} ${f.ph ? `placeholder="${esc(f.ph)}"` : ""}`;
+  let input;
+  switch (f.t) {
+    case "select": input = `<select ${attrs}>${opt(typeof f.opts === "function" ? f.opts() : f.opts, v)}</select>`; break;
+    case "textarea": input = `<textarea ${attrs}>${esc(v)}</textarea>`; break;
+    case "money": input = `<input ${attrs} inputmode="decimal" value="${v || v === 0 ? esc(C.fmtNum(v)) : ""}">`; break;
+    case "number": input = `<input ${attrs} type="number" step="${f.step || 1}" value="${esc(v ?? "")}">`; break;
+    case "checkbox": return `<label class="f inline ${f.full ? "full" : ""}"><input type="checkbox" name="${f.k}" ${v ? "checked" : ""}> ${esc(f.l)}</label>`;
+    case "checks": {
+      const opts = typeof f.opts === "function" ? f.opts() : f.opts;
+      input = `<div class="checks">${opts.map(([k, l]) => `<label><input type="checkbox" name="${f.k}" value="${esc(k)}" ${(v || []).includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("") || '<span class="muted small">Noch keine Einträge vorhanden.</span>'}</div>`;
+      break;
+    }
+    case "list": input = `<input ${attrs} value="${esc((v || []).join(", "))}">`; break;
+    default: input = `<input ${attrs} type="${f.t || "text"}" value="${esc(v ?? "")}">`;
+  }
+  return `<label class="${cls}"><span>${esc(f.l)}${f.req ? " *" : ""}</span>${input}${f.hint ? `<small class="muted">${esc(f.hint)}</small>` : ""}</label>`;
+}
+
+function readFields(form, spec) {
+  const fd = new FormData(form);
+  const out = {};
+  for (const f of spec) {
+    if (f.t === "checkbox") out[f.k] = form.elements[f.k]?.checked || false;
+    else if (f.t === "checks") out[f.k] = fd.getAll(f.k);
+    else if (f.t === "money") out[f.k] = C.parseAmount(fd.get(f.k));
+    else if (f.t === "number") out[f.k] = fd.get(f.k) === "" ? "" : Number(fd.get(f.k));
+    else if (f.t === "list") out[f.k] = String(fd.get(f.k) || "").split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
+    else out[f.k] = String(fd.get(f.k) ?? "").trim();
+  }
+  return out;
+}
+
+// Öffnet einen Dialog. body = HTML, onSubmit(form) → false hält den Dialog offen.
+function dialog({ title, body, onSubmit, onDelete, submit = "Speichern", wide = false, onOpen }) {
+  const dlg = $("#modal");
+  dlg.className = wide ? "wide" : "";
+  dlg.innerHTML = `<form method="dialog" novalidate>
+    <div class="dh">${esc(title)}</div>
+    <div class="db">${body}</div>
+    <div class="df">
+      ${onDelete ? '<button type="button" class="btn danger" data-dlg="delete">Löschen</button>' : ""}
+      <span class="grow"></span>
+      <button type="button" class="btn" data-dlg="cancel">Abbrechen</button>
+      ${onSubmit ? `<button type="submit" class="btn primary">${esc(submit)}</button>` : ""}
+    </div></form>`;
+  const form = $("form", dlg);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const bad = [...form.querySelectorAll("[required]")].find((el) => !el.value.trim());
+    if (bad) { bad.focus(); toast("Bitte Pflichtfelder ausfüllen."); return; }
+    if (onSubmit(form) !== false) dlg.close();
+  });
+  form.querySelector('[data-dlg="cancel"]').onclick = () => dlg.close();
+  const del = form.querySelector('[data-dlg="delete"]');
+  if (del) del.onclick = () => { if (confirm("Wirklich löschen?")) { onDelete(); dlg.close(); } };
+  dlg.showModal();
+  if (onOpen) onOpen(form);
+  return form;
+}
+
+function formDialog({ title, spec, data = {}, onSave, onDelete, wide, intro = "" }) {
+  dialog({
+    title, wide, onDelete,
+    body: `${intro}<div class="fgrid">${spec.map((f) => fieldHtml(f, data)).join("")}</div>`,
+    onSubmit: (form) => onSave(readFields(form, spec)),
+  });
+}
+
+function upsert(list, item) {
+  const arr = state[list];
+  const i = arr.findIndex((x) => x.id === item.id);
+  if (i > -1) arr[i] = item; else arr.push(item);
+}
+
+// ---------------------------------------------------------------- Stammdaten-Formulare
+
+const SPEC = {
+  object: [
+    { k: "name", l: "Bezeichnung", req: 1, ph: "z. B. MFH Lindenstraße" },
+    { k: "short", l: "Kürzel (für DATEV-Buchungstext)", ph: "LIN" },
+    { k: "type", l: "Art", t: "select", opts: Object.entries(C.OBJECT_TYPES) },
+    { k: "street", l: "Straße & Hausnummer" },
+    { k: "zip", l: "PLZ" }, { k: "city", l: "Ort" },
+    { k: "year", l: "Baujahr", t: "number" },
+    { k: "plot", l: "Grundstücksfläche m²", t: "number" },
+    { k: "purchaseDate", l: "Kaufdatum (Übergang Nutzen/Lasten)", t: "date" },
+    { k: "purchasePrice", l: "Kaufpreis inkl. Nebenkosten (€)", t: "money" },
+    { k: "buildingShare", l: "Davon Gebäudeanteil = AfA-Basis (€)", t: "money" },
+    { k: "afaRate", l: "AfA-Satz in %", t: "number", step: 0.01, hint: "2 % (Baujahr 1925–2022), 2,5 % (vor 1925), 3 % (ab 2023)" },
+    { k: "notes", l: "Notizen (Hausverwaltung, Grundbuch, Darlehen …)", t: "textarea" },
+  ],
+  unit: [
+    { k: "objectId", l: "Objekt", t: "select", opts: () => state.objects.map((o) => [o.id, o.name]), req: 1 },
+    { k: "name", l: "Bezeichnung", req: 1, ph: "WE 03 · 1. OG links" },
+    { k: "type", l: "Art", t: "select", opts: Object.entries(C.UNIT_TYPES) },
+    { k: "floor", l: "Lage / Etage" },
+    { k: "area", l: "Wohn-/Nutzfläche m²", t: "number", step: 0.01 },
+    { k: "rooms", l: "Zimmer", t: "number", step: 0.5 },
+    { k: "vat", l: "Umsatzsteuer auf Miete", t: "select", opts: [["0", "steuerfrei (§ 4 Nr. 12 UStG)"], ["7", "7 % (Beherbergung / Ferienwohnung)"], ["19", "19 % (Option / separater Stellplatz)"]] },
+    { k: "maxGuests", l: "Max. Gäste (Ferienwohnung)", t: "number" },
+    { k: "smoobuName", l: "Name in Smoobu (für Import)", hint: "Nur für Ferienwohnungen, falls abweichend" },
+    { k: "meters", l: "Zähler (Strom, Wasser, Gas …)", t: "textarea", ph: "Strom 12345678, Wasser kalt 99887" },
+    { k: "features", l: "Ausstattung / Details", t: "textarea", ph: "Balkon, EBK, Keller Nr. 3, Bad mit Fenster …" },
+  ],
+  tenant: [
+    { k: "name", l: "Name (wie auf Kontoauszug)", req: 1 },
+    { k: "email", l: "E-Mail", t: "email" }, { k: "phone", l: "Telefon" },
+    { k: "ibans", l: "IBAN(s) des Mieters – für automatische Zuordnung", t: "list", full: 1, hint: "Mehrere durch Komma trennen" },
+    { k: "address", l: "Anschrift (falls abweichend)", full: 1 },
+    { k: "notes", l: "Notizen", t: "textarea" },
+  ],
+  contract: [
+    { k: "unitId", l: "Einheit", t: "select", opts: () => unitOpts((u) => u.type !== "ferienwohnung"), req: 1, full: 1 },
+    { k: "tenantIds", l: "Mieter", t: "checks", opts: () => state.tenants.map((t) => [t.id, t.name]) },
+    { k: "start", l: "Mietbeginn", t: "date", req: 1 }, { k: "end", l: "Mietende (leer = unbefristet)", t: "date" },
+    { k: "kalt", l: "Kaltmiete (€/Monat)", t: "money" }, { k: "nk", l: "NK-/Heizkosten-Vorauszahlung (€/Monat)", t: "money" },
+    { k: "extra", l: "Zuschläge (Stellplatz, Möblierung …)", t: "money" }, { k: "kaution", l: "Kaution (€)", t: "money" },
+    { k: "notes", l: "Notizen (Index-/Staffelmiete, Kündigungsfrist …)", t: "textarea" },
+  ],
+  step: [
+    { k: "from", l: "Gültig ab Monat", t: "month", req: 1 },
+    { k: "kalt", l: "Neue Kaltmiete", t: "money" }, { k: "nk", l: "Neue NK-Vorauszahlung", t: "money" }, { k: "extra", l: "Neue Zuschläge", t: "money" },
+  ],
+  expense: [
+    { k: "date", l: "Datum", t: "date", req: 1 }, { k: "amount", l: "Betrag brutto (€)", t: "money", req: 1 },
+    { k: "category", l: "Kategorie", t: "select", opts: Object.entries(C.EXPENSE_CATEGORIES).map(([k, v]) => [k, v.label]) },
+    { k: "objectId", l: "Objekt", t: "select", opts: () => objectOpts() },
+    { k: "vendor", l: "Empfänger / Firma" }, { k: "belegNr", l: "Belegnummer / Rechnungsnr." },
+    { k: "note", l: "Notiz", t: "textarea" },
+  ],
+  payment: [
+    { k: "date", l: "Zahlungsdatum", t: "date", req: 1 }, { k: "amount", l: "Betrag (€)", t: "money", req: 1 },
+    { k: "kind", l: "Art", t: "select", opts: Object.entries(C.INCOME_KINDS).filter(([k]) => k !== "fewo") },
+    { k: "contractId", l: "Mietvertrag", t: "select", opts: () => [["", "–"], ...contractOpts()] },
+    { k: "period", l: "Für Monat", t: "month" }, { k: "note", l: "Notiz (z. B. bar erhalten)" },
+  ],
+  booking: [
+    { k: "unitId", l: "Ferienwohnung", t: "select", opts: () => unitOpts((u) => u.type === "ferienwohnung"), req: 1, full: 1 },
+    { k: "from", l: "Anreise", t: "date", req: 1 }, { k: "to", l: "Abreise", t: "date", req: 1 },
+    { k: "guest", l: "Gast (Rechnungsempfänger)", req: 1 }, { k: "email", l: "E-Mail", t: "email" },
+    { k: "guestStreet", l: "Straße" }, { k: "guestZip", l: "PLZ" }, { k: "guestCity", l: "Ort" }, { k: "phone", l: "Telefon" },
+    { k: "adults", l: "Erwachsene", t: "number" }, { k: "children", l: "Kinder", t: "number" },
+    { k: "total", l: "Übernachtungspreis gesamt brutto (€)", t: "money" }, { k: "cleaning", l: "Endreinigung brutto (€)", t: "money" },
+    { k: "kurtaxe", l: "Kurtaxe pro Erwachsenem & Nacht (€)", t: "money" },
+    { k: "channel", l: "Kanal", t: "select", opts: ["Direkt", "Airbnb", "Booking.com", "FeWo-direkt / Vrbo", "Traum-Ferienwohnungen", "Sonstige"].map((x) => [x, x]) },
+    { k: "status", l: "Status", t: "select", opts: [["bestaetigt", "bestätigt"], ["angefragt", "angefragt / Option"], ["storniert", "storniert"]] },
+    { k: "note", l: "Notiz", t: "textarea" },
+  ],
+  account: [
+    { k: "name", l: "Bezeichnung", req: 1, ph: "Mietkonto Sparkasse" }, { k: "bank", l: "Bank" },
+    { k: "iban", l: "IBAN", full: 1 },
+  ],
+};
+
+function editObject(id) {
+  const o = byId("objects", id) || { id: C.uid("o_"), type: "mfh", afaRate: 2 };
+  formDialog({
+    title: id ? "Objekt bearbeiten" : "Neues Objekt", spec: SPEC.object, data: o,
+    onSave: (v) => { upsert("objects", { ...o, ...v }); commit("Objekt gespeichert"); },
+    onDelete: id && (() => {
+      if (state.units.some((u) => u.objectId === id)) return alert("Bitte zuerst die Einheiten dieses Objekts löschen.");
+      state.objects = state.objects.filter((x) => x.id !== id); commit("Objekt gelöscht");
+    }),
+  });
+}
+
+function editUnit(id, objectId) {
+  if (!state.objects.length) return toast("Bitte zuerst ein Objekt anlegen.");
+  const u = byId("units", id) || { id: C.uid("u_"), objectId: objectId || state.objects[0].id, type: "wohnung", vat: "0" };
+  formDialog({
+    title: id ? "Einheit bearbeiten" : "Neue Einheit", spec: SPEC.unit, data: { ...u, vat: String(u.vat ?? 0) },
+    onSave: (v) => {
+      if (v.type === "ferienwohnung" && !id && v.vat === "0") v.vat = "7";
+      upsert("units", { ...u, ...v, vat: Number(v.vat) }); commit("Einheit gespeichert");
+    },
+    onDelete: id && (() => {
+      if (state.contracts.some((c) => c.unitId === id) || state.bookings.some((b) => b.unitId === id)) return alert("Die Einheit hat noch Mietverträge oder Buchungen.");
+      state.units = state.units.filter((x) => x.id !== id); commit("Einheit gelöscht");
+    }),
+  });
+}
+
+function editTenant(id) {
+  const t = byId("tenants", id) || { id: C.uid("t_"), ibans: [] };
+  formDialog({
+    title: id ? "Mieter bearbeiten" : "Neuer Mieter", spec: SPEC.tenant, data: t,
+    onSave: (v) => { upsert("tenants", { ...t, ...v, ibans: v.ibans.map(C.normIban) }); commit("Mieter gespeichert"); },
+    onDelete: id && (() => {
+      if (state.contracts.some((c) => c.tenantIds.includes(id))) return alert("Mieter ist noch einem Mietvertrag zugeordnet.");
+      state.tenants = state.tenants.filter((x) => x.id !== id); commit("Mieter gelöscht");
+    }),
+  });
+}
+
+function editContract(id, unitId) {
+  if (!state.units.some((u) => u.type !== "ferienwohnung")) return toast("Bitte zuerst eine Einheit (Wohnung, Garage …) anlegen.");
+  const c = byId("contracts", id) || { id: C.uid("c_"), unitId: unitId || "", tenantIds: [], steps: [], start: today().slice(0, 8) + "01" };
+  formDialog({
+    title: id ? "Mietvertrag bearbeiten" : "Neuer Mietvertrag", spec: SPEC.contract, data: c,
+    intro: state.tenants.length ? "" : `<div class="note warn">Lege zuerst unter „Mieter“ den Mieter an – dann kannst du ihn hier auswählen.</div>`,
+    onSave: (v) => {
+      if (!v.tenantIds.length && !confirm("Kein Mieter ausgewählt – trotzdem speichern?")) return false;
+      upsert("contracts", { ...c, ...v }); commit("Mietvertrag gespeichert");
+    },
+    onDelete: id && (() => {
+      if (state.payments.some((p) => p.contractId === id)) return alert("Zu diesem Vertrag gibt es Zahlungen. Bitte Vertrag stattdessen mit Mietende beenden.");
+      state.contracts = state.contracts.filter((x) => x.id !== id); commit("Mietvertrag gelöscht");
+    }),
+  });
+}
+
+function addStep(id) {
+  const c = byId("contracts", id);
+  const r = C.rentForMonth(c, C.addMonths(ui.month, 1));
+  formDialog({
+    title: "Mietanpassung (Erhöhung, Staffel, Index, NK-Anpassung)", spec: SPEC.step,
+    data: { from: C.addMonths(ui.month, 1), kalt: r.kalt, nk: r.nk, extra: r.extra },
+    intro: `<p class="muted" style="margin-bottom:10px">${esc(contractLabel(c))}</p>`,
+    onSave: (v) => { c.steps = [...(c.steps || []).filter((s) => s.from !== v.from), v]; commit("Mietanpassung gespeichert"); },
+  });
+}
+
+// ---------------------------------------------------------------- Bank: Zuordnung
+
+function applyAssignment(tx, a, learn) {
+  unlink(tx, true);
+  if (a.kind === "ignorieren") tx.link = { type: "ignore" };
+  else if (a.kind === "ausgabe") {
+    const e = { id: C.uid("e_"), date: tx.date, amount: -tx.amount, category: a.category || "sonstiges", objectId: a.objectId || null, vendor: tx.name, note: tx.purpose, belegNr: "", txId: tx.id };
+    state.expenses.push(e);
+    tx.link = { type: "expense", id: e.id };
+  } else {
+    const p = { id: C.uid("p_"), date: tx.date, amount: tx.amount, kind: a.kind, contractId: a.contractId || null, period: a.kind === "miete" ? a.period || C.periodForPayment(tx.date, tx.purpose) : null, invoiceId: a.invoiceId || null, objectId: a.objectId || null, txId: tx.id, note: tx.name };
+    state.payments.push(p);
+    tx.link = { type: "payment", id: p.id };
+    if (p.invoiceId) refreshInvoiceStatus(p.invoiceId);
+  }
+  if (learn && a.kind !== "fewo") {
+    const r = { kind: a.kind };
+    if (a.contractId) r.contractId = a.contractId;
+    if (a.category) r.category = a.category;
+    if (a.objectId) r.objectId = a.objectId;
+    state.rules[C.ruleKey(tx)] = r;
+  }
+}
+
+function unlink(tx, silent) {
+  if (!tx.link) return;
+  if (tx.link.type === "payment") {
+    const p = byId("payments", tx.link.id);
+    state.payments = state.payments.filter((x) => x.id !== tx.link.id);
+    if (p?.invoiceId) refreshInvoiceStatus(p.invoiceId);
+  }
+  if (tx.link.type === "expense") state.expenses = state.expenses.filter((x) => x.id !== tx.link.id);
+  tx.link = null;
+  if (!silent) commit("Zuordnung gelöst");
+}
+
+function refreshInvoiceStatus(invoiceId) {
+  const inv = byId("invoices", invoiceId);
+  if (!inv || inv.status === "storniert" || inv.type === "storno") return;
+  const paid = C.paidForInvoice(state, inv.id);
+  inv.status = paid >= C.invoiceTotals(inv).gross ? "bezahlt" : paid > 0 ? "teilbezahlt" : "offen";
+}
+
+function autoAssign(txs) {
+  let n = 0;
+  const min = Number(state.settings.autoAssignScore) || 80;
+  for (const tx of txs) {
+    if (tx.link) continue;
+    const s = C.suggestAssignment(tx, state);
+    if (s && s.score >= min) { applyAssignment(tx, s, false); n++; }
+  }
+  return n;
+}
+
+function assignDialog(txId) {
+  const tx = byId("transactions", txId);
+  const sug = C.suggestAssignment(tx, state) || {};
+  const credit = tx.amount > 0;
+  const kinds = credit
+    ? [["miete", "Miete"], ["fewo", "Ferienwohnung-Rechnung"], ["nk_nachzahlung", "Nebenkosten-Nachzahlung"], ["kaution", "Kaution"], ["sonstige", "Sonstige Einnahme"], ["ignorieren", "Ignorieren (privat / Umbuchung)"]]
+    : [["ausgabe", "Ausgabe / Werbungskosten"], ["ignorieren", "Ignorieren (privat / Umbuchung)"], ["miete", "Mietrückzahlung (negativ)"]];
+  const kind = sug.kind || kinds[0][0];
+  const invOpts = state.invoices.filter((i) => i.type !== "storno" && i.status !== "storniert").map((i) => [i.id, `${i.number} · ${i.recipient?.name || ""} · ${eur(C.invoiceTotals(i).gross)} (${i.status})`]);
+  const body = `
+    <div class="note"><b>${eur(tx.amount)}</b> · ${d(tx.date)} · ${esc(tx.name)}<br><span class="small">${esc(tx.purpose)}</span>${tx.iban ? `<br><span class="small muted">${esc(tx.iban)}</span>` : ""}</div>
+    <div class="fgrid">
+      <label class="f full"><span>Zuordnen als</span><select name="kind">${opt(kinds, kind)}</select></label>
+      <label class="f full" data-for="miete nk_nachzahlung kaution"><span>Mietvertrag</span><select name="contractId">${opt([["", "–"], ...contractOpts()], sug.contractId)}</select></label>
+      <label class="f" data-for="miete"><span>Für Monat (Soll)</span><input type="month" name="period" value="${esc(sug.period || C.periodForPayment(tx.date, tx.purpose))}"></label>
+      <label class="f full" data-for="fewo"><span>Rechnung</span><select name="invoiceId">${opt([["", "–"], ...invOpts], sug.invoiceId)}</select></label>
+      <label class="f" data-for="ausgabe"><span>Kategorie</span><select name="category">${opt(Object.entries(C.EXPENSE_CATEGORIES).map(([k, v]) => [k, v.label]), sug.category || "sonstiges")}</select></label>
+      <label class="f" data-for="ausgabe sonstige"><span>Objekt</span><select name="objectId">${opt(objectOpts(), sug.objectId)}</select></label>
+      <label class="f inline full" data-for="miete nk_nachzahlung kaution sonstige ausgabe ignorieren"><input type="checkbox" name="learn" checked> Regel merken: künftige Umsätze von „${esc(tx.name || tx.iban)}“ automatisch so zuordnen</label>
+    </div>`;
+  dialog({
+    title: "Bankumsatz zuordnen", body, submit: "Zuordnen",
+    onOpen: (form) => {
+      const sync = () => form.querySelectorAll("[data-for]").forEach((el) => { el.style.display = el.dataset.for.split(" ").includes(form.kind.value) ? "" : "none"; });
+      form.kind.addEventListener("change", sync); sync();
+    },
+    onSubmit: (form) => {
+      const a = { kind: form.kind.value, contractId: form.contractId.value, period: form.period.value, invoiceId: form.invoiceId.value, category: form.category.value, objectId: form.objectId.value };
+      if (["miete", "nk_nachzahlung"].includes(a.kind) && !a.contractId) { toast("Bitte Mietvertrag wählen."); return false; }
+      if (a.kind === "fewo" && !a.invoiceId) { toast("Bitte Rechnung wählen."); return false; }
+      applyAssignment(tx, a, form.learn.checked);
+      commit("Zugeordnet");
+    },
+  });
+}
+
+// ---------------------------------------------------------------- Bank: Import
+
+async function importFile(file, accountId) {
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder("utf-8").decode(buf);
+  if (text.includes("�")) text = new TextDecoder("windows-1252").decode(buf); // viele Banken liefern ANSI
+  if (/<(\w+:)?Document[\s>]/.test(text) && /Ntry/.test(text)) return finishImport(C.parseCamt(text, accountId));
+  const rows = C.parseCsv(text);
+  if (rows.length < 2) return toast("Datei enthält keine Umsätze.");
+  const det = C.detectCsv(rows);
+  csvMappingDialog(rows, det, accountId);
+}
+
+function csvMappingDialog(rows, det, accountId) {
+  const cols = [["", "– nicht vorhanden –"], ...det.headers.map((h, i) => [String(i), h || `Spalte ${i + 1}`])];
+  const fields = [["date", "Buchungsdatum *"], ["amount", "Betrag (±)"], ["credit", "…oder: Haben / Eingang"], ["debit", "…und: Soll / Ausgang"], ["name", "Name Auftraggeber/Empfänger"], ["iban", "IBAN Gegenkonto"], ["purpose", "Verwendungszweck"]];
+  const preview = rows.slice(det.headerIdx + 1, det.headerIdx + 4);
+  const body = `<p class="muted" style="margin-bottom:10px">Spalten wurden automatisch erkannt – bitte kurz prüfen.</p>
+    <div class="fgrid">${fields.map(([k, l]) => `<label class="f"><span>${l}</span><select name="${k}">${opt(cols, det.mapping[k] ?? "")}</select></label>`).join("")}
+    <label class="f"><span>Kopfzeile in Zeile</span><input type="number" name="headerIdx" min="1" value="${det.headerIdx + 1}"></label></div>
+    <h3>Vorschau</h3><div class="table-wrap"><table><tr>${det.headers.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>
+    ${preview.map((r) => `<tr>${r.map((c) => `<td class="small">${esc(c)}</td>`).join("")}</tr>`).join("")}</table></div>`;
+  dialog({
+    title: "CSV-Import: Spalten zuordnen", body, wide: true, submit: "Importieren",
+    onSubmit: (form) => {
+      const m = {};
+      for (const [k] of fields) if (form[k].value !== "") m[k] = Number(form[k].value);
+      if (m.date === undefined || (m.amount === undefined && m.credit === undefined)) { toast("Datum und Betrag müssen zugeordnet sein."); return false; }
+      finishImport(C.txFromCsv(rows, Number(form.headerIdx.value) - 1, m, accountId));
+    },
+  });
+}
+
+function finishImport(txs) {
+  const known = new Set(state.transactions.map((t) => t.hash));
+  const fresh = txs.filter((t) => !known.has(t.hash) && (known.add(t.hash), true));
+  state.transactions.push(...fresh);
+  const n = autoAssign(fresh);
+  commit(`${fresh.length} neue Umsätze importiert (${txs.length - fresh.length} Duplikate übersprungen), ${n} automatisch zugeordnet.`);
+}
+
+// ---------------------------------------------------------------- Ferienwohnung & Rechnungen
+
+function editBooking(id, preset = {}) {
+  if (!fewoUnits().length) return toast("Bitte zuerst eine Einheit vom Typ „Ferienwohnung“ anlegen.");
+  const b = byId("bookings", id) || { id: C.uid("b_"), unitId: fewoUnits()[0].id, adults: 2, children: 0, channel: "Direkt", status: "bestaetigt", kurtaxe: state.settings.defaultKurtaxe || 0, cleaning: state.settings.defaultCleaning || 0, ...preset };
+  formDialog({
+    title: id ? "Buchung bearbeiten" : "Neue Buchung", spec: SPEC.booking, data: b, wide: true,
+    onSave: (v) => {
+      if (v.to <= v.from) { toast("Abreise muss nach der Anreise liegen."); return false; }
+      const nb = { ...b, ...v };
+      const clash = state.bookings.find((x) => C.bookingsOverlap(nb, x));
+      if (clash && !confirm(`Überschneidung mit Buchung „${clash.guest}“ (${d(clash.from)}–${d(clash.to)}). Trotzdem speichern?`)) return false;
+      upsert("bookings", nb); commit("Buchung gespeichert");
+    },
+    onDelete: id && (() => {
+      if (b.invoiceId) return alert("Zu dieser Buchung existiert eine Rechnung. Bitte Buchung stornieren statt löschen.");
+      state.bookings = state.bookings.filter((x) => x.id !== id); commit("Buchung gelöscht");
+    }),
+  });
+}
+
+function takeInvoiceNumber(dateIso) {
+  const n = C.nextInvoiceNumber(state.settings, dateIso);
+  state.settings.invoiceCounters = { ...(state.settings.invoiceCounters || {}), [n.year]: n.n };
+  return n.number;
+}
+
+function invoiceFromBooking(bookingId) {
+  const b = byId("bookings", bookingId);
+  if (b.invoiceId && byId("invoices", b.invoiceId)) { location.hash = `#/rechnung/${b.invoiceId}`; return; }
+  const u = byId("units", b.unitId);
+  const date = today();
+  const inv = {
+    id: C.uid("i_"), number: takeInvoiceNumber(date), date, serviceFrom: b.from, serviceTo: b.to, bookingId: b.id, unitId: b.unitId,
+    recipient: { name: b.guest, address: [b.guestStreet, [b.guestZip, b.guestCity].filter(Boolean).join(" ")].filter(Boolean).join("\n") },
+    lines: C.linesFromBooking(b, u), kleinunternehmer: !!state.settings.kleinunternehmer, status: "offen", type: "rechnung",
+    note: b.channel && b.channel !== "Direkt" ? `Buchung über ${b.channel}.` : "",
+  };
+  state.invoices.push(inv);
+  b.invoiceId = inv.id;
+  S.save(state);
+  location.hash = `#/rechnung/${inv.id}`;
+  toast(`Rechnung ${inv.number} erstellt`);
+}
+
+function editInvoice(id) {
+  const isNew = !id;
+  const inv = byId("invoices", id) || { id: C.uid("i_"), date: today(), recipient: { name: "", address: "" }, lines: [{ desc: "Übernachtung", qty: 1, price: 0, vat: 7 }], kleinunternehmer: !!state.settings.kleinunternehmer, status: "offen", type: "rechnung", unitId: fewoUnits()[0]?.id || "" };
+  const lineRow = (l = {}) => `<tr>
+    <td><input name="desc" value="${esc(l.desc || "")}"></td>
+    <td style="width:80px"><input name="qty" type="number" step="0.01" value="${esc(l.qty ?? 1)}"></td>
+    <td style="width:110px"><input name="price" inputmode="decimal" value="${esc(C.fmtNum(l.price || 0))}"></td>
+    <td style="width:90px"><select name="vat">${opt([["7", "7 %"], ["19", "19 %"], ["0", "0 %"]], String(l.vat ?? 7))}</select></td>
+    <td style="width:60px;text-align:center"><input type="checkbox" name="pt" ${l.passThrough ? "checked" : ""} title="durchlaufender Posten (z. B. Kurtaxe)"></td>
+    <td style="width:36px"><button type="button" class="btn sm link" data-del-line>✕</button></td></tr>`;
+  const body = `<div class="fgrid">
+      <label class="f"><span>Rechnungsdatum</span><input type="date" name="date" value="${esc(inv.date)}" required></label>
+      <label class="f"><span>Ferienwohnung / Einheit</span><select name="unitId">${opt([["", "–"], ...unitOpts()], inv.unitId)}</select></label>
+      <label class="f"><span>Leistungszeitraum von</span><input type="date" name="serviceFrom" value="${esc(inv.serviceFrom || "")}"></label>
+      <label class="f"><span>bis</span><input type="date" name="serviceTo" value="${esc(inv.serviceTo || "")}"></label>
+      <label class="f"><span>Empfänger</span><input name="rname" value="${esc(inv.recipient?.name)}" required></label>
+      <label class="f"><span>Anschrift</span><textarea name="raddr" style="min-height:40px">${esc(inv.recipient?.address)}</textarea></label>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Beschreibung</th><th>Menge</th><th>Einzelpreis brutto</th><th>USt</th><th>durchl.</th><th></th></tr></thead>
+    <tbody id="lines">${inv.lines.map(lineRow).join("")}</tbody></table></div>
+    <button type="button" class="btn sm" id="addLine" style="margin:8px 0 12px">+ Position</button>
+    <label class="f inline"><input type="checkbox" name="ku" ${inv.kleinunternehmer ? "checked" : ""}> Kleinunternehmer (§ 19 UStG) – keine Umsatzsteuer ausweisen</label>
+    <label class="f"><span>Hinweis auf der Rechnung</span><textarea name="note">${esc(inv.note || "")}</textarea></label>`;
+  dialog({
+    title: isNew ? "Neue Rechnung" : `Rechnung ${inv.number} bearbeiten`, body, wide: true,
+    onOpen: (form) => {
+      form.querySelector("#addLine").onclick = () => form.querySelector("#lines").insertAdjacentHTML("beforeend", lineRow({ vat: 19 }));
+      form.addEventListener("click", (e) => { if (e.target.matches("[data-del-line]")) e.target.closest("tr").remove(); });
+    },
+    onSubmit: (form) => {
+      const lines = [...form.querySelectorAll("#lines tr")].map((tr) => ({
+        desc: tr.querySelector("[name=desc]").value.trim(), qty: Number(tr.querySelector("[name=qty]").value) || 0,
+        price: C.parseAmount(tr.querySelector("[name=price]").value), vat: Number(tr.querySelector("[name=vat]").value),
+        passThrough: tr.querySelector("[name=pt]").checked,
+      })).filter((l) => l.desc || l.price);
+      if (!lines.length) { toast("Mindestens eine Position angeben."); return false; }
+      Object.assign(inv, {
+        date: form.date.value, unitId: form.unitId.value, serviceFrom: form.serviceFrom.value, serviceTo: form.serviceTo.value,
+        recipient: { name: form.rname.value.trim(), address: form.raddr.value.trim() }, lines, kleinunternehmer: form.ku.checked, note: form.note.value.trim(),
+      });
+      if (isNew) { inv.number = takeInvoiceNumber(inv.date); state.invoices.push(inv); }
+      refreshInvoiceStatus(inv.id);
+      S.save(state);
+      location.hash = `#/rechnung/${inv.id}`;
+      render();
+    },
+  });
+}
+
+function cancelInvoice(id) {
+  const inv = byId("invoices", id);
+  if (!confirm(`Rechnung ${inv.number} stornieren? Es wird eine Stornorechnung mit eigener Nummer erstellt.`)) return;
+  const st = { ...structuredClone(inv), id: C.uid("i_"), number: takeInvoiceNumber(today()), date: today(), type: "storno", refNumber: inv.number, status: "storno",
+    lines: inv.lines.map((l) => ({ ...l, price: -l.price })), note: `Storno zu Rechnung ${inv.number} vom ${d(inv.date)}.` };
+  inv.status = "storniert";
+  state.invoices.push(st);
+  const b = byId("bookings", inv.bookingId);
+  if (b) b.invoiceId = null;
+  S.save(state);
+  location.hash = `#/rechnung/${st.id}`;
+}
+
+function markPaid(id) {
+  const inv = byId("invoices", id);
+  const open = C.invoiceTotals(inv).gross - C.paidForInvoice(state, id);
+  formDialog({
+    title: `Zahlung zu ${inv.number} erfassen`, data: { date: today(), amount: open },
+    spec: [{ k: "date", l: "Datum", t: "date", req: 1 }, { k: "amount", l: "Betrag", t: "money", req: 1 }, { k: "via", l: "Zahlweg", t: "select", opts: [["kasse", "Bar / Kasse"], ["bank", "Überweisung (ohne Kontoimport)"]] }],
+    intro: `<div class="note">Tipp: Bei importierten Kontoumsätzen die Zahlung lieber unter „Bank“ zuordnen – dann ist sie automatisch verknüpft.</div>`,
+    onSave: (v) => {
+      state.payments.push({ id: C.uid("p_"), date: v.date, amount: v.amount, kind: "fewo", invoiceId: id, txId: v.via === "bank" ? "manuell" : null, note: inv.recipient?.name });
+      refreshInvoiceStatus(id); commit("Zahlung erfasst");
+    },
+  });
+}
+
+async function smoobuImport() {
+  try {
+    toast("Hole Buchungen von Smoobu …");
+    const res = await fetch("/.netlify/functions/smoobu-sync");
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || "Unbekannter Fehler");
+    let added = 0, updated = 0, unknown = new Set();
+    for (const sb of data.buchungen) {
+      const unit = fewoUnits().find((u) => C.normalize(u.smoobuName || u.name) === C.normalize(sb.einheit_name));
+      if (!unit) { unknown.add(sb.einheit_name); continue; }
+      const existing = state.bookings.find((b) => b.smoobuId === sb.smoobu_id);
+      const v = { unitId: unit.id, guest: sb.gast_name, from: sb.start_datum, to: sb.end_datum, adults: sb.personen, total: Math.round((sb.preis || 0) * 100), channel: sb.kanal, status: sb.status === "cancelled" ? "storniert" : "bestaetigt", smoobuId: sb.smoobu_id };
+      if (existing) { Object.assign(existing, v); updated++; }
+      else { state.bookings.push({ id: C.uid("b_"), children: 0, cleaning: 0, kurtaxe: state.settings.defaultKurtaxe || 0, note: "", ...v }); added++; }
+    }
+    commit(`Smoobu: ${added} neu, ${updated} aktualisiert${unknown.size ? ` · nicht zugeordnet: ${[...unknown].join(", ")} (Smoobu-Namen bei der Einheit eintragen)` : ""}`);
+  } catch (e) {
+    alert(`Smoobu-Import fehlgeschlagen: ${e.message}\n\nDer Import funktioniert, wenn die App über Netlify läuft und SMOOBU_API_KEY gesetzt ist.`);
+  }
+}
+
+// ---------------------------------------------------------------- Exporte
+
+function datevExport(from, to) {
+  const csv = C.datevCsv(state, from, to);
+  download(`EXTF_Buchungsstapel_${from}_${to}.csv`, new Blob([C.toWin1252(csv)], { type: "text/csv;charset=windows-1252" }));
+}
+
+function journalCsv(from, to) {
+  const acc = C.accountsFor(state.settings);
+  const rows = C.datevRows(state, from, to);
+  const lines = [["Datum", "Betrag", "Soll", "Haben", "Belegnr.", "Buchungstext"].join(";")];
+  for (const r of rows) {
+    const [soll, haben] = r.sh === "S" ? [r.konto, r.gegen] : [r.gegen, r.konto];
+    lines.push([d(r.date), C.fmtNum(r.amount).replace(/\./g, ""), soll, haben, r.beleg, `"${r.text.replace(/"/g, '""')}"`].join(";"));
+  }
+  lines.push("", `Konten: Bank ${acc.bank}, Kasse ${acc.kasse} (SKR ${state.settings.skr})`);
+  download(`Buchungsliste_${from}_${to}.csv`, "﻿" + lines.join("\r\n"), "text/csv;charset=utf-8");
+}
+
+// ---------------------------------------------------------------- Ansichten
+
+const NAV = [
+  ["", "▦", "Übersicht"], ["objekte", "⌂", "Objekte & Einheiten"], ["mieter", "☺", "Mieter & Verträge"],
+  ["mieten", "€", "Mieteingänge"], ["bank", "⇄", "Bank"], ["ausgaben", "✎", "Ausgaben"],
+  ["ferien", "☀", "Ferienwohnung"], ["rechnungen", "▤", "Rechnungen"], ["steuer", "§", "Steuer & DATEV"], ["einstellungen", "⚙", "Einstellungen"],
+];
+
+function head(title, sub, actions = "") {
+  return `<div class="head"><div><h1>${esc(title)}</h1>${sub ? `<div class="muted">${sub}</div>` : ""}</div><div class="toolbar noprint">${actions}</div></div>`;
+}
+const btn = (act, label, cls = "", id = "") => `<button class="btn ${cls}" data-act="${act}" ${id !== "" ? `data-id="${esc(id)}"` : ""}>${label}</button>`;
+const statusBadge = (diff, soll) => diff >= 0 ? (diff > 0 ? `<span class="badge">+${eur(diff)}</span>` : `<span class="badge ok">bezahlt</span>`) : (diff === -soll ? `<span class="badge bad">offen</span>` : `<span class="badge warn">teilweise</span>`);
+
+function viewDashboard() {
+  if (!state.objects.length) {
+    return head("Willkommen bei HausOps Immobilien") + `<div class="card empty"><div class="big">🏠</div>
+      <p style="margin-bottom:14px">Verwalte Wohnungen, Häuser, Garagen, Stellplätze und Ferienwohnungen – mit Bankabgleich, Rechnungen und DATEV-Export.</p>
+      <div class="toolbar" style="justify-content:center">${btn("newObject", "+ Erstes Objekt anlegen", "primary")}${btn("loadDemo", "Demo-Daten ansehen")}</div></div>`;
+  }
+  const key = C.monthKey(today());
+  const rows = C.sollIst(state, key, key);
+  const soll = sum(rows, (r) => r.soll), ist = sum(rows, (r) => r.ist);
+  const back = C.sollIst(state, C.addMonths(key, -11), key).filter((r) => r.diff < 0);
+  const backBy = {};
+  for (const r of back) backBy[r.contractId] = (backBy[r.contractId] || 0) - r.diff;
+  const rentable = state.units.filter((u) => u.type !== "ferienwohnung");
+  const vacant = rentable.filter((u) => !activeContract(u.id, key));
+  const openTx = state.transactions.filter((t) => !t.link).length;
+  const fewo = fewoUnits();
+  const days = C.daysInMonth(key);
+  const nights = sum(state.bookings.filter((b) => b.status !== "storniert"), (b) => overlapNights(b, `${key}-01`, `${C.addMonths(key, 1)}-01`));
+  const upcoming = state.bookings.filter((b) => b.status !== "storniert" && b.from >= today()).sort((a, b) => (a.from < b.from ? -1 : 1)).slice(0, 5);
+  const openInv = state.invoices.filter((i) => ["offen", "teilbezahlt"].includes(i.status));
+  const ending = state.contracts.filter((c) => c.end && c.end >= today() && c.end <= addDays(today(), 90));
+  return head("Übersicht", C.fmtMonth(key)) + `
+    <div class="kpis">
+      <div class="kpi"><div class="l">Einheiten</div><div class="v">${state.units.length}</div><div class="s">${rentable.length - vacant.length} vermietet · ${vacant.length} frei · ${fewo.length} FeWo</div></div>
+      <div class="kpi"><div class="l">Soll-Miete ${C.MONTHS_DE[Number(key.slice(5)) - 1]}</div><div class="v">${eur(soll)}</div><div class="s">${eur(ist)} eingegangen</div></div>
+      <div class="kpi"><div class="l">Mietrückstände (12 Mon.)</div><div class="v ${back.length ? "neg" : ""}">${eur(sum(Object.values(backBy)))}</div><div class="s">${Object.keys(backBy).length} Verträge</div></div>
+      <div class="kpi"><div class="l">Offene Bankumsätze</div><div class="v">${openTx}</div><div class="s"><a href="#/bank">zuordnen →</a></div></div>
+      ${fewo.length ? `<div class="kpi"><div class="l">FeWo-Auslastung</div><div class="v">${Math.round((nights / (days * fewo.length)) * 100)} %</div><div class="s">${nights} von ${days * fewo.length} Nächten</div></div>` : ""}
+    </div>
+    <div class="grid g2">
+      <div class="card"><h2>Mietrückstände</h2>${Object.keys(backBy).length ? `<table>${Object.entries(backBy).map(([cid, v]) => `<tr><td>${esc(contractLabel(byId("contracts", cid)))}</td><td class="num neg">${eur(v)}</td></tr>`).join("")}</table>` : '<p class="muted">Keine Rückstände 🎉</p>'}</div>
+      <div class="card"><h2>Nächste Anreisen</h2>${upcoming.length ? `<table>${upcoming.map((b) => `<tr class="click" data-act="editBooking" data-id="${b.id}"><td class="nowrap">${d(b.from)}</td><td>${esc(b.guest)}<div class="small muted">${esc(byId("units", b.unitId)?.name)} · ${C.nightsBetween(b.from, b.to)} N · ${esc(b.channel)}</div></td></tr>`).join("")}</table>` : '<p class="muted">Keine anstehenden Buchungen.</p>'}</div>
+      <div class="card"><h2>Offene Rechnungen</h2>${openInv.length ? `<table>${openInv.map((i) => `<tr class="click" data-go="#/rechnung/${i.id}"><td>${esc(i.number)}</td><td>${esc(i.recipient?.name)}</td><td class="num">${eur(C.invoiceTotals(i).gross - C.paidForInvoice(state, i.id))}</td></tr>`).join("")}</table>` : '<p class="muted">Alle Rechnungen bezahlt.</p>'}</div>
+      <div class="card"><h2>Leerstand & auslaufende Verträge</h2>
+        ${vacant.length ? vacant.map((u) => `<div>${esc(unitLabel(u))} <span class="badge warn">frei</span></div>`).join("") : '<p class="muted">Kein Leerstand.</p>'}
+        ${ending.map((c) => `<div>${esc(contractLabel(c))} <span class="badge">endet ${d(c.end)}</span></div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function addDays(iso, n) { const x = new Date(iso); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); }
+function overlapNights(b, fromIso, toIso) {
+  const a = b.from > fromIso ? b.from : fromIso, z = b.to < toIso ? b.to : toIso;
+  return a < z ? C.nightsBetween(a, z) : 0;
+}
+
+function viewObjects() {
+  const key = C.monthKey(today());
+  return head("Objekte & Einheiten", `${state.objects.length} Objekte · ${state.units.length} Einheiten`, btn("newObject", "+ Objekt", "primary") + btn("newUnit", "+ Einheit")) +
+    (state.objects.length ? "" : `<div class="card empty"><div class="big">🏢</div>Noch keine Objekte. Lege dein erstes Haus oder deine erste Wohnung an.</div>`) +
+    state.objects.map((o) => {
+      const units = state.units.filter((u) => u.objectId === o.id);
+      const monthly = sum(units, (u) => { const c = activeContract(u.id, key); return c ? C.rentForMonth(c, key).total : 0; });
+      return `<div class="card">
+        <div class="head" style="margin-bottom:10px"><div><h2 style="margin:0">${esc(o.name)} ${o.short ? `<span class="badge grey">${esc(o.short)}</span>` : ""}</h2>
+          <div class="muted">${esc([o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))} · ${esc(C.OBJECT_TYPES[o.type] || "")}${o.year ? ` · Baujahr ${o.year}` : ""}</div>
+          <div class="small muted">Soll-Miete/Monat ${eur(monthly)} · Fläche ${sum(units, (u) => Number(u.area))} m² · AfA ${C.afaForYear(o, ui.year) ? eur(C.afaForYear(o, ui.year)) + " (" + ui.year + ")" : "–"}</div></div>
+          <div class="toolbar">${btn("editObject", "Bearbeiten", "sm", o.id)}${btn("newUnit", "+ Einheit", "sm", o.id)}</div></div>
+        ${units.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit</th><th>Art</th><th>Lage</th><th class="num">m²</th><th class="num">Zi.</th><th>Mieter / Status</th><th class="num">Miete warm</th></tr></thead><tbody>
+          ${units.map((u) => {
+            const c = activeContract(u.id, key);
+            const status = u.type === "ferienwohnung" ? `<span class="badge">Ferienvermietung</span>` : c ? esc(tenantNames(c)) : `<span class="badge warn">frei</span> ${btn("newContract", "Vermieten", "sm link", u.id)}`;
+            return `<tr class="click" data-act="editUnit" data-id="${u.id}"><td><b>${esc(u.name)}</b>${u.features ? `<div class="small muted">${esc(u.features.slice(0, 80))}</div>` : ""}</td><td>${esc(C.UNIT_TYPES[u.type])}</td><td>${esc(u.floor || "")}</td><td class="num">${u.area || ""}</td><td class="num">${u.rooms || ""}</td><td>${status}</td><td class="num">${c ? eur(C.rentForMonth(c, key).total) : ""}</td></tr>`;
+          }).join("")}</tbody></table></div>` : '<p class="muted">Noch keine Einheiten.</p>'}
+        ${o.notes ? `<div class="note small">${esc(o.notes)}</div>` : ""}
+      </div>`;
+    }).join("");
+}
+
+function viewTenants() {
+  const key = C.monthKey(today());
+  const contracts = [...state.contracts].sort((a, b) => unitLabel(byId("units", a.unitId)).localeCompare(unitLabel(byId("units", b.unitId))));
+  return head("Mieter & Verträge", "", btn("newTenant", "+ Mieter", "primary") + btn("newContract", "+ Mietvertrag")) + `
+    <div class="card"><h2>Mietverträge</h2>${contracts.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit</th><th>Mieter</th><th>Laufzeit</th><th class="num">Kalt</th><th class="num">NK</th><th class="num">Zuschl.</th><th class="num">Warm</th><th class="num">Kaution</th><th></th></tr></thead><tbody>
+      ${contracts.map((c) => { const r = C.rentForMonth(c, key); const active = C.contractActiveIn(c, key);
+        return `<tr><td>${esc(unitLabel(byId("units", c.unitId)))}</td><td>${esc(tenantNames(c))}</td><td class="nowrap">${d(c.start)} – ${c.end ? d(c.end) : "unbefristet"} ${active ? "" : '<span class="badge grey">inaktiv</span>'}${(c.steps || []).length ? `<div class="small muted">${c.steps.length} Anpassung(en)</div>` : ""}</td>
+        <td class="num">${eur(r.kalt)}</td><td class="num">${eur(r.nk)}</td><td class="num">${r.extra ? eur(r.extra) : ""}</td><td class="num"><b>${eur(r.total)}</b></td><td class="num">${c.kaution ? eur(c.kaution) : ""}</td>
+        <td class="nowrap">${btn("editContract", "Bearbeiten", "sm", c.id)} ${btn("addStep", "Anpassung", "sm", c.id)}</td></tr>`; }).join("")}</tbody></table></div>` : '<p class="muted">Noch keine Mietverträge.</p>'}</div>
+    <div class="card"><h2>Mieter</h2>${state.tenants.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Kontakt</th><th>IBAN</th><th>Einheit</th></tr></thead><tbody>
+      ${state.tenants.map((t) => `<tr class="click" data-act="editTenant" data-id="${t.id}"><td><b>${esc(t.name)}</b></td><td class="small">${esc(t.email || "")}<br>${esc(t.phone || "")}</td><td class="small">${(t.ibans || []).map(esc).join("<br>")}</td>
+        <td class="small">${state.contracts.filter((c) => c.tenantIds.includes(t.id)).map((c) => esc(unitLabel(byId("units", c.unitId)))).join("<br>")}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted">Noch keine Mieter.</p>'}</div>`;
+}
+
+function viewRents() {
+  const key = ui.month;
+  const rows = C.sollIst(state, key, key);
+  const months = C.monthRange(`${ui.year}-01`, `${ui.year}-12`);
+  const year = C.sollIst(state, months[0], months[11]);
+  const cell = {};
+  for (const r of year) cell[`${r.contractId}|${r.key}`] = r;
+  const yContracts = state.contracts.filter((c) => months.some((m) => C.contractActiveIn(c, m)));
+  return head("Mieteingänge", "Soll/Ist-Abgleich je Mietvertrag", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("newPayment", "+ Zahlung manuell")) + `
+    <div class="kpis">
+      <div class="kpi"><div class="l">Soll ${C.fmtMonth(key)}</div><div class="v">${eur(sum(rows, (r) => r.soll))}</div></div>
+      <div class="kpi"><div class="l">Ist</div><div class="v">${eur(sum(rows, (r) => r.ist))}</div></div>
+      <div class="kpi"><div class="l">Differenz</div><div class="v ${sum(rows, (r) => r.diff) < 0 ? "neg" : "pos"}">${eur(sum(rows, (r) => r.diff))}</div></div>
+    </div>
+    <div class="card"><h2>${C.fmtMonth(key)}</h2>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Einheit · Mieter</th><th class="num">Soll</th><th class="num">Ist</th><th class="num">Differenz</th><th>Status</th><th>Zahlungen</th></tr></thead><tbody>
+      ${rows.map((r) => { const ps = state.payments.filter((p) => p.kind === "miete" && p.contractId === r.contractId && p.period === key);
+        return `<tr><td>${esc(contractLabel(byId("contracts", r.contractId)))}</td><td class="num">${eur(r.soll)}</td><td class="num">${eur(r.ist)}</td><td class="num ${r.diff < 0 ? "neg" : ""}">${eur(r.diff)}</td><td>${statusBadge(r.diff, r.soll)}</td>
+        <td class="small">${ps.map((p) => `${d(p.date)} ${eur(p.amount)} ${p.txId ? "🏦" : `💶 <button class="btn sm link" data-act="editPayment" data-id="${p.id}">✎</button>`}`).join("<br>")}</td></tr>`; }).join("")}
+      </tbody></table></div>` : '<p class="muted">Keine aktiven Mietverträge in diesem Monat.</p>'}</div>
+    <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Jahresübersicht ${ui.year}</h2><div class="toolbar noprint">${btn("year", "‹", "sm", ui.year - 1)}${btn("year", "›", "sm", ui.year + 1)}</div></div>
+      <div class="table-wrap"><table class="matrix"><thead><tr><th>Vertrag</th>${months.map((m) => `<th class="m">${C.MONTHS_DE[Number(m.slice(5)) - 1].slice(0, 3)}</th>`).join("")}<th class="num">Saldo</th></tr></thead><tbody>
+      ${yContracts.map((c) => `<tr><td class="small">${esc(contractLabel(c))}</td>${months.map((m) => { const r = cell[`${c.id}|${m}`]; if (!r) return '<td class="m"></td>';
+        const cls = r.diff === 0 ? "ok" : r.diff > 0 ? "over" : r.ist === 0 ? (m > C.monthKey(today()) ? "" : "no") : "part";
+        return `<td class="m"><span class="dot ${cls}" title="Soll ${eur(r.soll)} · Ist ${eur(r.ist)}">${cls === "ok" ? "✓" : cls === "no" ? "✗" : cls === "part" ? "½" : cls === "over" ? "+" : "·"}</span></td>`; }).join("")}
+        <td class="num ${sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff) < 0 ? "neg" : ""}">${eur(sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff))}</td></tr>`).join("")}
+      </tbody></table></div><p class="small muted" style="margin-top:6px">✓ bezahlt · ½ teilweise · ✗ offen · + Überzahlung · Saldo bis heute</p></div>`;
+}
+
+function editPayment(id) {
+  const p = byId("payments", id) || { id: C.uid("p_"), date: today(), kind: "miete", period: ui.month, txId: null };
+  formDialog({
+    title: id ? "Zahlung bearbeiten" : "Zahlung manuell erfassen (bar / ohne Kontoimport)", spec: SPEC.payment, data: p,
+    onSave: (v) => {
+      if (v.kind === "miete" && (!v.contractId || !v.period)) { toast("Bitte Vertrag und Monat angeben."); return false; }
+      upsert("payments", { ...p, ...v }); commit("Zahlung gespeichert");
+    },
+    onDelete: id && (() => { state.payments = state.payments.filter((x) => x.id !== id); commit("Zahlung gelöscht"); }),
+  });
+}
+
+function viewBank() {
+  const f = ui.bankFilter, q = C.normalize(ui.bankSearch);
+  let txs = [...state.transactions].sort((a, b) => (a.date < b.date ? 1 : -1));
+  if (f === "offen") txs = txs.filter((t) => !t.link);
+  if (f === "zugeordnet") txs = txs.filter((t) => t.link);
+  if (q) txs = txs.filter((t) => C.normalize(`${t.name} ${t.purpose} ${t.iban} ${C.fmtNum(Math.abs(t.amount))}`).includes(q));
+  const shown = txs.slice(0, 300);
+  const sugs = Object.fromEntries(shown.filter((t) => !t.link).map((t) => [t.id, C.suggestAssignment(t, state)]));
+  const good = Object.values(sugs).filter((s) => s && s.score >= 60).length;
+  const accOpts = state.accounts.map((a) => [a.id, `${a.name}${a.iban ? " · " + a.iban.slice(-4) : ""}`]);
+  return head("Bank", "Kontoumsätze importieren, Mieten & Kosten automatisch zuordnen", btn("newAccount", "+ Bankkonto")) + `
+    <div class="card noprint"><h2>Kontoauszug importieren</h2>
+      ${state.accounts.length ? `<div class="inline"><select id="impAcc">${opt(accOpts, state.accounts[0].id)}</select>
+        <label class="btn primary">Datei wählen (CSV / CAMT.053 XML)<input type="file" accept=".csv,.txt,.xml,.camt" data-change="importFile" hidden></label></div>
+        <p class="small muted" style="margin-top:8px">Funktioniert mit allen deutschen Banken: Im Online-Banking „Umsätze exportieren“ als CSV oder CAMT.053 wählen. Doppelte Umsätze werden erkannt. Bekannte Mieter-IBANs, Beträge, Namen und gelernte Regeln werden automatisch zugeordnet.</p>`
+        : `<p class="muted">Lege zuerst dein Mietkonto an.</p>${btn("newAccount", "+ Bankkonto anlegen", "primary")}`}
+      ${state.accounts.length ? `<div class="small" style="margin-top:8px">${state.accounts.map((a) => `<span class="badge grey" style="margin-right:6px">${esc(a.name)} ${esc(a.iban || "")} · ${state.transactions.filter((t) => t.accountId === a.id).length} Umsätze</span> <button class="btn sm link" data-act="editAccount" data-id="${a.id}">✎</button>`).join(" ")}</div>` : ""}
+    </div>
+    <div class="card">
+      <div class="tabs">${[["offen", `Offen (${state.transactions.filter((t) => !t.link).length})`], ["zugeordnet", "Zugeordnet"], ["alle", "Alle"]].map(([k, l]) => `<button data-act="bankFilter" data-id="${k}" class="${f === k ? "active" : ""}">${l}</button>`).join("")}</div>
+      <div class="inline" style="margin-bottom:10px"><input placeholder="Suchen (Name, Zweck, Betrag)…" value="${esc(ui.bankSearch)}" data-change="bankSearch" style="max-width:320px">
+        ${good && f !== "zugeordnet" ? btn("acceptAll", `✓ ${good} Vorschläge übernehmen`, "primary") : ""}</div>
+      ${shown.length ? `<div class="table-wrap"><table><thead><tr><th>Datum</th><th>Auftraggeber / Verwendungszweck</th><th class="num">Betrag</th><th>Zuordnung</th></tr></thead><tbody>
+        ${shown.map((t) => { const s = sugs[t.id];
+          return `<tr><td class="nowrap">${d(t.date)}</td><td><b>${esc(t.name)}</b><div class="small muted">${esc(t.purpose)}</div></td><td class="num ${t.amount < 0 ? "neg" : "pos"}">${eur(t.amount)}</td>
+          <td>${t.link ? `${linkLabel(t)} <button class="btn sm link" data-act="unlink" data-id="${t.id}" title="Zuordnung lösen">✕</button>`
+            : `${s ? `<span class="suggest ${s.score >= 60 ? "hi" : ""}" title="${esc(s.why.join(", "))} · Sicherheit ${s.score} %">${esc(suggestionLabel(s))} <button class="btn sm" data-act="accept" data-id="${t.id}">✓</button></span> ` : ""}${btn("assign", "Zuordnen…", "sm", t.id)}`}</td></tr>`; }).join("")}
+      </tbody></table></div>${txs.length > shown.length ? `<p class="small muted">${txs.length - shown.length} weitere – Suche verwenden.</p>` : ""}` : `<p class="muted">${f === "offen" && state.transactions.length ? "Alle Umsätze sind zugeordnet 🎉" : "Keine Umsätze."}</p>`}
+    </div>`;
+}
+
+function viewExpenses() {
+  const list = state.expenses.filter((e) => e.date.startsWith(String(ui.year)) && (!ui.expObj || e.objectId === ui.expObj)).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const byCat = {};
+  for (const e of list) byCat[e.category] = (byCat[e.category] || 0) + e.amount;
+  return head("Ausgaben & Belege", `${ui.year} · ${list.length} Belege · ${eur(sum(list, (e) => e.amount))}`,
+    `<select data-change="expObj" style="width:auto">${opt([["", "Alle Objekte"], ...state.objects.map((o) => [o.id, o.name])], ui.expObj)}</select>` + btn("year", "‹", "", ui.year - 1) + btn("year", "›", "", ui.year + 1) + btn("newExpense", "+ Ausgabe", "primary")) + `
+    <div class="grid g21">
+      <div class="card">${list.length ? `<div class="table-wrap"><table><thead><tr><th>Datum</th><th>Empfänger</th><th>Kategorie</th><th>Objekt</th><th class="num">Betrag</th></tr></thead><tbody>
+        ${list.map((e) => `<tr class="click" data-act="editExpense" data-id="${e.id}"><td class="nowrap">${d(e.date)}</td><td>${esc(e.vendor)}<div class="small muted">${esc((e.note || "").slice(0, 70))}</div></td><td class="small">${esc(C.EXPENSE_CATEGORIES[e.category]?.label)}</td><td class="small">${esc(byId("objects", e.objectId)?.name || "–")}</td><td class="num">${eur(e.amount)} ${e.txId ? "🏦" : ""}</td></tr>`).join("")}
+      </tbody></table></div>` : '<p class="muted">Keine Ausgaben in diesem Jahr. Ausgaben entstehen automatisch beim Zuordnen von Bankumsätzen oder manuell (bar/Karte).</p>'}</div>
+      <div class="card"><h2>Nach Kategorie</h2><table>${Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td class="small">${esc(C.EXPENSE_CATEGORIES[k]?.label)}</td><td class="num">${eur(v)}</td></tr>`).join("")}</table></div>
+    </div>`;
+}
+
+function editExpense(id) {
+  const e = byId("expenses", id) || { id: C.uid("e_"), date: today(), category: "erhaltung", txId: null };
+  formDialog({
+    title: id ? "Ausgabe bearbeiten" : "Neue Ausgabe (bar / Karte / ohne Kontoimport)", spec: SPEC.expense, data: e,
+    intro: e.txId ? `<div class="note small">Aus Bankumsatz übernommen – Datum und Betrag kommen vom Konto.</div>` : "",
+    onSave: (v) => { upsert("expenses", { ...e, ...v, amount: Math.abs(v.amount) }); commit("Ausgabe gespeichert"); },
+    onDelete: id && (() => {
+      const tx = state.transactions.find((t) => t.link?.type === "expense" && t.link.id === id);
+      if (tx) tx.link = null;
+      state.expenses = state.expenses.filter((x) => x.id !== id); commit("Ausgabe gelöscht");
+    }),
+  });
+}
+
+function viewFewo() {
+  const units = fewoUnits();
+  if (!units.length) return head("Ferienwohnung") + `<div class="card empty"><div class="big">☀️</div><p>Lege unter „Objekte & Einheiten“ eine Einheit vom Typ <b>Ferienwohnung</b> an, um Buchungen, Belegungskalender und Gäste-Rechnungen zu nutzen.</p><br>${btn("newUnit", "+ Einheit anlegen", "primary")}</div>`;
+  const key = ui.month, days = C.daysInMonth(key);
+  const from = `${key}-01`, to = `${C.addMonths(key, 1)}-01`;
+  const active = state.bookings.filter((b) => b.status !== "storniert");
+  const monthB = state.bookings.filter((b) => b.from < to && b.to > from).sort((a, b) => (a.from < b.from ? -1 : 1));
+  const nights = sum(active, (b) => overlapNights(b, from, to));
+  const revenue = sum(active, (b) => { const n = C.nightsBetween(b.from, b.to); return n ? Math.round(((b.total || 0) * overlapNights(b, from, to)) / n) : 0; });
+  const yearB = active.filter((b) => b.from.startsWith(String(key.slice(0, 4))));
+  const cal = `<table class="cal"><tr><th></th>${Array.from({ length: days }, (_, i) => `<th>${i + 1}</th>`).join("")}</tr>
+    ${units.map((u) => `<tr><td class="u">${esc(u.name)}</td>${Array.from({ length: days }, (_, i) => {
+      const day = `${key}-${String(i + 1).padStart(2, "0")}`;
+      const b = active.find((x) => x.unitId === u.id && x.from <= day && x.to > day);
+      const wd = new Date(day).getDay();
+      return `<td class="d ${wd === 0 || wd === 6 ? "we" : ""} ${b ? "b" : ""} ${b?.status === "angefragt" ? "req" : ""} ${day === today() ? "today" : ""}" ${b ? `data-act="editBooking" data-id="${b.id}" title="${esc(b.guest)} · ${d(b.from)}–${d(b.to)}"` : `data-act="newBookingAt" data-id="${u.id}|${day}" title="Neue Buchung ab ${d(day)}"`}>${b && b.from === day ? esc(b.guest.slice(0, 2)) : ""}</td>`;
+    }).join("")}</tr>`).join("")}</table>`;
+  return head("Ferienwohnung", "Belegung, Buchungen & Gäste-Rechnungen", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("smoobu", "⟳ Smoobu-Import") + btn("newBooking", "+ Buchung", "primary")) + `
+    <div class="kpis">
+      <div class="kpi"><div class="l">Belegte Nächte</div><div class="v">${nights}</div><div class="s">${Math.round((nights / (days * units.length)) * 100)} % Auslastung</div></div>
+      <div class="kpi"><div class="l">Übernachtungsumsatz ${C.MONTHS_DE[Number(key.slice(5)) - 1]}</div><div class="v">${eur(revenue)}</div><div class="s">Ø ${nights ? eur(Math.round(revenue / nights)) : "–"} / Nacht</div></div>
+      <div class="kpi"><div class="l">Buchungen ${key.slice(0, 4)}</div><div class="v">${yearB.length}</div><div class="s">${eur(sum(yearB, (b) => (b.total || 0) + (b.cleaning || 0)))} brutto</div></div>
+    </div>
+    <div class="card"><h2>Belegungskalender ${C.fmtMonth(key)}</h2><div class="table-wrap">${cal}</div><p class="small muted" style="margin-top:6px">Freien Tag anklicken = neue Buchung. Gold = angefragt.</p></div>
+    <div class="card"><h2>Buchungen im ${C.fmtMonth(key)}</h2>${monthB.length ? `<div class="table-wrap"><table><thead><tr><th>Zeitraum</th><th>Gast</th><th>Wohnung</th><th>Kanal</th><th class="num">Preis</th><th>Status</th><th>Rechnung</th></tr></thead><tbody>
+      ${monthB.map((b) => { const inv = byId("invoices", b.invoiceId);
+        return `<tr><td class="nowrap">${d(b.from)} – ${d(b.to)}<div class="small muted">${C.nightsBetween(b.from, b.to)} Nächte · ${Number(b.adults || 0) + Number(b.children || 0)} Pers.</div></td><td class="click" data-act="editBooking" data-id="${b.id}"><b>${esc(b.guest)}</b></td><td class="small">${esc(byId("units", b.unitId)?.name)}</td><td class="small">${esc(b.channel)}</td>
+        <td class="num">${eur((b.total || 0) + (b.cleaning || 0))}</td><td>${b.status === "storniert" ? '<span class="badge bad">storniert</span>' : b.status === "angefragt" ? '<span class="badge warn">angefragt</span>' : '<span class="badge ok">bestätigt</span>'}</td>
+        <td>${inv ? `<a href="#/rechnung/${inv.id}">${esc(inv.number)}</a> ${invBadge(inv)}` : b.status !== "storniert" ? btn("invoiceFromBooking", "Rechnung erstellen", "sm", b.id) : ""}</td></tr>`; }).join("")}</tbody></table></div>` : '<p class="muted">Keine Buchungen in diesem Monat.</p>'}</div>`;
+}
+
+const invBadge = (i) => ({ offen: '<span class="badge warn">offen</span>', teilbezahlt: '<span class="badge warn">teilbezahlt</span>', bezahlt: '<span class="badge ok">bezahlt</span>', storniert: '<span class="badge grey">storniert</span>', storno: '<span class="badge grey">Storno</span>' }[i.status] || "");
+
+function viewInvoices() {
+  const list = [...state.invoices].sort((a, b) => (a.number < b.number ? 1 : -1));
+  return head("Rechnungen", "Gäste-Rechnungen mit fortlaufender Nummer, 7 % USt und Kurtaxe", btn("newInvoice", "+ Rechnung", "primary")) + `
+    <div class="card">${list.length ? `<div class="table-wrap"><table><thead><tr><th>Nr.</th><th>Datum</th><th>Empfänger</th><th>Zeitraum</th><th class="num">Betrag</th><th class="num">Bezahlt</th><th>Status</th></tr></thead><tbody>
+      ${list.map((i) => `<tr class="click" data-go="#/rechnung/${i.id}"><td><b>${esc(i.number)}</b></td><td>${d(i.date)}</td><td>${esc(i.recipient?.name)}</td><td class="small nowrap">${i.serviceFrom ? `${d(i.serviceFrom)} – ${d(i.serviceTo)}` : ""}</td><td class="num">${eur(C.invoiceTotals(i).gross)}</td><td class="num">${eur(C.paidForInvoice(state, i.id))}</td><td>${invBadge(i)}</td></tr>`).join("")}
+    </tbody></table></div>` : '<p class="muted">Noch keine Rechnungen. Am schnellsten: unter „Ferienwohnung“ bei einer Buchung „Rechnung erstellen“.</p>'}</div>`;
+}
+
+function viewInvoice(id) {
+  const inv = byId("invoices", id);
+  if (!inv) return head("Rechnung nicht gefunden");
+  const s = state.settings, t = C.invoiceTotals(inv);
+  const unit = byId("units", inv.unitId), obj = byId("objects", unit?.objectId);
+  const due = addDays(inv.date, Number(s.paymentTermDays) || 14);
+  const sender = [s.ownerName, s.ownerStreet, [s.ownerZip, s.ownerCity].filter(Boolean).join(" ")].filter(Boolean);
+  const missing = [!s.ownerName && "Name", !s.ownerStreet && "Anschrift", !s.taxNumber && !s.vatId && "Steuernummer/USt-IdNr."].filter(Boolean);
+  return `<div class="head noprint"><div><a href="#/rechnungen">← Rechnungen</a></div><div class="toolbar">
+      ${inv.type !== "storno" && inv.status !== "storniert" ? btn("editInvoice", "Bearbeiten", "", inv.id) + (inv.status !== "bezahlt" ? btn("markPaid", "Zahlung erfassen", "", inv.id) : "") + btn("cancelInvoice", "Stornieren", "danger", inv.id) : ""}
+      <button class="btn primary" onclick="window.print()">Drucken / PDF</button></div></div>
+    ${missing.length ? `<div class="note warn noprint">Pflichtangaben fehlen: ${missing.join(", ")} – bitte unter <a href="#/einstellungen">Einstellungen</a> ergänzen.</div>` : ""}
+    <div class="paper">
+      <div class="top"><div><div class="sender">${esc(sender.join(" · "))}</div>
+        <div><b>${esc(inv.recipient?.name)}</b><br>${esc(inv.recipient?.address || "").replace(/\n/g, "<br>")}</div></div>
+        <div><b>${esc(s.ownerName)}</b><br>${sender.slice(1).map(esc).join("<br>")}${s.ownerPhone ? `<br>Tel. ${esc(s.ownerPhone)}` : ""}${s.ownerEmail ? `<br>${esc(s.ownerEmail)}` : ""}
+          <table class="meta" style="margin-top:12px"><tr><td class="muted">Rechnungsnr.</td><td><b>${esc(inv.number)}</b></td></tr><tr><td class="muted">Datum</td><td>${d(inv.date)}</td></tr>
+          ${inv.serviceFrom ? `<tr><td class="muted">Leistungszeitraum</td><td>${d(inv.serviceFrom)} – ${d(inv.serviceTo)}</td></tr>` : ""}
+          ${s.taxNumber ? `<tr><td class="muted">Steuernummer</td><td>${esc(s.taxNumber)}</td></tr>` : ""}${s.vatId ? `<tr><td class="muted">USt-IdNr.</td><td>${esc(s.vatId)}</td></tr>` : ""}</table></div></div>
+      <h1>${inv.type === "storno" ? "Stornorechnung" : "Rechnung"} ${esc(inv.number)}</h1>
+      ${unit ? `<p style="margin-bottom:12px">Unterkunft: ${esc(unit.name)}${obj ? `, ${esc([obj.street, [obj.zip, obj.city].filter(Boolean).join(" ")].filter(Boolean).join(", "))}` : ""}</p>` : ""}
+      <table class="lines"><thead><tr><th>Pos.</th><th>Beschreibung</th><th class="num">Menge</th><th class="num">Einzelpreis</th>${inv.kleinunternehmer ? "" : '<th class="num">USt</th>'}<th class="num">Gesamt</th></tr></thead><tbody>
+        ${inv.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.desc)}${l.passThrough ? '<div class="small muted">durchlaufender Posten, nicht umsatzsteuerbar</div>' : ""}</td><td class="num">${String(l.qty).replace(".", ",")}</td><td class="num">${eur(l.price)}</td>${inv.kleinunternehmer ? "" : `<td class="num">${l.passThrough ? "–" : l.vat + " %"}</td>`}<td class="num">${eur(Math.round(l.qty * l.price))}</td></tr>`).join("")}
+      </tbody></table>
+      <table class="totals">
+        ${inv.kleinunternehmer ? "" : t.taxes.map((x) => `<tr><td>Nettobetrag ${x.rate} %</td><td class="num">${eur(x.net)}</td></tr><tr><td>zzgl. ${x.rate} % USt</td><td class="num">${eur(x.vat)}</td></tr>`).join("")}
+        ${t.passThrough ? `<tr><td>Durchlaufende Posten</td><td class="num">${eur(t.passThrough)}</td></tr>` : ""}
+        <tr class="sum"><td>Gesamtbetrag</td><td class="num">${eur(t.gross)}</td></tr>
+        ${C.paidForInvoice(state, inv.id) && inv.type !== "storno" ? `<tr><td>bereits bezahlt</td><td class="num">${eur(C.paidForInvoice(state, inv.id))}</td></tr><tr><td><b>Offen</b></td><td class="num"><b>${eur(t.gross - C.paidForInvoice(state, inv.id))}</b></td></tr>` : ""}
+      </table>
+      <div style="margin-top:24px">
+        ${inv.kleinunternehmer ? "<p>Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.</p>" : ""}
+        ${inv.note ? `<p>${esc(inv.note).replace(/\n/g, "<br>")}</p>` : ""}
+        ${inv.type !== "storno" && inv.status !== "bezahlt" ? `<p>Bitte überweisen Sie den Betrag bis zum ${d(due)} unter Angabe der Rechnungsnummer${s.invoiceIban ? ` auf das unten genannte Konto` : ""}.</p>` : inv.status === "bezahlt" ? "<p>Der Betrag wurde bereits beglichen.</p>" : ""}
+        ${s.invoiceFooter ? `<p style="margin-top:10px">${esc(s.invoiceFooter)}</p>` : ""}
+      </div>
+      <div class="foot"><div>${sender.map(esc).join("<br>")}</div><div>${s.ownerEmail ? esc(s.ownerEmail) + "<br>" : ""}${s.ownerPhone ? esc(s.ownerPhone) + "<br>" : ""}${s.taxNumber ? "St.-Nr. " + esc(s.taxNumber) : ""}${s.vatId ? "<br>USt-IdNr. " + esc(s.vatId) : ""}</div>
+        <div>${s.invoiceBank ? esc(s.invoiceBank) + "<br>" : ""}${s.invoiceIban ? "IBAN " + esc(s.invoiceIban) : ""}${s.invoiceBic ? "<br>BIC " + esc(s.invoiceBic) : ""}</div></div>
+    </div>`;
+}
+
+function viewTax() {
+  const y = ui.year;
+  const av = C.anlageV(state, y);
+  const s = state.settings;
+  const from = ui.datevFrom || `${ui.month}-01`;
+  const to = ui.datevTo || `${ui.month}-${String(C.daysInMonth(ui.month)).padStart(2, "0")}`;
+  const rows = C.datevRows(state, from, to);
+  const openTx = state.transactions.filter((t) => !t.link && t.date >= from && t.date <= to).length;
+  const incomeRows = [["kalt", "Mieteinnahmen (Kaltmiete, Zuschläge)"], ["umlage", "Umlagen / Nebenkosten-Vorauszahlungen und -Nachzahlungen"], ["fewo", "Einnahmen Ferienwohnung (netto)"], ["sonstige", "Sonstige Einnahmen"]];
+  const col = (r, fn) => av.map((x) => `<td class="num">${eur(fn(x))}</td>`).join("") + (av.length > 1 ? `<td class="num"><b>${eur(sum(av, fn))}</b></td>` : "");
+  return head("Steuer & DATEV", "Anlage V, DATEV-Export und Monatspaket für den Steuerberater", btn("year", "‹ " + (y - 1), "", y - 1) + `<b style="padding:0 6px">${y}</b>` + btn("year", (y + 1) + " ›", "", y + 1)) + `
+    <div class="card noprint"><h2>DATEV-Export & Steuerberater-Paket</h2>
+      <div class="inline" style="margin-bottom:10px">
+        <label class="small">von <input type="date" value="${from}" data-change="datevFrom"></label>
+        <label class="small">bis <input type="date" value="${to}" data-change="datevTo"></label>
+        ${btn("datevPreset", "Monat", "sm", "m")}${btn("datevPreset", "Quartal", "sm", "q")}${btn("datevPreset", "Jahr " + y, "sm", "y")}
+      </div>
+      ${!s.datevBerater || !s.datevMandant ? `<div class="note warn">Berater- und Mandantennummer fehlen – bitte unter <a href="#/einstellungen">Einstellungen</a> eintragen (bekommst du vom Steuerberater).</div>` : ""}
+      ${openTx ? `<div class="note warn">${openTx} Bankumsätze im Zeitraum sind noch nicht zugeordnet und fehlen im Export. <a href="#/bank">Jetzt zuordnen →</a></div>` : ""}
+      <div class="toolbar">${btn("datev", "⬇ DATEV-Buchungsstapel (EXTF)", "primary")}${btn("journal", "⬇ Buchungsliste (Excel)")}<a class="btn" href="#/bericht/${from}_${to}">🖨 Bericht drucken</a></div>
+      <p class="small muted" style="margin-top:8px">${rows.length} Buchungssätze · SKR ${s.skr} · Bank ${C.accountsFor(s).bank}. Der Buchungsstapel kann vom Steuerberater direkt in DATEV Rechnungswesen importiert werden (Format EXTF 700). Kontenzuordnung unter Einstellungen anpassbar.</p>
+      ${rows.length ? `<details style="margin-top:8px"><summary class="small">Vorschau Buchungssätze</summary><div class="table-wrap"><table><thead><tr><th>Datum</th><th class="num">Betrag</th><th>S/H</th><th>Konto</th><th>Gegenkonto</th><th>Beleg</th><th>Text</th></tr></thead><tbody>
+        ${rows.slice(0, 100).map((r) => `<tr><td>${d(r.date)}</td><td class="num">${C.fmtNum(r.amount)}</td><td>${r.sh}</td><td>${r.konto}</td><td>${r.gegen}</td><td class="small">${esc(r.beleg)}</td><td class="small">${esc(r.text)}</td></tr>`).join("")}</tbody></table></div></details>` : ""}
+    </div>
+    <div class="card"><div class="head" style="margin-bottom:8px"><h2 style="margin:0">Anlage V – Zusammenstellung ${y}</h2><div class="toolbar noprint"><button class="btn sm" onclick="window.print()">Drucken / PDF</button></div></div>
+      <div class="table-wrap"><table><thead><tr><th></th>${av.map((x) => `<th class="num">${esc(x.name)}</th>`).join("")}${av.length > 1 ? '<th class="num">Gesamt</th>' : ""}</tr></thead><tbody>
+        <tr><td colspan="${av.length + 2}"><b>Einnahmen</b> <span class="small muted">(Zuflussprinzip, netto ohne USt, ohne Kaution & Kurtaxe)</span></td></tr>
+        ${incomeRows.map(([k, l]) => `<tr><td>${l}</td>${col(null, (x) => x.income[k])}</tr>`).join("")}
+        <tr><td><b>Summe Einnahmen</b></td>${col(null, (x) => x.incomeTotal)}</tr>
+        <tr><td colspan="${av.length + 2}"><b>Werbungskosten</b></td></tr>
+        ${Object.entries(C.AV_GROUPS).map(([k, l]) => `<tr><td>${l}</td>${col(null, (x) => x.costs[k])}</tr>`).join("")}
+        <tr><td><b>Summe Werbungskosten</b></td>${col(null, (x) => x.costTotal)}</tr>
+      </tbody><tfoot><tr><td>Überschuss / Verlust</td>${col(null, (x) => x.result)}</tr></tfoot></table></div>
+      <p class="small muted" style="margin-top:8px">Zusammenstellung als Vorbereitung für die Anlage V bzw. den Steuerberater – keine Steuerberatung. Ferienwohnungen mit hotelähnlichen Leistungen können gewerblich sein; bei Regelbesteuerung ist zusätzlich die Umsatzsteuer-Voranmeldung zu beachten. Nicht abziehbar: Tilgung, Privat.</p>
+    </div>`;
+}
+
+function viewReport(range) {
+  const [from, to] = range.split("_");
+  const pays = state.payments.filter((p) => p.date >= from && p.date <= to).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const exps = state.expenses.filter((e) => e.date >= from && e.date <= to && e.category !== "privat").sort((a, b) => (a.date < b.date ? -1 : 1));
+  const invs = state.invoices.filter((i) => i.date >= from && i.date <= to);
+  const s = state.settings;
+  const kFrom = C.monthKey(from), kTo = C.monthKey(to);
+  const si = C.sollIst(state, kFrom, kTo);
+  const payLabel = (p) => p.kind === "miete" ? `Miete ${C.fmtMonth(p.period)} · ${contractLabel(byId("contracts", p.contractId))}` : p.kind === "fewo" ? `Rechnung ${byId("invoices", p.invoiceId)?.number || ""} · ${byId("invoices", p.invoiceId)?.recipient?.name || ""}` : `${C.INCOME_KINDS[p.kind]} ${p.note || ""}`;
+  return `<div class="head noprint"><a href="#/steuer">← Steuer & DATEV</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
+    <div class="card"><h1>Immobilien-Bericht ${d(from)} – ${d(to)}</h1><p class="muted">${esc(s.ownerName)} · erstellt am ${d(today())}${s.datevMandant ? ` · Mandant ${esc(s.datevMandant)}` : ""}</p>
+      <div class="kpis" style="margin-top:12px"><div class="kpi"><div class="l">Einnahmen</div><div class="v">${eur(sum(pays.filter((p) => p.kind !== "kaution"), (p) => p.amount))}</div></div>
+        <div class="kpi"><div class="l">Ausgaben</div><div class="v">${eur(sum(exps, (e) => e.amount))}</div></div>
+        <div class="kpi"><div class="l">Mietrückstand im Zeitraum</div><div class="v">${eur(-sum(si.filter((r) => r.diff < 0), (r) => r.diff))}</div></div></div>
+      <h3>Einnahmen</h3><table><thead><tr><th>Datum</th><th>Vorgang</th><th>Weg</th><th class="num">Betrag</th></tr></thead><tbody>${pays.map((p) => `<tr><td>${d(p.date)}</td><td>${esc(payLabel(p))}</td><td>${p.txId ? "Bank" : "Kasse"}</td><td class="num">${eur(p.amount)}</td></tr>`).join("")}</tbody></table>
+      <h3>Ausgaben</h3><table><thead><tr><th>Datum</th><th>Empfänger</th><th>Kategorie</th><th>Objekt</th><th>Beleg</th><th class="num">Betrag</th></tr></thead><tbody>${exps.map((e) => `<tr><td>${d(e.date)}</td><td>${esc(e.vendor)}</td><td>${esc(C.EXPENSE_CATEGORIES[e.category]?.label)}</td><td>${esc(byId("objects", e.objectId)?.name || "")}</td><td>${esc(e.belegNr || "")}</td><td class="num">${eur(e.amount)}</td></tr>`).join("")}</tbody></table>
+      ${invs.length ? `<h3>Ausgestellte Rechnungen</h3><table><thead><tr><th>Nr.</th><th>Datum</th><th>Empfänger</th><th class="num">Netto</th><th class="num">USt</th><th class="num">Brutto</th><th>Status</th></tr></thead><tbody>${invs.map((i) => { const t = C.invoiceTotals(i); return `<tr><td>${esc(i.number)}</td><td>${d(i.date)}</td><td>${esc(i.recipient?.name)}</td><td class="num">${eur(t.net)}</td><td class="num">${eur(t.vat)}</td><td class="num">${eur(t.gross)}</td><td>${esc(i.status)}</td></tr>`; }).join("")}</tbody></table>` : ""}
+      <h3>Offene Mieten</h3><table>${si.filter((r) => r.diff < 0).map((r) => `<tr><td>${C.fmtMonth(r.key)}</td><td>${esc(contractLabel(byId("contracts", r.contractId)))}</td><td class="num neg">${eur(r.diff)}</td></tr>`).join("") || '<tr><td class="muted">keine</td></tr>'}</table>
+    </div>`;
+}
+
+function viewSettings() {
+  const s = state.settings;
+  const skr = s.skr === "04" ? "04" : "03";
+  const acc = C.accountsFor(s);
+  const accLabels = { bank: "Bank", kasse: "Kasse", steuerfrei: "Mieterlöse steuerfrei (§ 4 Nr. 12)", kleinunternehmer: "Erlöse Kleinunternehmer (§ 19)", erl7: "Erlöse 7 % (Ferienwohnung)", erl19: "Erlöse 19 %", durchlaufend: "Durchlaufende Posten (Kurtaxe)", sonstErtrag: "Sonstige Erträge" };
+  const rules = Object.entries(state.rules || {});
+  return head("Einstellungen") + `
+    <form class="card" data-form="owner"><h2>Vermieter / Rechnungssteller</h2><div class="fgrid">
+      ${[["ownerName", "Name / Firma"], ["ownerStreet", "Straße"], ["ownerZip", "PLZ"], ["ownerCity", "Ort"], ["ownerEmail", "E-Mail"], ["ownerPhone", "Telefon"], ["taxNumber", "Steuernummer"], ["vatId", "USt-IdNr. (falls vorhanden)"], ["invoiceBank", "Bank (für Rechnungen)"], ["invoiceIban", "IBAN (für Rechnungen)"], ["invoiceBic", "BIC"]].map(([k, l]) => `<label class="f"><span>${l}</span><input name="${k}" value="${esc(s[k] || "")}"></label>`).join("")}
+    </div><button class="btn primary">Speichern</button></form>
+    <form class="card" data-form="invoice"><h2>Rechnungen & Ferienwohnung</h2><div class="fgrid">
+      <label class="f"><span>Nummernkreis ({JJJJ} = Jahr)</span><input name="invoicePrefix" value="${esc(s.invoicePrefix)}"></label>
+      <label class="f"><span>Letzte vergebene Nr. ${new Date().getFullYear()}</span><input type="number" name="counter" value="${(s.invoiceCounters || {})[new Date().getFullYear()] || 0}"></label>
+      <label class="f"><span>Zahlungsziel (Tage)</span><input type="number" name="paymentTermDays" value="${esc(s.paymentTermDays)}"></label>
+      <label class="f"><span>Standard Kurtaxe / Pers. & Nacht (€)</span><input name="defaultKurtaxe" value="${C.fmtNum(s.defaultKurtaxe || 0)}"></label>
+      <label class="f"><span>Standard Endreinigung (€)</span><input name="defaultCleaning" value="${C.fmtNum(s.defaultCleaning || 0)}"></label>
+      <label class="f"><span>Fußtext</span><input name="invoiceFooter" value="${esc(s.invoiceFooter || "")}"></label>
+      <label class="f inline full"><input type="checkbox" name="kleinunternehmer" ${s.kleinunternehmer ? "checked" : ""}> Kleinunternehmer nach § 19 UStG (keine USt auf Rechnungen)</label>
+    </div><button class="btn primary">Speichern</button></form>
+    <form class="card" data-form="datev"><h2>DATEV & Kontenrahmen</h2><div class="fgrid">
+      <label class="f"><span>Kontenrahmen</span><select name="skr">${opt([["03", "SKR 03"], ["04", "SKR 04"]], skr)}</select></label>
+      <label class="f"><span>Sachkontenlänge</span><input type="number" name="datevKontenlaenge" value="${esc(s.datevKontenlaenge || 4)}"></label>
+      <label class="f"><span>Beraternummer</span><input name="datevBerater" value="${esc(s.datevBerater || "")}"></label>
+      <label class="f"><span>Mandantennummer</span><input name="datevMandant" value="${esc(s.datevMandant || "")}"></label>
+      <label class="f"><span>Mietabgleich (Soll/Ist) ab Monat</span><input type="month" name="sollStart" value="${esc(s.sollStart || "")}"></label>
+      <label class="f"><span>Automatisch zuordnen ab Sicherheit (%)</span><input type="number" name="autoAssignScore" value="${esc(s.autoAssignScore || 80)}"></label>
+    </div>
+    <details><summary>Konten anpassen (SKR ${skr}) – Vorschläge, mit Steuerberater abstimmen</summary><div class="fgrid" style="margin-top:10px">
+      ${Object.entries(accLabels).map(([k, l]) => `<label class="f"><span>${l}</span><input name="acc_${k}" value="${esc(acc[k])}"></label>`).join("")}
+      ${Object.entries(C.EXPENSE_CATEGORIES).filter(([k]) => k !== "privat").map(([k, v]) => `<label class="f"><span>${esc(v.label)}</span><input name="exp_${k}" value="${esc(C.expenseAccount(s, k) || "")}"></label>`).join("")}
+    </div></details><br><button class="btn primary">Speichern</button></form>
+    <div class="card"><h2>Gelernte Zuordnungsregeln (${rules.length})</h2>${rules.length ? `<table>${rules.map(([k, r]) => `<tr><td class="small">${esc(k.replace(/^(iban|name):/, ""))}</td><td class="small">${esc(suggestionLabel({ ...r, period: ui.month }))}</td><td>${btn("delRule", "✕", "sm link", k)}</td></tr>`).join("")}</table>` : '<p class="muted">Regeln entstehen beim Zuordnen von Bankumsätzen („Regel merken“).</p>'}</div>
+    <div class="card"><h2>Datensicherung</h2>
+      <p class="muted" style="margin-bottom:10px">Alle Daten liegen nur in diesem Browser. Sichere sie regelmäßig als Datei (z. B. in iCloud/Google Drive) – damit kannst du sie auch auf ein anderes Gerät übertragen.</p>
+      <div class="toolbar">${btn("backup", "⬇ Sicherung herunterladen", "primary")}<label class="btn">⬆ Sicherung einspielen<input type="file" accept=".json" data-change="restore" hidden></label>${btn("loadDemo", "Demo-Daten laden")}${btn("reset", "Alle Daten löschen", "danger")}</div></div>`;
+}
+
+// ---------------------------------------------------------------- Routing & Events
+
+function render() {
+  const hash = location.hash.replace(/^#\/?/, "");
+  const [route, arg] = hash.split("/");
+  $("#nav").innerHTML = NAV.map(([r, ic, l]) => `<a href="#/${r}" class="${route === r || (r === "rechnungen" && route === "rechnung") || (r === "steuer" && route === "bericht") ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("");
+  const views = { "": viewDashboard, objekte: viewObjects, mieter: viewTenants, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings };
+  try {
+    $("#view").innerHTML = (views[route] || viewDashboard)();
+  } catch (e) {
+    console.error(e);
+    $("#view").innerHTML = `<div class="card"><h2>Fehler in dieser Ansicht</h2><pre class="small">${esc(e.stack || e)}</pre></div>`;
+  }
+}
+
+const actions = {
+  newObject: () => editObject(), editObject, newUnit: (id) => editUnit(null, id), editUnit,
+  newTenant: () => editTenant(), editTenant, newContract: (unitId) => editContract(null, unitId), editContract, addStep,
+  newPayment: () => editPayment(), editPayment, newExpense: () => editExpense(), editExpense,
+  newAccount: () => editAccount(), editAccount,
+  assign: assignDialog,
+  accept: (id) => { const tx = byId("transactions", id); applyAssignment(tx, C.suggestAssignment(tx, state), false); commit("Zugeordnet"); },
+  acceptAll: () => { let n = 0; for (const tx of state.transactions.filter((t) => !t.link)) { const s = C.suggestAssignment(tx, state); if (s && s.score >= 60) { applyAssignment(tx, s, false); n++; } } commit(`${n} Umsätze zugeordnet`); },
+  unlink: (id) => unlink(byId("transactions", id)),
+  bankFilter: (f) => { ui.bankFilter = f; render(); },
+  year: (y) => { ui.year = Number(y); ui.datevFrom = ui.datevTo = null; render(); },
+  newBooking: () => editBooking(), editBooking,
+  newBookingAt: (v) => { const [unitId, from] = v.split("|"); editBooking(null, { unitId, from, to: addDays(from, 7) }); },
+  invoiceFromBooking, newInvoice: () => editInvoice(), editInvoice, cancelInvoice, markPaid, smoobu: smoobuImport,
+  datevPreset: (p) => {
+    const y = ui.year;
+    if (p === "y") { ui.datevFrom = `${y}-01-01`; ui.datevTo = `${y}-12-31`; }
+    else if (p === "q") { const qm = Math.floor((Number(ui.month.slice(5)) - 1) / 3) * 3 + 1; const k = `${ui.month.slice(0, 4)}-${String(qm).padStart(2, "0")}`; const e = C.addMonths(k, 2); ui.datevFrom = `${k}-01`; ui.datevTo = `${e}-${C.daysInMonth(e)}`; }
+    else { ui.datevFrom = `${ui.month}-01`; ui.datevTo = `${ui.month}-${C.daysInMonth(ui.month)}`; }
+    render();
+  },
+  datev: () => datevExport(ui.datevFrom || `${ui.month}-01`, ui.datevTo || `${ui.month}-${C.daysInMonth(ui.month)}`),
+  journal: () => journalCsv(ui.datevFrom || `${ui.month}-01`, ui.datevTo || `${ui.month}-${C.daysInMonth(ui.month)}`),
+  delRule: (k) => { delete state.rules[k]; commit("Regel gelöscht"); },
+  backup: () => download(`hausops-immobilien-sicherung-${today()}.json`, JSON.stringify(state, null, 1), "application/json"),
+  loadDemo: () => { if (state.objects.length && !confirm("Vorhandene Daten werden durch Demo-Daten ersetzt. Fortfahren?")) return; state = S.demoState(); commit("Demo-Daten geladen – probiere „Bank“ → Vorschläge übernehmen"); },
+  reset: () => { if (confirm("Wirklich ALLE Daten löschen? Vorher Sicherung herunterladen!") && confirm("Letzte Bestätigung: alles löschen?")) { state = S.emptyState(); commit("Alle Daten gelöscht"); } },
+};
+
+function editAccount(id) {
+  const a = byId("accounts", id) || { id: C.uid("a_") };
+  formDialog({
+    title: id ? "Bankkonto bearbeiten" : "Neues Bankkonto", spec: SPEC.account, data: a,
+    intro: `<div class="note small">Live-Anbindung per PSD2/FinTS ist vorbereitet (siehe Doku). Bis dahin: Umsätze im Online-Banking als CSV oder CAMT.053 exportieren und hier importieren.</div>`,
+    onSave: (v) => { upsert("accounts", { ...a, ...v, iban: C.normIban(v.iban) }); commit("Konto gespeichert"); },
+    onDelete: id && (() => {
+      if (state.transactions.some((t) => t.accountId === id)) return alert("Konto hat Umsätze und kann nicht gelöscht werden.");
+      state.accounts = state.accounts.filter((x) => x.id !== id); commit("Konto gelöscht");
+    }),
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]");
+  const el = e.target.closest("[data-act]");
+  if (el && actions[el.dataset.act]) { e.preventDefault(); e.stopPropagation(); actions[el.dataset.act](el.dataset.id); return; }
+  if (go) location.hash = go.dataset.go;
+});
+
+document.addEventListener("change", async (e) => {
+  const k = e.target.dataset?.change;
+  if (!k) return;
+  const v = e.target.value;
+  if (k === "month") { if (v) { ui.month = v; ui.year = Number(v.slice(0, 4)); } render(); }
+  else if (k === "bankSearch") { ui.bankSearch = v; render(); }
+  else if (k === "expObj") { ui.expObj = v; render(); }
+  else if (k === "datevFrom" || k === "datevTo") { ui[k] = v; render(); }
+  else if (k === "importFile") {
+    const file = e.target.files[0];
+    if (file) await importFile(file, $("#impAcc").value).catch((err) => alert("Import fehlgeschlagen: " + err.message));
+    e.target.value = "";
+  } else if (k === "restore") {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const next = S.importBackup(await file.text());
+      if (confirm(`Sicherung mit ${next.objects.length} Objekten und ${next.transactions.length} Umsätzen einspielen? Aktuelle Daten werden ersetzt.`)) { state = next; commit("Sicherung eingespielt"); }
+    } catch (err) { alert(err.message); }
+  }
+});
+
+document.addEventListener("submit", (e) => {
+  const f = e.target.dataset?.form;
+  if (!f) return;
+  e.preventDefault();
+  const fd = Object.fromEntries(new FormData(e.target));
+  const s = state.settings;
+  if (f === "owner") Object.assign(s, fd, { invoiceIban: C.normIban(fd.invoiceIban) });
+  if (f === "invoice") {
+    const y = new Date().getFullYear();
+    Object.assign(s, { invoicePrefix: fd.invoicePrefix || "RE-{JJJJ}-", paymentTermDays: Number(fd.paymentTermDays) || 14, invoiceFooter: fd.invoiceFooter,
+      defaultKurtaxe: C.parseAmount(fd.defaultKurtaxe), defaultCleaning: C.parseAmount(fd.defaultCleaning), kleinunternehmer: !!fd.kleinunternehmer,
+      invoiceCounters: { ...(s.invoiceCounters || {}), [y]: Math.max(0, Number(fd.counter) || 0) } });
+  }
+  if (f === "datev") {
+    const skrOld = s.skr === "04" ? "04" : "03";
+    const accs = {}, exps = {};
+    for (const [k, v] of Object.entries(fd)) {
+      if (k.startsWith("acc_") && v !== C.DEFAULT_ACCOUNTS[skrOld][k.slice(4)]) accs[k.slice(4)] = v.trim();
+      if (k.startsWith("exp_") && v !== C.EXPENSE_CATEGORIES[k.slice(4)]?.[`skr${skrOld}`]) exps[k.slice(4)] = v.trim();
+    }
+    s.accounts = { ...(s.accounts || {}), [skrOld]: accs };
+    s.expenseAccounts = { ...(s.expenseAccounts || {}), [skrOld]: exps };
+    Object.assign(s, { skr: fd.skr, datevBerater: fd.datevBerater.trim(), datevMandant: fd.datevMandant.trim(), datevKontenlaenge: Number(fd.datevKontenlaenge) || 4, autoAssignScore: Number(fd.autoAssignScore) || 80, sollStart: fd.sollStart || "" });
+  }
+  commit("Einstellungen gespeichert");
+});
+
+window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
+render();
