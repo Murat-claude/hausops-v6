@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1f2a24" />
+  <link rel="manifest" href="/analyse/manifest.json" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <title>Immo-Analyse KI</title>
+  <style>
+    :root {
+      --bg: #f3f4f1; --card: #ffffff; --text: #1d211f; --muted: #66706a; --line: #dfe3de;
+      --accent: #2f6b4f; --accent-soft: #e5efe9; --gelb: #c8930f; --rot: #b33a3a; --gruen: #2f8a57;
+      --input: #fafbf9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #141816; --card: #1d2320; --text: #e8ece9; --muted: #9aa59f; --line: #2e3632;
+        --accent: #6cc196; --accent-soft: #23352c; --input: #171c19;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    header { background: #1f2a24; color: #fff; padding: 18px 16px; }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    header p { margin: 4px 0 0; opacity: .75; font-size: .9rem; }
+    main { max-width: 980px; margin: 0 auto; padding: 16px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    .card h2 { margin: 0 0 12px; font-size: 1.05rem; }
+    label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+    input, textarea, select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--input); color: var(--text); font: inherit; }
+    textarea { min-height: 110px; resize: vertical; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+    button { font: inherit; border: 0; border-radius: 8px; padding: 11px 16px; cursor: pointer; background: var(--accent); color: #fff; font-weight: 600; }
+    button.zweit { background: var(--accent-soft); color: var(--accent); }
+    button:disabled { opacity: .5; cursor: default; }
+    .reihe { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+    .hinweis { font-size: .82rem; color: var(--muted); }
+    details summary { cursor: pointer; font-weight: 600; }
+    #log { font-size: .85rem; max-height: 260px; overflow: auto; border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+    #log div { padding: 2px 0; color: var(--muted); overflow-wrap: anywhere; }
+    #log div.ok { color: var(--text); }
+    #denken { font-size: .82rem; color: var(--muted); white-space: pre-wrap; max-height: 120px; overflow: auto; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: dreh 1s linear infinite; vertical-align: -2px; margin-right: 6px; }
+    @keyframes dreh { to { transform: rotate(360deg); } }
+    .ampel { display: flex; gap: 14px; align-items: center; }
+    .ampel .punkt { width: 54px; height: 54px; border-radius: 50%; flex: none; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 1.1rem; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 14px; }
+    .kpi { background: var(--accent-soft); border-radius: 10px; padding: 10px; }
+    .kpi b { display: block; font-size: 1.1rem; }
+    .kpi span { font-size: .78rem; color: var(--muted); }
+    .tab-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+    th, td { border-bottom: 1px solid var(--line); padding: 7px 8px; text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; white-space: normal; }
+    td input { width: 110px; padding: 5px 6px; text-align: right; background: #fff7d6; color: #1d211f; }
+    tr.summe td { font-weight: 700; }
+    .neg { color: var(--rot); } .pos { color: var(--gruen); }
+    #bericht { overflow-wrap: anywhere; }
+    #bericht table { margin: 10px 0; display: block; overflow-x: auto; }
+    #bericht a { color: var(--accent); }
+    #bericht h1 { font-size: 1.4rem; } #bericht h2 { font-size: 1.15rem; margin-top: 1.6em; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+    .verlauf-eintrag { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .verlauf-eintrag a { color: var(--accent); cursor: pointer; }
+    .versteckt { display: none !important; }
+    .fehler { background: #fbe9e9; color: #8a2222; border-radius: 8px; padding: 10px; margin-top: 10px; }
+    @media print {
+      body { background: #fff; color: #000; }
+      header, .kein-druck { display: none !important; }
+      .card { border: 0; padding: 0; }
+      td input { border: 0; background: none; }
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>🏠 Immo-Analyse KI</h1>
+    <p>Link, Exposé oder Inserat-Text rein, fertige Analyse raus: Markt, Rendite, Cashflow, Risiken, offene Fragen.</p>
+  </header>
+  <main>
+    <section class="card kein-druck" id="einstellungen">
+      <details id="einstellungen-details">
+        <summary>⚙️ Einstellungen (Claude API-Schlüssel)</summary>
+        <label for="apikey">Anthropic API-Schlüssel</label>
+        <input id="apikey" type="password" placeholder="sk-ant-…" autocomplete="off" />
+        <p class="hinweis">Der Schlüssel bleibt nur auf diesem Gerät gespeichert (Browser-Speicher) und geht direkt an api.anthropic.com. Einen Schlüssel erstellst du unter console.anthropic.com → API Keys. Eine Analyse kostet je nach Umfang grob 0,30–1,50 €.</p>
+        <div class="reihe"><button class="zweit" id="key-speichern">Speichern</button><button class="zweit" id="key-loeschen">Schlüssel löschen</button><span id="key-status" class="hinweis"></span></div>
+      </details>
+    </section>
+
+    <section class="card kein-druck" id="eingabe">
+      <h2>Objekt</h2>
+      <label for="link">Link zur Anzeige (ImmoScout24, Immowelt, Kleinanzeigen, Makler-Website …)</label>
+      <input id="link" type="url" placeholder="https://www.immobilienscout24.de/expose/…" />
+      <label for="text">Oder / zusätzlich: Text aus der Anzeige einfügen</label>
+      <textarea id="text" placeholder="Viele Portale blockieren automatische Abrufe. Dann einfach die Anzeige markieren, kopieren und hier einfügen."></textarea>
+      <label for="dateien">Exposé (PDF) oder Screenshots der Anzeige</label>
+      <input id="dateien" type="file" multiple accept="application/pdf,image/png,image/jpeg,image/webp,image/gif" />
+      <div class="grid2">
+        <div>
+          <label for="ziel">Ziel</label>
+          <select id="ziel">
+            <option>Kapitalanlage (langfristig vermieten)</option>
+            <option>Eigennutzung</option>
+            <option>Ferienwohnung / Kurzzeitvermietung</option>
+            <option>Sanieren und vermieten (Value-Add)</option>
+            <option>Sanieren und weiterverkaufen (Fix &amp; Flip)</option>
+          </select>
+        </div>
+        <div>
+          <label for="ek">Verfügbares Eigenkapital (€)</label>
+          <input id="ek" type="number" inputmode="numeric" placeholder="z. B. 60000" />
+        </div>
+      </div>
+      <label for="notizen">Weitere Hinweise (optional)</label>
+      <input id="notizen" placeholder="z. B. Besichtigung: Fenster alt, Dach 2010 neu; Steuersatz 42 %" />
+      <div class="reihe">
+        <button id="start">Analyse starten</button>
+        <button class="zweit versteckt" id="stopp">Abbrechen</button>
+        <span class="hinweis">Dauert meist 2–6 Minuten. Die KI recherchiert dabei live im Web.</span>
+      </div>
+      <div id="fehler" class="fehler versteckt"></div>
+    </section>
+
+    <section class="card kein-druck versteckt" id="fortschritt">
+      <h2><span class="spinner" id="spinner"></span><span id="status">Analyse läuft …</span></h2>
+      <div id="denken"></div>
+      <div id="log"></div>
+    </section>
+
+    <div id="ergebnis" class="versteckt">
+      <section class="card" id="ueberblick"></section>
+
+      <section class="card" id="rechner-karte">
+        <h2>🧮 Rechner <span class="hinweis">(gelbe Felder änderbar, alles vor Steuern)</span></h2>
+        <div class="grid2 kein-druck" style="margin-bottom:10px">
+          <div class="grid2">
+            <div><label for="f-ek">Eigenkapital (€)</label><input id="f-ek" type="number" /></div>
+            <div><label for="f-zins">Zins (%)</label><input id="f-zins" type="number" step="0.05" /></div>
+          </div>
+          <div class="grid2">
+            <div><label for="f-tilg">Tilgung (%)</label><input id="f-tilg" type="number" step="0.25" value="2" /></div>
+            <div><label for="f-stress">Stresstest</label>
+              <select id="f-stress">
+                <option value="">keiner</option>
+                <option value="zins">Zins +1 %-Punkt</option>
+                <option value="miete">Miete −10 %</option>
+                <option value="san">Sanierung +20 %</option>
+                <option value="alle">alle drei zusammen</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="tab-wrap"><table id="rechner"></table></div>
+      </section>
+
+      <section class="card"><div id="bericht"></div></section>
+
+      <section class="card kein-druck">
+        <div class="reihe" style="margin-top:0">
+          <button id="drucken">Als PDF speichern / drucken</button>
+          <button class="zweit" id="kopieren">Bericht kopieren (Markdown)</button>
+          <button class="zweit" id="neu">Neue Analyse</button>
+        </div>
+      </section>
+    </div>
+
+    <section class="card kein-druck" id="verlauf-karte">
+      <h2>Frühere Analysen (dieses Gerät)</h2>
+      <div id="verlauf"><p class="hinweis">Noch keine.</p></div>
+    </section>
+
+    <p class="hinweis kein-druck">Die Analyse ist eine KI-gestützte Ersteinschätzung und ersetzt keine Prüfung durch Gutachter, Bank, Steuerberater oder Anwalt. Zahlen immer an den Quellen und Unterlagen gegenprüfen.</p>
+  </main>
+  <script type="module" src="/analyse/app.js"></script>
+</body>
+</html>
