@@ -129,4 +129,7 @@ export const extras = {
   async pushAbo(subscription, name) { return api("push/abo", "POST", { subscription, name }); },
   async pushAbmelden(endpoint) { return api("push/abo", "DELETE", { endpoint }); },
   async pushTest() { return api("push/test", "POST", {}); },
+  async merkliste() { return speicher.modus === "gemeinsam" ? api("merkliste") : { favoriten: [], todos: [] }; },
+  async favorit(eintrag, entfernen = false) { return api("favoriten", "POST", { aktion: entfernen ? "entfernen" : "hinzu", eintrag }); },
+  async todo(daten) { return api("todos", "POST", daten); },
 };

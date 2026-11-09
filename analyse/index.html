@@ -182,6 +182,14 @@
       .zeile .rechts { grid-column: 2; justify-content: flex-start; }
     }
     .meta.bewertung { color: var(--tinte); font-weight: 600; font-size: .8rem; margin-top: 2px; }
+    .stern { background: transparent; color: var(--messing); font-size: 1.25rem; padding: 4px 8px; line-height: 1; }
+    .stern[aria-pressed="true"] { color: var(--messing); }
+    .todo-neu { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; margin-bottom: 8px; }
+    @media (max-width: 520px) { .todo-neu { grid-template-columns: 1fr 1fr; } .todo-neu input { grid-column: 1 / -1; } }
+    .todo { grid-template-columns: auto 1fr auto; }
+    .todo input[type="checkbox"] { width: 22px; height: 22px; }
+    .todo.erledigt .titel { text-decoration: line-through; color: var(--leise); }
+    #funde-art { width: auto; padding: 8px 10px; }
     .marke-gut { font-size: .7rem; font-weight: 700; color: var(--gut); border: 1px solid currentColor; border-radius: 99px; padding: 0 7px; margin-left: 6px; }
     .filter { display: flex; gap: 6px; flex-wrap: wrap; }
     .filter button[aria-pressed="true"] { background: var(--akzent); color: var(--flaeche); }
@@ -222,9 +230,10 @@
     <div class="kopf-innen">
       <div class="marke">Immo-Analyse <small>Hamm · 30 km</small></div>
       <nav class="tabs" aria-label="Bereiche">
-        <a href="#neu" data-tab="neu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Analysieren</a>
-        <a href="#objekte" data-tab="objekte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Objekte</a>
         <a href="#funde" data-tab="funde"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Funde <span class="punkt" id="funde-zahl" hidden></span></a>
+        <a href="#neu" data-tab="neu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19h16M7 15l3-3 3 3 5-6"/></svg>Analyse</a>
+        <a href="#objekte" data-tab="objekte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Ablage</a>
+        <a href="#merkliste" data-tab="merkliste"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>Merkliste <span class="punkt" id="todo-zahl" hidden></span></a>
         <a href="#konto" data-tab="konto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Konto</a>
       </nav>
       <span class="status" id="verbunden">nicht angemeldet</span>
@@ -233,8 +242,26 @@
 
   <div id="hinweis-toast" class="toast" role="alert" hidden></div>
   <main>
+    <!-- Funde (Startseite) -->
+    <section class="ansicht" data-ansicht="funde">
+      <div class="karte">
+        <span class="eyebrow">Immo-Scout · alle 15 Minuten, 6–22 Uhr · 30 km um Hamm</span>
+        <h2>Neue Funde</h2>
+        <p class="hinweis" id="funde-status">Wird geladen …</p>
+        <div class="filter kein-druck" id="funde-filter">
+          <button class="zweit" data-filter="gut" aria-pressed="true">Lohnt sich</button>
+          <button class="zweit" data-filter="geprueft" aria-pressed="false">Durchgerechnet</button>
+          <button class="zweit" data-filter="alle" aria-pressed="false">Alle neuen</button>
+          <select id="funde-art" aria-label="Objektart">
+            <option value="">Alle Arten</option><option>Mehrfamilienhaus</option><option>Haus</option><option>Sanierungsobjekt</option><option>Eigentumswohnung</option><option>Grundstück</option><option>Gewerbe</option><option>Garage</option>
+          </select>
+        </div>
+        <div id="funde" class="liste"></div>
+      </div>
+    </section>
+
     <!-- Analysieren -->
-    <section class="ansicht" data-ansicht="neu">
+    <section class="ansicht" data-ansicht="neu" hidden>
       <div class="karte kein-druck">
         <span class="eyebrow">Schritt 1 · Anzeige reinlegen</span>
         <h2>Link oder Anzeigentext einfügen</h2>
@@ -308,6 +335,8 @@
             <a class="knopf wa" id="whatsapp" href="#" target="_blank" rel="noopener">Per WhatsApp schicken</a>
             <button class="zweit" id="teilen">Teilen …</button>
             <button class="zweit" id="link-kopieren">Link kopieren</button>
+            <button class="zweit" id="objekt-stern" aria-pressed="false">☆ Merken</button>
+            <button class="zweit" id="objekt-todo">+ To-do</button>
           </div>
           <div class="claude-box kein-druck">
             <div><b>Genauer prüfen lassen</b><br /><span class="hinweis">Öffnet Claude mit allen Daten dieses Objekts. Claude recherchiert live Mieten, Vergleichspreise und Bodenrichtwert und beantwortet eure Rückfragen – über dein Claude-Abo, ohne Zusatzkosten.</span></div>
@@ -366,17 +395,23 @@
       </div>
     </section>
 
-    <!-- Funde -->
-    <section class="ansicht" data-ansicht="funde" hidden>
+    <!-- Merkliste -->
+    <section class="ansicht" data-ansicht="merkliste" hidden>
       <div class="karte">
-        <span class="eyebrow">Immo-Scout · alle 15 Minuten, 6–22 Uhr</span>
-        <h2>Neue Anzeigen im Umkreis von 30 km</h2>
-        <p class="hinweis" id="funde-status">Wird geladen …</p>
-        <div class="filter kein-druck" id="funde-filter">
-          <button class="zweit" data-filter="gut" aria-pressed="true">Nur gute</button>
-          <button class="zweit" data-filter="alle" aria-pressed="false">Alle</button>
+        <span class="eyebrow">Gemeinsam</span>
+        <h2>To-dos</h2>
+        <div class="todo-neu kein-druck">
+          <input id="todo-text" placeholder="z. B. Makler anrufen, Mieterliste anfordern" />
+          <select id="todo-fuer" aria-label="Für wen"><option value="">für uns</option><option>Murat</option><option>Yasemin</option></select>
+          <button id="todo-hinzu">Hinzufügen</button>
         </div>
-        <div id="funde" class="liste"></div>
+        <div id="todos" class="liste"></div>
+      </div>
+      <div class="karte">
+        <span class="eyebrow">Gemerkt</span>
+        <h2>Favoriten</h2>
+        <p class="hinweis">Mit dem Stern bei Funden oder Objekten merken.</p>
+        <div id="favoriten" class="liste"></div>
       </div>
     </section>
 

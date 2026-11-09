@@ -157,6 +157,50 @@ export function erstelleHandler(store, zugang, benachrichtige = (n) => sendePush
       return json(200, { funde, status });
     }
 
+    // ---------- Merkliste: Favoriten und To-dos (gemeinsam) ----------
+    if (teile[0] === "merkliste" && methode === "GET") {
+      const favoriten = (await store.get("merkliste/favoriten", { type: "json" })) || [];
+      const todos = (await store.get("merkliste/todos", { type: "json" })) || [];
+      return json(200, { favoriten, todos });
+    }
+    if (teile[0] === "favoriten" && methode === "POST") {
+      const b = (await body()) || {};
+      const e = b.eintrag || {};
+      const id = String(e.id || "").slice(0, 80);
+      if (!id) return json(400, { fehler: "Eintrag fehlt" });
+      let liste = (await store.get("merkliste/favoriten", { type: "json" })) || [];
+      liste = liste.filter((x) => x.id !== id);
+      if (b.aktion !== "entfernen") {
+        liste.unshift({
+          id, art: e.art === "objekt" ? "objekt" : "fund",
+          titel: String(e.titel || "").slice(0, 200), url: String(e.url || "").slice(0, 500),
+          preis_text: String(e.preis_text || "").slice(0, 40), ort: String(e.ort || "").slice(0, 80),
+          info: String(e.info || "").slice(0, 200), ampel: e.ampel || null,
+          von: String(e.von || "").slice(0, 40), zeit: new Date().toISOString(),
+        });
+        await benachrichtige({ titel: `⭐ ${e.von || "Partner"} hat einen Favoriten gemerkt`, text: `${e.titel || ""}${e.preis_text ? " · " + e.preis_text : ""}`.slice(0, 160), url: "/#merkliste", ausser: e.von }).catch(() => 0);
+      }
+      await store.setJSON("merkliste/favoriten", liste.slice(0, 300));
+      return json(200, { favoriten: liste });
+    }
+    if (teile[0] === "todos" && methode === "POST") {
+      const b = (await body()) || {};
+      let liste = (await store.get("merkliste/todos", { type: "json" })) || [];
+      if (b.aktion === "neu") {
+        const text = String(b.text || "").trim().slice(0, 300);
+        if (!text) return json(400, { fehler: "Text fehlt" });
+        const t = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, fuer: String(b.fuer || "").slice(0, 40), von: String(b.von || "").slice(0, 40), objekt: b.objekt ? { id: String(b.objekt.id).slice(0, 80), titel: String(b.objekt.titel || "").slice(0, 120), url: String(b.objekt.url || "").slice(0, 500) } : null, faellig: b.faellig || null, erledigt: false, zeit: new Date().toISOString() };
+        liste.unshift(t);
+        if (t.fuer && t.fuer !== t.von) await benachrichtige({ titel: `✅ Neues To-do von ${t.von || "Partner"}`, text: t.text.slice(0, 160), url: "/#merkliste", ausser: t.von }).catch(() => 0);
+      } else if (b.aktion === "umschalten") {
+        liste = liste.map((t) => (t.id === b.id ? { ...t, erledigt: !t.erledigt, erledigt_von: b.von || null } : t));
+      } else if (b.aktion === "entfernen") {
+        liste = liste.filter((t) => t.id !== b.id);
+      } else return json(400, { fehler: "Unbekannte Aktion" });
+      await store.setJSON("merkliste/todos", liste.slice(0, 500));
+      return json(200, { todos: liste });
+    }
+
     if (teile[0] === "allgemein") {
       const key = "chat/allgemein";
       const chat = (await store.get(key, { type: "json" })) || [];
