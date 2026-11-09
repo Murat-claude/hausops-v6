@@ -55,6 +55,18 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   // ---- Miete
   let istMiete = num(e.ist_miete_jahr) / 12 || num(e.ist_miete_monat) || 0;
   const marktMiete = fl * num(a.miete_m2);
+  let mieteHinweis = "";
+  // Plausibilität: Bruttorendite aus der Ist-Miete muss zwischen ca. 1,5 % und 15 % liegen
+  if (istMiete > 0 && kp > 0) {
+    const rendite = (istMiete * 12) / kp;
+    if (rendite > 0.15 && (istMiete / kp) >= 0.015 && (istMiete / kp) <= 0.15) {
+      istMiete = istMiete / 12; mieteHinweis = " – Betrag aus der Anzeige als Jahresmiete gewertet";
+    } else if (rendite > 0.15 || (fl && istMiete > marktMiete * 2.5)) {
+      istMiete = 0; mieteHinweis = " – Mietangabe der Anzeige unplausibel, daher Marktmiete";
+    } else if (einheiten > 1 && fl && istMiete < marktMiete * 0.35 && !e.merkmale.leer) {
+      istMiete = 0; mieteHinweis = " – Mietangabe wirkt unvollständig (nur eine Wohnung?), daher Marktmiete";
+    }
+  }
   let realMiete, mieteQuelle;
   if (istMiete > 0 && e.merkmale.leer && marktMiete > istMiete) {
     realMiete = marktMiete; mieteQuelle = `Marktmiete ${dz(a.miete_m2)} €/m² (Anzeige: ${eur(istMiete)} Ist-Miete, Wohnungen werden frei)`;
@@ -63,7 +75,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   } else {
     realMiete = marktMiete; mieteQuelle = `ANNAHME ${dz(a.miete_m2)} €/m² Marktmiete`;
   }
-  annahmenListe.push(`Kaltmiete: ${eur(realMiete)}/Monat (${mieteQuelle})`);
+  annahmenListe.push(`Kaltmiete: ${eur(realMiete)}/Monat (${mieteQuelle}${mieteHinweis})`);
 
   const san = sanierungSchaetzung(e);
   annahmenListe.push(`Renovierung: ${eur(san.wert)} (${san.quelle})`);

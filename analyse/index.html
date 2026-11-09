@@ -181,6 +181,7 @@
       .zeile { grid-template-columns: 6px 1fr; row-gap: 8px; }
       .zeile .rechts { grid-column: 2; justify-content: flex-start; }
     }
+    .meta.bewertung { color: var(--tinte); font-weight: 600; font-size: .8rem; margin-top: 2px; }
     .marke-gut { font-size: .7rem; font-weight: 700; color: var(--gut); border: 1px solid currentColor; border-radius: 99px; padding: 0 7px; margin-left: 6px; }
     .filter { display: flex; gap: 6px; flex-wrap: wrap; }
     .filter button[aria-pressed="true"] { background: var(--akzent); color: var(--flaeche); }
@@ -368,7 +369,7 @@
     <!-- Funde -->
     <section class="ansicht" data-ansicht="funde" hidden>
       <div class="karte">
-        <span class="eyebrow">Immo-Scout · stündlich 6–21 Uhr</span>
+        <span class="eyebrow">Immo-Scout · alle 15 Minuten, 6–22 Uhr</span>
         <h2>Neue Anzeigen im Umkreis von 30 km</h2>
         <p class="hinweis" id="funde-status">Wird geladen …</p>
         <div class="filter kein-druck" id="funde-filter">
@@ -394,7 +395,7 @@
       </div>
       <div class="karte">
         <h2>Benachrichtigungen</h2>
-        <p class="hinweis">Du bekommst eine Meldung, wenn gute Objekte gefunden werden, wenn dein Partner ein Objekt analysiert oder eine Notiz schreibt. Auf dem iPhone geht das nur, wenn die App über Teilen → „Zum Home-Bildschirm“ installiert ist (ab iOS 16.4).</p>
+        <p class="hinweis">Du bekommst eine Meldung, sobald der Scout ein Objekt findet, das sich nach Durchrechnung lohnt (Prüfung alle 15 Minuten), wenn dein Partner ein Objekt analysiert oder eine Notiz schreibt. Auf dem iPhone geht das nur, wenn die App über Teilen → „Zum Home-Bildschirm“ installiert ist (ab iOS 16.4).</p>
         <div class="reihe"><button id="push-an">Benachrichtigungen einschalten</button><button class="zweit versteckt" id="push-test">Test senden</button><button class="leise versteckt" id="push-aus">Ausschalten</button></div>
         <p class="hinweis" id="push-status"></p>
       </div>

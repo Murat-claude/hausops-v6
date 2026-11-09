@@ -559,7 +559,7 @@ async function ladeFunde() {
     const d = await extras.funde();
     funde = d.funde || [];
     const st = d.status;
-    $("funde-status").textContent = st ? `Letzte Suche ${new Date(st.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}: ${st.neu} neu, davon ${st.gut} gut${st.fehler?.length ? ` · Probleme: ${st.fehler.join("; ")}` : ""}` : "Der Scout hat noch nicht gesucht. Er läuft stündlich zwischen 6 und 21 Uhr.";
+    $("funde-status").textContent = st ? `Letzte Suche ${new Date(st.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}: ${st.neu} neu, ${st.geprueft ?? 0} durchgerechnet, ${st.gut} gut${st.fehler?.length ? ` · Probleme: ${st.fehler.join("; ")}` : ""}` : "Der Scout hat noch nicht gesucht. Er läuft alle 15 Minuten zwischen 6 und 22 Uhr.";
     zeigeFunde();
     zeigeFundeZahl();
   } catch (e) { $("funde-status").textContent = e.message; }
@@ -579,7 +579,8 @@ function zeigeFunde() {
     const z = document.createElement("div");
     z.className = "zeile";
     z.innerHTML = `<span class="streifen"></span><div style="min-width:0"><a class="titel" target="_blank" rel="noopener"></a><div class="meta"></div></div><div class="rechts"></div>`;
-    if (f.gut) z.firstChild.classList.add("gruen");
+    const amp = f.bewertung?.ampel;
+    z.firstChild.classList.add(amp === "gruen" || (!amp && f.gut) ? "gruen" : amp === "gelb" ? "gelb" : amp === "rot" ? "rot" : "x");
     const t = z.querySelector(".titel");
     t.textContent = f.titel || "(ohne Titel)";
     t.href = f.url;
@@ -591,6 +592,19 @@ function zeigeFunde() {
       Object.assign(document.createElement("span"), { className: "zahl", textContent: `${f.preis_text}${f.preis_m2 ? ` · ${f.preis_m2.toLocaleString("de-DE")} €/m²` : ""}${fak ? ` · F ${String(fak).replace(".", ",")}` : ""}` }),
       ` · ${f.eingestellt}`,
     );
+    if (f.bewertung) {
+      const bw = f.bewertung;
+      const zeile = document.createElement("div");
+      zeile.className = "meta bewertung";
+      zeile.textContent = [
+        "Geprüft:",
+        bw.cashflow_monat != null ? `Cashflow ${bw.cashflow_monat >= 0 ? "+" : ""}${bw.cashflow_monat.toLocaleString("de-DE")} €/Monat` : null,
+        bw.faktor ? `Faktor ${String(bw.faktor).replace(".", ",")}` : null,
+        bw.beste?.max_kaufpreis ? `${bw.beste.name} lohnt bis ${bw.beste.max_kaufpreis.toLocaleString("de-DE")} €` : null,
+        bw.ist_miete ? "(Ist-Miete)" : "(Marktmiete geschätzt)",
+      ].filter(Boolean).join(" · ");
+      z.querySelector(".meta").after(zeile);
+    }
     const analysieren = document.createElement("button");
     analysieren.textContent = "Analysieren";
     analysieren.onclick = async () => {

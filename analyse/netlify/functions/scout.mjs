@@ -1,40 +1,86 @@
-// Stündlicher Immo-Scout (ca. 6–21 Uhr): sucht neue Anzeigen um Hamm (30 km),
-// speichert sie als "Funde" und schickt bei guten Treffern sofort eine Push-Nachricht.
+// Immo-Scout alle 15 Minuten (ca. 6–22 Uhr): sucht neue Anzeigen um Hamm (30 km),
+// rechnet die vielversprechendsten sofort durch und meldet nur echte Kandidaten per Push.
 import { getStore } from "@netlify/blobs";
 import { SUCHEN, UA, parseListe, bewerte, istNeu, istGut } from "../../lib/scout-kern.mjs";
+import { leseKleinanzeigenHtml } from "../../lib/inserat-parse.js";
+import { auswerten } from "../../lib/auswertung.js";
 import { sendePush } from "../../lib/push.mjs";
 
-const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const MAX_DETAILS = 4; // Detailseiten pro Lauf (zurückhaltend)
+const holenStandard = (pfad) => fetch(`https://www.kleinanzeigen.de/${pfad}`, { headers: { "User-Agent": UA, "Accept-Language": "de-DE" } })
+  .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); });
 
-export async function lauf(store, holen = (pfad) => fetch(`https://www.kleinanzeigen.de/${pfad}`, { headers: { "User-Agent": UA, "Accept-Language": "de-DE" } }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })) {
+const eur = (v) => Math.round(v).toLocaleString("de-DE") + " €";
+
+// Volle Regel-Bewertung aus der Detailseite
+export function bewerteDetail(fund, html) {
+  const e = leseKleinanzeigenHtml(html);
+  e.titel ||= fund.titel;
+  e.kaufpreis ||= fund.preis;
+  if (fund.kategorie !== "Grundstück") e.wohnflaeche_m2 ||= fund.flaeche;
+  if (fund.kategorie === "Grundstück") { e.objektart = "Grundstück"; delete e.wohnflaeche_m2; e.grundstueck_m2 ||= fund.flaeche; }
+  if (!e.objektart) e.objektart = { Mehrfamilienhaus: "Mehrfamilienhaus", Eigentumswohnung: "Eigentumswohnung" }[fund.kategorie] || "Einfamilienhaus";
+  if (!e.kaufpreis || (!e.wohnflaeche_m2 && !/grundst/i.test(e.objektart))) return null;
+  const { daten } = auswerten(e);
+  const halten = daten.strategien.find((s) => s.name === "Halten & vermieten");
+  const beste = daten.strategien.filter((s) => !s.zusatz && s.name !== "Monteur- / Ferienwohnung").sort((a, b) => ({ gut: 3, bedingt: 2, nein: 1 }[b.eignung] - { gut: 3, bedingt: 2, nein: 1 }[a.eignung]))[0];
+  const real = daten.szenarien.realistisch;
+  return {
+    ampel: daten.ampel, score: daten.score, empfehlung: daten.empfehlung, verhandlungsziel: daten.verhandlungsziel,
+    cashflow_monat: halten?.cashflow_monat ?? null,
+    faktor: real?.kaltmiete_monat ? Math.round((daten.kaufpreis / (real.kaltmiete_monat * 12)) * 10) / 10 : null,
+    beste: beste ? { name: beste.name, eignung: beste.eignung, max_kaufpreis: beste.max_kaufpreis } : null,
+    ist_miete: Boolean(e.ist_miete_jahr || e.ist_miete_monat),
+    baujahr: e.baujahr || null, einheiten: e.einheiten || null,
+  };
+}
+
+export async function lauf(store, holen = holenStandard) {
   const gesehen = new Set((await store.get("scout/gesehen", { type: "json" })) || []);
   const funde = (await store.get("funde/liste", { type: "json" })) || [];
   const neu = [], fehler = [];
-  for (const [kategorie, pfad] of SUCHEN) {
-    try {
-      for (const o of parseListe(await holen(pfad), kategorie).map(bewerte)) {
-        if (gesehen.has(o.id)) continue;
-        gesehen.add(o.id);
-        if (istNeu(o) && !o.ausschluss) neu.push({ ...o, gefunden: new Date().toISOString(), gut: istGut(o) });
-      }
-    } catch (e) { fehler.push(`${kategorie}: ${e.message}`); }
-    await pause(500);
-  }
+  // Ergebnisseiten parallel laden (eine Seite je Kategorie)
+  const seiten = await Promise.allSettled(SUCHEN.map(([, pfad]) => holen(pfad)));
+  seiten.forEach((s, i) => {
+    const kategorie = SUCHEN[i][0];
+    if (s.status === "rejected") { fehler.push(`${kategorie}: ${s.reason?.message || s.reason}`); return; }
+    for (const o of parseListe(s.value, kategorie).map(bewerte)) {
+      if (gesehen.has(o.id)) continue;
+      gesehen.add(o.id);
+      if (istNeu(o) && !o.ausschluss) neu.push({ ...o, gefunden: new Date().toISOString(), gut: false });
+    }
+  });
   neu.sort((a, b) => b.punkte - a.punkte || (a.preis_m2 ?? 9e9) - (b.preis_m2 ?? 9e9));
-  await store.setJSON("funde/liste", [...neu, ...funde].slice(0, 200));
-  await store.setJSON("scout/gesehen", [...gesehen].slice(-6000));
-  await store.setJSON("scout/status", { zeit: new Date().toISOString(), neu: neu.length, gut: neu.filter((o) => o.gut).length, fehler });
+
+  // Die vielversprechendsten sofort durchrechnen
+  const kandidaten = neu.filter((o) => o.punkte >= 1 && !["Garage", "Gewerbe"].includes(o.kategorie)).slice(0, MAX_DETAILS);
+  await Promise.allSettled(kandidaten.map(async (o) => {
+    try {
+      const html = await holen(o.url.replace("https://www.kleinanzeigen.de/", ""));
+      o.bewertung = bewerteDetail(o, html);
+    } catch (e) { o.bewertung = null; }
+  }));
+  for (const o of neu) {
+    o.gut = o.bewertung ? o.bewertung.ampel === "gruen" || (o.bewertung.cashflow_monat ?? -1) >= 0 : istGut(o) && (o.faktor_inserat ?? 99) <= 12;
+  }
+
+  await store.setJSON("funde/liste", [...neu, ...funde].slice(0, 300));
+  await store.setJSON("scout/gesehen", [...gesehen].slice(-8000));
   const gute = neu.filter((o) => o.gut);
-  if (gute.length) {
-    const b = gute[0];
-    const f = b.faktor_inserat ?? b.faktor;
+  await store.setJSON("scout/status", { zeit: new Date().toISOString(), neu: neu.length, gut: gute.length, geprueft: kandidaten.length, fehler });
+
+  for (const b of gute.slice(0, 3)) {
+    const bw = b.bewertung;
+    const zahlen = bw
+      ? [bw.cashflow_monat != null ? `Cashflow ${bw.cashflow_monat >= 0 ? "+" : ""}${eur(bw.cashflow_monat)}/Monat` : null, bw.faktor ? `Faktor ${String(bw.faktor).replace(".", ",")}` : null, bw.beste?.max_kaufpreis ? `${bw.beste.name} bis ${eur(bw.beste.max_kaufpreis)}` : null].filter(Boolean).join(" · ")
+      : `Faktor laut Anzeige ${String(b.faktor_inserat).replace(".", ",")}`;
     await sendePush(store, {
-      titel: gute.length === 1 ? "🏠 Neuer guter Fund" : `🏠 ${gute.length} neue gute Funde`,
-      text: `${b.titel} · ${b.preis_text}${b.preis_m2 ? ` · ${b.preis_m2} €/m²` : ""}${f ? ` · Faktor ~${f}` : ""} · ${b.km ?? "?"} km${gute.length > 1 ? ` (+${gute.length - 1} weitere)` : ""}`,
+      titel: `${bw?.ampel === "gruen" ? "🟢" : "🏠"} ${b.preis_text} · ${b.km ?? "?"} km ${b.ort.replace(/^\d{5}\s*/, "")}`,
+      text: `${b.titel}\n${zahlen}`,
       url: "/#funde",
     });
   }
-  return { neu: neu.length, gut: gute.length, fehler };
+  return { neu: neu.length, gut: gute.length, geprueft: kandidaten.length, fehler };
 }
 
 export default async () => {
@@ -42,4 +88,4 @@ export default async () => {
   console.log("Scout", JSON.stringify(ergebnis));
 };
 
-export const config = { schedule: "7 5-20 * * *" }; // UTC → ca. 6–21 Uhr deutscher Zeit
+export const config = { schedule: "*/15 5-20 * * *" }; // UTC → ca. 6–22 Uhr deutscher Zeit, alle 15 Minuten
