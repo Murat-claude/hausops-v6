@@ -51,7 +51,20 @@ def zahl(s):
         return None
 
 
+def einstelldaten(seite):
+    """Kleinanzeigen bettet je Anzeige ein Datum ein ("Heute, 08:15", "Gestern, 18:30" oder "22.10.2026")."""
+    roh = html.unescape(seite)
+    daten = {}
+    teile = re.split(r'"id":\[0,"?(\d{8,})"?\]', roh)
+    for i in range(1, len(teile) - 1, 2):
+        m = re.search(r'"sortingDate":\[0,"([^"]+)"\]', teile[i + 1][:8000])
+        if m:
+            daten.setdefault(teile[i], m.group(1))
+    return daten
+
+
 def parse_liste(seite, kategorie):
+    datum = einstelldaten(seite)
     treffer = []
     for a in re.findall(r"(<article .*?</article>)", seite, re.S):
         href = re.search(r'data-href="([^"]+)"', a)
@@ -73,6 +86,7 @@ def parse_liste(seite, kategorie):
         treffer.append({
             "id": re.search(r"/(\d+)-\d+-\d+$", href.group(1)).group(1) if re.search(r"/(\d+)-\d+-\d+$", href.group(1)) else href.group(1),
             "kategorie": kategorie,
+            "eingestellt": "",
             "titel": zeilen[i + 1] if km and i + 1 < len(zeilen) else "",
             "ort": zeilen[i - 1] if km else "",
             "km": int(re.sub(r"\D", "", km)) if km else None,
@@ -81,6 +95,7 @@ def parse_liste(seite, kategorie):
             "beschreibung": beschreibung[:500],
             "url": "https://www.kleinanzeigen.de" + href.group(1),
         })
+        treffer[-1]["eingestellt"] = datum.get(treffer[-1]["id"], "")
     return treffer
 
 
@@ -123,7 +138,9 @@ def suche():
         except Exception as e:  # eine Kategorie darf ausfallen
             fehler.append(f"{kategorie}: {e}")
         time.sleep(2)
-    neu = [o for o in alle.values() if o["id"] not in gesehen and not o["ausschluss"]]
+    # Neu = seit gestern eingestellt (funktioniert ohne Gedächtnis) und noch nicht gemeldet (falls gesehen.json vorhanden)
+    neu = [o for o in alle.values()
+           if o["eingestellt"].startswith(("Heute", "Gestern")) and o["id"] not in gesehen and not o["ausschluss"]]
     neu.sort(key=lambda o: (-o["punkte"], o["preis_m2"] or 99999))
     (BASIS / "heute.json").write_text(json.dumps({"datum": date.today().isoformat(), "fehler": fehler, "neu": neu, "alle_ids": list(alle)}, ensure_ascii=False, indent=1))
     zeilen = [f"# Neue Anzeigen {date.today():%d.%m.%Y} ({len(neu)} neu, {len(alle)} gesichtet)", ""]
@@ -131,7 +148,7 @@ def suche():
         zeilen += ["Abruf-Fehler: " + "; ".join(fehler), ""]
     for o in neu:
         f = o.get("faktor_inserat") or o["faktor_geschaetzt"]
-        zeilen.append(f"- [{o['punkte']}] {o['kategorie']} | {o['km']} km {o['ort']} | {o['titel'][:80]} | {o['groesse_text']} | {o['preis_text']} | "
+        zeilen.append(f"- [{o['punkte']}] {o['eingestellt']} | {o['kategorie']} | {o['km']} km {o['ort']} | {o['titel'][:80]} | {o['groesse_text']} | {o['preis_text']} | "
                       f"{o['preis_m2'] or '-'} €/m² | Faktor ~{f or '-'} | {o['url']}")
     (BASIS / "heute.md").write_text("\n".join(zeilen) + "\n")
     print("\n".join(zeilen[:60]))
