@@ -149,9 +149,9 @@ def detail(n):
         t = re.sub(r"<[^>]+>", "\n", t)
         t = re.sub(r"[ \t]+", " ", t)
         t = re.sub(r"\n\s*\n+", "\n", t)
-        i = t.find("Details\nKategorie")
-        j = t.find("Nachricht schreiben", i)
-        print(f"===== {o['titel']} | {o['url']}\n" + t[max(0, i - 200): j if j > i else i + 4000][:4500].replace("\n", " | ") + "\n")
+        i = max(t.find(o["titel"][:40], t.find("Suche im Umkreis")), 0) if o["titel"] else 0
+        ende = [k for k in (t.find("Nachricht schreiben", i), t.find("Anzeigennr", i), t.find("Ähnliche Anzeigen", i)) if k > i]
+        print(f"===== {o['titel']} | {o['url']}\n" + t[i: min(ende) if ende else i + 4500][:4500].replace("\n", " | ") + "\n")
         time.sleep(2)
 
 
