@@ -81,6 +81,16 @@
     textarea { resize: vertical; }
     .raster2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
     @media (max-width: 640px) { .raster2 { grid-template-columns: 1fr; } }
+    .raster3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
+    .raster3 .breit { grid-column: 1 / -1; }
+    @media (max-width: 760px) { .raster3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    input.erkannt, select.erkannt { border-color: var(--gut); background: color-mix(in srgb, var(--gut) 8%, var(--eingabe)); }
+    .merkmale { border: 1px solid var(--linie); border-radius: 8px; margin: 16px 0 0; padding: 8px 12px 12px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+    .merkmale legend { font-size: .82rem; font-weight: 600; color: var(--leise); padding: 0 4px; }
+    .merkmale label { margin: 0; font-weight: 400; color: var(--tinte); font-size: .92rem; display: flex; align-items: center; gap: 6px; }
+    .merkmale input { width: auto; }
+    .annahmen { margin-top: 14px; }
+    .annahmen summary { cursor: pointer; font-weight: 600; color: var(--akzent); }
     .reihe { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
     button, .knopf { font: 600 .95rem var(--f-text); border: 0; border-radius: 8px; padding: 11px 16px; cursor: pointer; background: var(--akzent); color: var(--flaeche); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
     button.zweit, .knopf.zweit { background: var(--akzent-weich); color: var(--akzent); }
@@ -212,7 +222,6 @@
         <a href="#neu" data-tab="neu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Analysieren</a>
         <a href="#objekte" data-tab="objekte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Objekte</a>
         <a href="#funde" data-tab="funde"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Funde <span class="punkt" id="funde-zahl" hidden></span></a>
-        <a href="#fragen" data-tab="fragen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg>KI fragen</a>
         <a href="#konto" data-tab="konto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Konto</a>
       </nav>
       <span class="status" id="verbunden">nicht angemeldet</span>
@@ -224,42 +233,66 @@
     <!-- Analysieren -->
     <section class="ansicht" data-ansicht="neu">
       <div class="karte kein-druck">
-        <span class="eyebrow">Neues Objekt</span>
-        <h2>Link, Text, Screenshots oder Exposé reinlegen</h2>
-        <div id="ablage" class="ablage">
-          <textarea id="text" placeholder="Link(s) zur Anzeige einfügen, Text aus dem Inserat kopieren oder Screenshots einfügen (lange tippen → Einsetzen) bzw. hierher ziehen."></textarea>
-          <div id="anhaenge" class="anhaenge"></div>
-          <div class="reihe" style="margin-top:8px">
-            <button type="button" class="zweit" id="datei-knopf">Fotos, Screenshots oder PDF</button>
-            <span class="hinweis" id="ablage-info"></span>
-          </div>
-          <input id="dateien" type="file" multiple accept="application/pdf,image/*" hidden />
-        </div>
-        <div class="raster2">
-          <div><label for="modus">Analyse</label>
-            <select id="modus"><option value="schnell">Schnellcheck · ca. 1–2 Min.</option><option value="gruendlich">Gründlich · ca. 3–6 Min.</option></select></div>
-          <div><label for="ziel">Ziel</label>
-            <select id="ziel">
-              <option>Alle Strategien prüfen (Cashflow, Flip, Aufteilung, Grundstück, FeWo)</option>
-              <option>Kapitalanlage (langfristig vermieten)</option>
-              <option>Sanieren und weiterverkaufen (Fix &amp; Flip)</option>
-              <option>Aufteilung in Eigentumswohnungen</option>
-              <option>Ferienwohnung / Kurzzeitvermietung</option>
-              <option>Eigennutzung</option>
-            </select></div>
-          <div><label for="ek">Eigenkapital (€)</label><input id="ek" type="number" inputmode="numeric" placeholder="leer = 25 % vom Kaufpreis" /></div>
-          <div><label for="notizen">Hinweise (optional)</label><input id="notizen" placeholder="z. B. Dach 2010 neu, Fenster alt" /></div>
-        </div>
-        <div class="reihe">
-          <button id="start">Analyse starten</button>
-          <button class="zweit versteckt" id="stopp">Abbrechen</button>
-        </div>
+        <span class="eyebrow">Schritt 1 · Anzeige reinlegen</span>
+        <h2>Link oder Anzeigentext einfügen</h2>
+        <textarea id="text" rows="5" placeholder="Kleinanzeigen-Link einfügen – die Daten werden automatisch ausgelesen. Bei anderen Portalen (ImmoScout24, Immowelt, Makler) den Text der Anzeige kopieren und hier einfügen."></textarea>
+        <p class="hinweis">Screenshot? Auf dem iPhone das Bild öffnen, Text gedrückt halten → „Alles auswählen“ → „Kopieren“ und hier einfügen.</p>
+        <div class="reihe"><button id="auslesen">Daten übernehmen</button><button class="leise" id="leeren">Alles leeren</button></div>
         <div id="fehler" class="fehler versteckt"></div>
       </div>
-      <div class="karte kein-druck versteckt" id="fortschritt">
-        <h3><span class="spinner" id="spinner"></span><span id="status">Analyse läuft …</span></h3>
-        <div id="denken"></div>
-        <div id="log"></div>
+
+      <div class="karte kein-druck" id="eckdaten">
+        <span class="eyebrow">Schritt 2 · Eckdaten prüfen</span>
+        <h2>Objekt</h2>
+        <p class="hinweis">Grün = aus der Anzeige erkannt. Leere Felder ergänzen, wenn bekannt – Pflicht sind nur Kaufpreis und Wohnfläche.</p>
+        <div class="raster3">
+          <div class="breit"><label for="e-titel">Bezeichnung</label><input id="e-titel" placeholder="z. B. MFH Bergkamen-Weddinghofen" /></div>
+          <div><label for="e-objektart">Objektart</label>
+            <select id="e-objektart"><option value="">bitte wählen</option><option>Mehrfamilienhaus</option><option>Zweifamilienhaus</option><option>Dreifamilienhaus</option><option>Einfamilienhaus</option><option>Doppelhaushälfte</option><option>Reihenhaus</option><option>Eigentumswohnung</option><option>Wohn- und Geschäftshaus</option><option>Grundstück</option><option>Gewerbeimmobilie</option></select></div>
+          <div><label for="e-ort">Ort</label><input id="e-ort" placeholder="59065 Hamm" /></div>
+          <div><label for="e-kaufpreis">Kaufpreis (€) *</label><input id="e-kaufpreis" type="number" inputmode="numeric" /></div>
+          <div><label for="e-wohnflaeche_m2">Wohnfläche (m²) *</label><input id="e-wohnflaeche_m2" type="number" inputmode="decimal" /></div>
+          <div><label for="e-grundstueck_m2">Grundstück (m²)</label><input id="e-grundstueck_m2" type="number" inputmode="decimal" /></div>
+          <div><label for="e-einheiten">Wohneinheiten</label><input id="e-einheiten" type="number" inputmode="numeric" /></div>
+          <div><label for="e-zimmer">Zimmer</label><input id="e-zimmer" type="number" inputmode="decimal" /></div>
+          <div><label for="e-baujahr">Baujahr</label><input id="e-baujahr" type="number" inputmode="numeric" /></div>
+          <div><label for="e-energieklasse">Energieklasse</label><select id="e-energieklasse"><option value="">unbekannt</option><option>A+</option><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option><option>F</option><option>G</option><option>H</option></select></div>
+          <div><label for="e-ist_miete_monat">Ist-Kaltmiete gesamt (€/Monat)</label><input id="e-ist_miete_monat" type="number" inputmode="numeric" placeholder="leer = Marktmiete" /></div>
+          <div><label for="e-hausgeld_monat">Hausgeld (€/Monat, bei Wohnung)</label><input id="e-hausgeld_monat" type="number" inputmode="numeric" /></div>
+          <div><label for="e-makler_prozent">Makler (%)</label><input id="e-makler_prozent" type="number" step="0.01" inputmode="decimal" placeholder="leer = 3,57" /></div>
+          <div><label for="e-sanierung">Renovierung (€)</label><input id="e-sanierung" type="number" inputmode="numeric" placeholder="leer = Schätzung" /></div>
+          <div><label for="e-eigenkapital">Eigenkapital (€)</label><input id="e-eigenkapital" type="number" inputmode="numeric" placeholder="leer = 25 %" /></div>
+        </div>
+        <fieldset class="merkmale">
+          <legend>Merkmale aus der Anzeige</legend>
+          <label><input type="checkbox" id="m-vermietet" /> vermietet</label>
+          <label><input type="checkbox" id="m-leer" /> leer / wird frei</label>
+          <label><input type="checkbox" id="m-sanierungsbeduerftig" /> sanierungsbedürftig</label>
+          <label><input type="checkbox" id="m-zweites_grundstueck" /> zusätzliches Baugrundstück</label>
+          <label><input type="checkbox" id="m-baurecht" /> Baugenehmigung / Baurecht erwähnt</label>
+          <label><input type="checkbox" id="m-denkmal" /> Denkmalschutz</label>
+          <label><input type="checkbox" id="m-erbpacht" /> Erbpacht</label>
+          <label><input type="checkbox" id="m-oelheizung" /> Öl- / Nachtspeicherheizung</label>
+        </fieldset>
+        <details class="annahmen">
+          <summary>Annahmen für den Markt (Miete, Preise, Zins) anpassen</summary>
+          <div class="raster3">
+            <div><label for="a-miete_m2">Marktmiete (€/m² kalt)</label><input id="a-miete_m2" type="number" step="0.1" /></div>
+            <div><label for="a-etw_saniert_m2">Verkauf saniert (€/m²)</label><input id="a-etw_saniert_m2" type="number" /></div>
+            <div><label for="a-etw_bestand_m2">Wohnung Bestand (€/m²)</label><input id="a-etw_bestand_m2" type="number" /></div>
+            <div><label for="a-verkaufsfaktor_mfh">Verkaufsfaktor MFH</label><input id="a-verkaufsfaktor_mfh" type="number" step="0.5" /></div>
+            <div><label for="a-bodenrichtwert_m2">Bauland (€/m²)</label><input id="a-bodenrichtwert_m2" type="number" /></div>
+            <div><label for="a-zins">Zins (%)</label><input id="a-zins" type="number" step="0.05" /></div>
+            <div><label for="a-tilgung">Tilgung (%)</label><input id="a-tilgung" type="number" step="0.25" /></div>
+            <div><label for="a-ek_prozent">Eigenkapital (% vom Preis)</label><input id="a-ek_prozent" type="number" /></div>
+            <div><label for="a-makler">Makler Standard (%)</label><input id="a-makler" type="number" step="0.01" /></div>
+            <div><label for="a-grest">Grunderwerbsteuer (%)</label><input id="a-grest" type="number" step="0.1" /></div>
+            <div><label for="a-notar">Notar & Grundbuch (%)</label><input id="a-notar" type="number" step="0.1" /></div>
+            <div><label for="a-monteur_preis">Monteurzimmer (€/Bett/Nacht)</label><input id="a-monteur_preis" type="number" /></div>
+          </div>
+          <p class="hinweis">Gilt für dieses Gerät. Werte gelten für den Raum Hamm – für andere Orte (z. B. Münster, Soest) anpassen. <button class="leise" id="annahmen-zurueck" type="button">Standardwerte</button></p>
+        </details>
+        <div class="reihe"><button id="start">Auswerten</button><span class="hinweis">Sofort, kostenlos, ohne KI.</span></div>
       </div>
     </section>
 
@@ -280,18 +313,13 @@
           <div class="strategien" id="strategien"></div>
         </div>
         <div class="karte kein-druck" id="chat-karte">
-          <span class="eyebrow">KI-Berater</span>
-          <h2>Fragen zu diesem Objekt</h2>
-          <div class="vorschlaege">
-            <button class="zweit" data-frage="Was wäre ein realistischer Kaufpreis, damit der Cashflow positiv wird – und wie begründe ich das in der Verhandlung?">Verhandlungspreis</button>
-            <button class="zweit" data-frage="Welche Strategie bringt hier am meisten, und was wären die nächsten 3 konkreten Schritte?">Beste Strategie</button>
-            <button class="zweit" data-frage="Welche Unterlagen und Fragen soll ich vor der Besichtigung vom Makler anfordern? Bitte als Liste und als fertige E-Mail.">Anfrage an Makler</button>
-            <button class="zweit" data-frage="Was sind die größten Risiken, und wie kann ich sie vor dem Kauf prüfen?">Risiken prüfen</button>
-          </div>
+          <span class="eyebrow">Zwischen euch beiden</span>
+          <h2>Notizen zu diesem Objekt</h2>
+          <p class="hinweis">Eindrücke von der Besichtigung, Antworten vom Makler, Ideen. Dein Partner bekommt eine Benachrichtigung.</p>
           <div class="chat" id="chat-verlauf"></div>
           <div class="chat-eingabe">
-            <textarea id="chat-eingabe" rows="2" placeholder="Frage zu diesem Objekt … (Enter = senden)"></textarea>
-            <button id="chat-senden">Senden</button>
+            <textarea id="chat-eingabe" rows="2" placeholder="Notiz schreiben … (Enter = speichern)"></textarea>
+            <button id="chat-senden">Speichern</button>
           </div>
         </div>
         <div class="karte" id="rechner-karte">
@@ -316,6 +344,7 @@
           <div class="reihe" style="margin-top:0">
             <button class="zweit" id="drucken">Als PDF speichern</button>
             <button class="zweit" id="kopieren">Bericht kopieren</button>
+            <button class="zweit" id="bearbeiten">Eingaben ändern</button>
             <button class="zweit" id="neu">Neue Analyse</button>
           </div>
         </div>
@@ -344,20 +373,6 @@
       </div>
     </section>
 
-    <!-- KI fragen -->
-    <section class="ansicht" data-ansicht="fragen" hidden>
-      <div class="karte">
-        <span class="eyebrow">KI-Berater</span>
-        <h2>Allgemeine Fragen</h2>
-        <p class="hinweis">Finanzierung, Steuern, Förderung, Mietrecht, Markt. Die KI sucht bei Bedarf aktuell im Web. Ihr seht beide den Verlauf.</p>
-        <div class="chat" id="allg-verlauf"></div>
-        <div class="chat-eingabe">
-          <textarea id="allg-eingabe" rows="2" placeholder="z. B. Lohnt sich gerade ein Mehrfamilienhaus in Hamm mit 20 % Eigenkapital?"></textarea>
-          <button id="allg-senden">Senden</button>
-        </div>
-      </div>
-    </section>
-
     <!-- Konto -->
     <section class="ansicht" data-ansicht="konto" hidden>
       <div class="karte" id="einstellungen">
@@ -369,25 +384,11 @@
             <datalist id="namen"><option value="Murat"></option><option value="Yasemin"></option></datalist></div>
         </div>
         <div class="reihe"><button id="anmelden">Anmelden</button><button class="zweit versteckt" id="abmelden">Abmelden</button><span id="login-fehler" class="hinweis" style="color:var(--kritisch)"></span></div>
-        <div id="key-bereich" class="schluessel-box">
-          <h3>Letzter Schritt: KI-Schlüssel eintragen</h3>
-          <p class="hinweis" style="margin:6px 0 0">Du bist angemeldet. Damit die KI analysieren kann, braucht die App einmalig einen Schlüssel von Anthropic. Das ist nicht dein Claude-Abo, sondern ein eigenes Konto mit Guthaben:</p>
-          <ol class="schritte">
-            <li><a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> öffnen und anmelden bzw. registrieren</li>
-            <li>Unter „Billing“ Guthaben aufladen (z. B. 10 €)</li>
-            <li>Unter „API Keys“ → „Create Key“, den Schlüssel kopieren (beginnt mit <code>sk-ant-</code>)</li>
-            <li>Hier einfügen und speichern – gilt danach auch für Yasemin</li>
-          </ol>
-          <label for="apikey">KI-Schlüssel</label>
-          <input id="apikey" type="password" placeholder="sk-ant-…" autocomplete="off" />
-          <div class="reihe"><button class="zweit" id="key-speichern">Schlüssel speichern</button></div>
-          <p class="hinweis">Schlüssel erstellen unter console.anthropic.com → API Keys. Eine Analyse kostet grob 0,30–1,50 €, eine Chat-Frage meist wenige Cent.</p>
-        </div>
-        <p class="hinweis" id="key-status"></p>
+
       </div>
       <div class="karte">
         <h2>Benachrichtigungen</h2>
-        <p class="hinweis">Du bekommst eine Meldung, wenn gute Objekte gefunden werden, wenn dein Partner ein Objekt analysiert oder eine Frage stellt. Auf dem iPhone geht das nur, wenn die App über Teilen → „Zum Home-Bildschirm“ installiert ist (ab iOS 16.4).</p>
+        <p class="hinweis">Du bekommst eine Meldung, wenn gute Objekte gefunden werden, wenn dein Partner ein Objekt analysiert oder eine Notiz schreibt. Auf dem iPhone geht das nur, wenn die App über Teilen → „Zum Home-Bildschirm“ installiert ist (ab iOS 16.4).</p>
         <div class="reihe"><button id="push-an">Benachrichtigungen einschalten</button><button class="zweit versteckt" id="push-test">Test senden</button><button class="leise versteckt" id="push-aus">Ausschalten</button></div>
         <p class="hinweis" id="push-status"></p>
       </div>

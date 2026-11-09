@@ -12,6 +12,7 @@
 import { getStore } from "@netlify/blobs";
 import { timingSafeEqual, createHash } from "node:crypto";
 import { sendePush } from "../../lib/push.mjs";
+import { leseKleinanzeigenHtml } from "../../lib/inserat-parse.js";
 
 const MAX_CHAT = 400;
 
@@ -82,7 +83,7 @@ export function erstelleHandler(store, zugang, benachrichtige = (n) => sendePush
         alt.chat = [...(alt.chat || []), ...neu].slice(-MAX_CHAT);
         await store.setJSON(key, alt, { metadata: kurzinfo(alt) });
         const frage = neu.find((e) => e.rolle === "user");
-        if (frage) await benachrichtige({ titel: `💬 ${frage.autor || "Partner"} fragt zu ${alt.titel || "einem Objekt"}`, text: frage.text.slice(0, 140), url: `/#objekt-${teile[1]}`, ausser: frage.autor }).catch(() => 0);
+        if (frage) await benachrichtige({ titel: `📝 ${frage.autor || "Partner"}: Notiz zu ${alt.titel || "einem Objekt"}`, text: frage.text.slice(0, 140), url: `/#objekt-${teile[1]}`, ausser: frage.autor }).catch(() => 0);
         return json(200, { chat: alt.chat });
       }
       if (methode === "GET") {
@@ -124,6 +125,26 @@ export function erstelleHandler(store, zugang, benachrichtige = (n) => sendePush
     if (teile[0] === "push" && teile[1] === "test" && methode === "POST") {
       const n = await benachrichtige({ titel: "🔔 Benachrichtigungen aktiv", text: "So sehen Meldungen der Immo-Analyse aus.", url: "/" });
       return json(200, { gesendet: n });
+    }
+
+    // Kleinanzeigen-Anzeige serverseitig auslesen (nur diese Adresse, kein beliebiger Abruf)
+    if (teile[0] === "inserat" && methode === "GET") {
+      const ziel = url.searchParams.get("url") || "";
+      let u;
+      try { u = new URL(ziel); } catch { return json(400, { fehler: "Ungültiger Link" }); }
+      if (u.protocol !== "https:" || !/^(www\.)?kleinanzeigen\.de$/.test(u.hostname) || !u.pathname.startsWith("/s-anzeige/")) {
+        return json(400, { fehler: "Automatisch auslesen geht nur bei Kleinanzeigen-Anzeigen. Bei anderen Portalen den Text der Anzeige kopieren und einfügen." });
+      }
+      let html;
+      try {
+        const r = await fetch(`https://www.kleinanzeigen.de${u.pathname}`, { headers: { "User-Agent": "immo-scout/1.0 (private Objektsuche, wenige Abrufe)", "Accept-Language": "de-DE" } });
+        if (!r.ok) return json(502, { fehler: `Anzeige nicht erreichbar (${r.status}). Ist sie noch online?` });
+        html = await r.text();
+      } catch {
+        return json(502, { fehler: "Kleinanzeigen ist gerade nicht erreichbar. Bitte den Anzeigentext kopieren und einfügen." });
+      }
+      const daten = leseKleinanzeigenHtml(html);
+      return json(200, { daten: { ...daten, link: `https://www.kleinanzeigen.de${u.pathname}` } });
     }
 
     if (teile[0] === "funde" && methode === "GET") {

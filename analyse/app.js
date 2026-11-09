@@ -1,56 +1,49 @@
-import Anthropic from "./vendor/anthropic-sdk-1.1.0.mjs";
-import { systemPrompt, userPrompt, chatSystemPrompt } from "./prompt.js";
+// Immo-Analyse Hamm – regelbasiert, ohne KI und ohne laufende Kosten.
 import { rechneSzenario, maxKaufpreisCashflowNull, num } from "./rechner.js";
 import { speicher, geraet, ZugangFalsch, extras, lese, schreibe } from "./speicher.js";
+import { leseInserat } from "./lib/inserat-parse.js";
+import { auswerten, STANDARD_ANNAHMEN } from "./lib/auswertung.js";
 
-const MODELL = "claude-opus-5-5";
 const SZENARIEN = [["vorsichtig", "Vorsichtig"], ["realistisch", "Realistisch"], ["gut", "Gut"]];
-
 const $ = (id) => document.getElementById(id);
 const eur = (v) => (v == null || !Number.isFinite(v) ? "–" : v.toLocaleString("de-DE", { maximumFractionDigits: 0 }) + " €");
 const pct = (v) => (v == null || !Number.isFinite(v) ? "–" : v.toLocaleString("de-DE", { maximumFractionDigits: 2 }) + " %");
 const dez = (v, d = 1) => (v == null || !Number.isFinite(v) ? "–" : v.toLocaleString("de-DE", { maximumFractionDigits: d }));
 
-let aktuell = null; // { id, datum, titel, link, bericht, daten, finanz, autor, chat }
-let laufenderStream = null;
-let abgebrochen = false;
-let apiKey = "";
+let aktuell = null; // { id, datum, titel, link, bericht, daten, finanz, eingabe, autor, chat }
 
-// ---------- Anmeldung & Einstellungen ----------
+function hinweis(text, art = "info") { if (text && window.zeigeHinweis) window.zeigeHinweis(text, art); }
+function fehler(text) {
+  if (text) hinweis(text, "fehler");
+  $("fehler").textContent = text || "";
+  $("fehler").classList.toggle("versteckt", !text);
+}
+
+// ---------- Anmeldung ----------
 function zeigeStatus() {
   const gemeinsam = speicher.modus === "gemeinsam";
-  $("verbunden").textContent = !gemeinsam ? "nicht angemeldet" : apiKey ? `${geraet.name || "?"} · verbunden` : `${geraet.name || "?"} · KI-Schlüssel fehlt`;
-  $("key-status").textContent = apiKey ? "✓ KI-Schlüssel vorhanden" + (gemeinsam ? " (gilt für euch beide)" : "") : "Noch kein KI-Schlüssel hinterlegt";
-  $("key-bereich").classList.toggle("versteckt", !!apiKey && gemeinsam);
+  $("verbunden").textContent = gemeinsam ? `${geraet.name || "?"} · verbunden` : "nicht angemeldet";
   $("abmelden").classList.toggle("versteckt", !gemeinsam);
-  const fertig = !!apiKey;
-  if (!fertig) geheZu("konto");
 }
 
 async function verbinden() {
-  fehler("");
   try {
     const d = await speicher.start();
-    apiKey = d.apiKey || "";
     if (speicher.modus === "gemeinsam") {
       const n = await speicher.lokaleHochladen();
-      if (n) log(`${n} frühere Analyse(n) dieses Geräts in den gemeinsamen Speicher übernommen`);
       zeigeVerlauf(n ? await speicher.liste() : d.objekte);
     } else {
       zeigeVerlauf(d.objekte);
-      if (await speicher.serverDa()) geheZu("konto");
     }
   } catch (e) {
     if (e instanceof ZugangFalsch) {
       geraet.zugang = "";
       $("login-fehler").textContent = "Zugangscode falsch – bitte prüfen.";
-      geheZu("konto");
-      return verbinden(); // ohne Code: lokal weiter
+      return verbinden();
     }
     $("login-fehler").textContent = e.message;
   }
   zeigeStatus();
-  ladeAllgemeinenChat();
   ladeFunde();
   pushStatus();
   route();
@@ -66,320 +59,140 @@ $("anmelden").onclick = async () => {
   $("zugang").value = "";
   await verbinden();
   if (speicher.modus !== "gemeinsam") return;
-  if (!apiKey) {
-    // Ohne KI-Schlüssel auf "Konto" bleiben und klar sagen, was fehlt
-    location.hash = "#konto";
-    hinweis("Angemeldet. Jetzt noch einmalig den KI-Schlüssel eintragen – danach funktioniert die Analyse.");
-    $("apikey").focus();
-    return;
-  }
   const ziel = offenerLink || "#neu";
   offenerLink = "";
   location.hash = ziel;
   hinweis(`Angemeldet als ${geraet.name}.`);
 };
-$("abmelden").onclick = () => { geraet.zugang = ""; apiKey = ""; verbinden(); };
-$("key-speichern").onclick = async () => {
-  const k = $("apikey").value.trim();
-  if (!k) return;
-  try {
-    if (!/^sk-ant-/.test(k)) { $("login-fehler").textContent = "Der Schlüssel beginnt mit „sk-ant-“. Bitte komplett kopieren."; return; }
-    await speicher.schluesselSpeichern(k);
-    apiKey = k;
-    $("apikey").value = "";
-    zeigeStatus();
-    hinweis("KI-Schlüssel gespeichert. Du kannst jetzt analysieren.");
-    const ziel = offenerLink || "#neu";
-    offenerLink = "";
-    location.hash = ziel;
-  } catch (e) { $("login-fehler").textContent = e.message; }
-};
-// Wenn der Partner etwas Neues angelegt hat: beim Zurückkehren zur App neu laden
+$("abmelden").onclick = () => { geraet.zugang = ""; verbinden(); };
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState !== "visible" || speicher.modus !== "gemeinsam") return;
-  try { zeigeVerlauf(await speicher.liste()); } catch { /* still */ }
+  try { zeigeVerlauf(await speicher.liste()); ladeFunde(); } catch { /* still */ }
 });
 
-// ---------- Ablage: Dateien, Screenshots, Einfügen, Hineinziehen ----------
-// Jeder Anhang: { name, art: "bild"|"pdf", media_type, data (base64), vorschau }
-let anhaenge = [];
-const MAX_KANTE = 2000; // Bilder werden verkleinert, das spart Zeit und Kosten
-
-function leseDataUrl(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(String(r.result));
-    r.onerror = () => rej(r.error);
-    r.readAsDataURL(file);
-  });
-}
-
-async function bildVorbereiten(file) {
-  // In JPEG umwandeln und verkleinern (auch HEIC von iPhones, sofern der Browser es lesen kann)
-  try {
-    const bmp = await createImageBitmap(file);
-    const f = Math.min(1, MAX_KANTE / Math.max(bmp.width, bmp.height));
-    const c = document.createElement("canvas");
-    c.width = Math.round(bmp.width * f);
-    c.height = Math.round(bmp.height * f);
-    const ctx = c.getContext("2d");
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(0, 0, c.width, c.height);
-    ctx.drawImage(bmp, 0, 0, c.width, c.height);
-    const url = c.toDataURL("image/jpeg", 0.85);
-    return { media_type: "image/jpeg", data: url.split(",")[1], vorschau: url };
-  } catch {
-    const url = await leseDataUrl(file);
-    const typ = url.slice(5, url.indexOf(";"));
-    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(typ)) throw new Error(`Bildformat nicht lesbar: ${file.name}`);
-    return { media_type: typ, data: url.split(",")[1], vorschau: url };
-  }
-}
-
-async function dateienHinzufuegen(liste) {
-  for (const file of liste) {
-    try {
-      if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
-        const url = await leseDataUrl(file);
-        anhaenge.push({ name: file.name, art: "pdf", media_type: "application/pdf", data: url.split(",")[1] });
-      } else if (file.type.startsWith("image/") || /\.(heic|heif|png|jpe?g|webp|gif)$/i.test(file.name)) {
-        anhaenge.push({ name: file.name || "Screenshot", art: "bild", ...(await bildVorbereiten(file)) });
-      } else {
-        fehler(`Dateityp nicht unterstützt: ${file.name}`);
-      }
-    } catch (e) {
-      fehler(e.message);
-    }
-  }
-  zeigeAnhaenge();
-}
-
-function zeigeAnhaenge() {
-  const box = $("anhaenge");
-  box.innerHTML = "";
-  anhaenge.forEach((a, i) => {
-    const d = document.createElement("div");
-    d.className = "anhang";
-    if (a.art === "bild") {
-      const img = document.createElement("img");
-      img.src = a.vorschau;
-      img.alt = a.name;
-      d.appendChild(img);
-    } else {
-      d.textContent = "📄 " + a.name;
-    }
-    const x = document.createElement("button");
-    x.type = "button";
-    x.textContent = "×";
-    x.title = "Entfernen";
-    x.onclick = () => { anhaenge.splice(i, 1); zeigeAnhaenge(); };
-    d.appendChild(x);
-    box.appendChild(d);
-  });
-  const mb = anhaenge.reduce((s, a) => s + a.data.length * 0.75, 0) / 1024 / 1024;
-  $("ablage-info").textContent = anhaenge.length ? `${anhaenge.length} Anhang/Anhänge · ${mb.toFixed(1)} MB` : "";
-}
-
-function anhangZuBlock(a) {
-  return a.art === "pdf"
-    ? { type: "document", source: { type: "base64", media_type: a.media_type, data: a.data }, title: a.name }
-    : { type: "image", source: { type: "base64", media_type: a.media_type, data: a.data } };
-}
+// ---------- Eingabe: Link/Text auslesen, Formular, Annahmen ----------
+const FELDER = ["titel", "objektart", "ort", "kaufpreis", "wohnflaeche_m2", "grundstueck_m2", "einheiten", "zimmer", "baujahr", "energieklasse", "ist_miete_monat", "hausgeld_monat", "makler_prozent", "sanierung", "eigenkapital"];
+const ZAHLFELDER = new Set(["kaufpreis", "wohnflaeche_m2", "grundstueck_m2", "einheiten", "zimmer", "baujahr", "ist_miete_monat", "hausgeld_monat", "makler_prozent", "sanierung", "eigenkapital"]);
+const MERKMALE = ["sanierungsbeduerftig", "vermietet", "leer", "denkmal", "erbpacht", "zweites_grundstueck", "baurecht", "oelheizung"];
+const ANNAHMEN_SPEICHER = "immo-annahmen";
+let eingabeLink = "";
 
 function findeLinks(text) {
   return [...new Set((text.match(/https?:\/\/[^\s<>"')]+/g) || []).map((u) => u.replace(/[.,;]+$/, "")))];
 }
 
-$("datei-knopf").onclick = () => $("dateien").click();
-$("dateien").onchange = (e) => { dateienHinzufuegen([...e.target.files]); e.target.value = ""; };
-document.addEventListener("paste", (e) => {
-  const dateien = [...(e.clipboardData?.files || [])];
-  if (dateien.length) { e.preventDefault(); dateienHinzufuegen(dateien); }
-});
-const ablage = $("ablage");
-["dragenter", "dragover"].forEach((t) => ablage.addEventListener(t, (e) => { e.preventDefault(); ablage.classList.add("ziehen"); }));
-["dragleave", "drop"].forEach((t) => ablage.addEventListener(t, () => ablage.classList.remove("ziehen")));
-ablage.addEventListener("drop", (e) => {
-  e.preventDefault();
-  if (e.dataTransfer.files.length) dateienHinzufuegen([...e.dataTransfer.files]);
-  else {
-    const t = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
-    if (t) $("text").value += ($("text").value ? "\n" : "") + t;
+function formularFuellen(f, nurLeere = false) {
+  for (const k of FELDER) {
+    let v = f[k];
+    if (k === "ist_miete_monat" && v == null && f.ist_miete_jahr) v = Math.round(f.ist_miete_jahr / 12);
+    if (v == null || v === "") continue;
+    const el = $("e-" + k);
+    if (nurLeere && el.value !== "") continue;
+    el.value = v;
+    el.classList.add("erkannt");
   }
-});
-
-// ---------- Fortschritt ----------
-function log(text, ok = false) {
-  const d = document.createElement("div");
-  d.textContent = text;
-  if (ok) d.className = "ok";
-  $("log").appendChild(d);
-  $("log").scrollTop = $("log").scrollHeight;
-}
-function hinweis(text, art = "info") { if (text && window.zeigeHinweis) window.zeigeHinweis(text, art); }
-function fehler(text) {
-  if (text) hinweis(text, "fehler");
-  $("fehler").textContent = text;
-  $("fehler").classList.toggle("versteckt", !text);
+  if (f.merkmale) for (const m of MERKMALE) if (f.merkmale[m]) $("m-" + m).checked = true;
+  if (f.link) eingabeLink = f.link;
 }
 
-function beschreibeBlock(block) {
-  if (block.type === "server_tool_use") {
-    if (block.name === "web_search") log(`🔎 Suche: ${block.input?.query ?? ""}`);
-    else if (block.name === "web_fetch") log(`🌐 Rufe ab: ${block.input?.url ?? ""}`);
-  } else if (block.type === "web_search_tool_result") {
-    const c = block.content;
-    if (Array.isArray(c)) log(`   ✓ ${c.length} Treffer`, true);
-    else log(`   ⚠ Suche fehlgeschlagen (${c?.error_code ?? "unbekannt"})`);
-  } else if (block.type === "web_fetch_tool_result") {
-    const c = block.content;
-    if (c?.type === "web_fetch_result") log(`   ✓ Seite gelesen`, true);
-    else log(`   ⚠ Abruf blockiert/fehlgeschlagen (${c?.error_code ?? "unbekannt"}) – nutze andere Quellen`);
-  } else if (block.type === "fallback") {
-    log(`ℹ️ Anfrage wurde auf ${block.to?.model ?? "ein anderes Modell"} umgeleitet`);
+function formularLesen() {
+  const e = { merkmale: {} };
+  for (const k of FELDER) {
+    const v = $("e-" + k).value.trim();
+    if (v === "") continue;
+    e[k] = ZAHLFELDER.has(k) ? num(v) : v;
   }
+  for (const m of MERKMALE) e.merkmale[m] = $("m-" + m).checked;
+  return e;
 }
 
-// ---------- Analyse ----------
+function formularLeeren() {
+  for (const k of FELDER) { $("e-" + k).value = ""; $("e-" + k).classList.remove("erkannt"); }
+  for (const m of MERKMALE) $("m-" + m).checked = false;
+  $("text").value = "";
+  eingabeLink = "";
+}
+
+function annahmenLesen() {
+  const a = {};
+  for (const k of Object.keys(STANDARD_ANNAHMEN)) { const v = $("a-" + k)?.value; if (v !== undefined && v !== "") a[k] = num(v); }
+  return a;
+}
+function annahmenZeigen() {
+  const gespeichert = lese(ANNAHMEN_SPEICHER, {});
+  for (const [k, v] of Object.entries(STANDARD_ANNAHMEN)) { const el = $("a-" + k); if (el) el.value = gespeichert[k] ?? v; }
+}
+document.querySelectorAll("[id^='a-']").forEach((el) => el.addEventListener("change", () => schreibe(ANNAHMEN_SPEICHER, annahmenLesen())));
+$("annahmen-zurueck").onclick = () => { schreibe(ANNAHMEN_SPEICHER, {}); annahmenZeigen(); hinweis("Standardwerte wiederhergestellt."); };
+
+async function auslesen() {
+  fehler("");
+  const text = $("text").value.trim();
+  if (!text) { fehler("Bitte zuerst einen Link oder den Anzeigentext einfügen."); return; }
+  const links = findeLinks(text);
+  const ka = links.find((l) => /kleinanzeigen\.de\/s-anzeige\//.test(l));
+  let gefunden = 0;
+  if (ka) {
+    if (speicher.modus !== "gemeinsam") { fehler("Zum automatischen Auslesen von Links bitte unter „Konto“ anmelden. Alternativ den Text der Anzeige einfügen."); }
+    else {
+      $("auslesen").disabled = true;
+      $("auslesen").textContent = "Lese Anzeige …";
+      try {
+        const r = await fetch("api/inserat?url=" + encodeURIComponent(ka), { headers: { "x-zugang": geraet.zugang } });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.fehler || "Auslesen fehlgeschlagen");
+        formularFuellen(d.daten);
+        gefunden = Object.keys(d.daten).length;
+      } catch (e) { fehler(e.message); }
+      finally { $("auslesen").disabled = false; $("auslesen").textContent = "Daten übernehmen"; }
+    }
+  }
+  // Eingefügter Text ergänzt, was der Link nicht geliefert hat
+  const ohneLinks = text.replace(/https?:\/\/\S+/g, " ").trim();
+  if (ohneLinks.length > 20) {
+    const f = leseInserat(ohneLinks);
+    formularFuellen(f, gefunden > 0);
+    gefunden += Object.keys(f).length - 1;
+  }
+  if (!eingabeLink && links[0]) eingabeLink = links[0];
+  if (gefunden) hinweis("Daten übernommen. Bitte kurz prüfen (grün markiert) und fehlende Felder ergänzen.");
+  else if (!ka) fehler("Im Text wurden keine Zahlen erkannt. Bitte die Felder unten ausfüllen.");
+  $("eckdaten").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("auslesen").onclick = auslesen;
+
 async function starteAnalyse() {
   fehler("");
-  if (!apiKey) {
-    fehler(speicher.modus === "gemeinsam" ? "Du bist angemeldet – es fehlt nur noch der KI-Schlüssel (beginnt mit sk-ant-). Bitte im gelben Kasten unter „Konto“ eintragen." : "Bitte zuerst unter „Konto“ anmelden (Zugangscode und Name).");
-    geheZu("konto");
-    return;
-  }
-
-  const text = $("text").value.trim();
-  const links = findeLinks(text);
-  const link = links[0] || "";
-  if (!text && !anhaenge.length) { fehler("Bitte einen Link, Text, Screenshots oder ein Exposé reinlegen."); return; }
-  const gesamtGroesse = anhaenge.reduce((s, a) => s + a.data.length * 0.75, 0);
-  if (gesamtGroesse > 24 * 1024 * 1024) { fehler("Die Anhänge sind zusammen zu groß (max. ca. 24 MB). Bitte weniger oder kleinere Dateien wählen."); return; }
-
-  const ziel = $("ziel").value;
-  const eigenkapital = $("ek").value.trim();
-  const modus = $("modus").value;
-  const schnell = modus === "schnell";
-
-  const bloecke = anhaenge.map(anhangZuBlock);
-  bloecke.push({ type: "text", text: userPrompt({ links, text, ziel, eigenkapital, notizen: $("notizen").value.trim(), dateinamen: anhaenge.map((a) => a.name), modus }) });
-
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 3 });
-  const messages = [{ role: "user", content: bloecke }];
-  const heute = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
-
-  setzeLaeuft(true);
-  hinweis("Analyse gestartet – das dauert jetzt etwas.");
-  $("fortschritt").scrollIntoView({ behavior: "smooth", block: "start" });
-  $("log").innerHTML = "";
-  $("denken").textContent = "";
-  log(link ? `Starte Analyse für ${link}` : "Starte Analyse");
-
-  const textTeile = [];
-  try {
-    for (let runde = 0; runde < 6; runde++) {
-      const stream = client.beta.messages.stream({
-        model: MODELL,
-        max_tokens: 64000,
-        thinking: { type: "adaptive", display: "summarized" },
-        output_config: { effort: schnell ? "low" : "high" },
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        system: systemPrompt(heute),
-        tools: [
-          { type: "web_search_20260209", name: "web_search", max_uses: schnell ? 5 : 20, user_location: { type: "approximate", country: "DE", timezone: "Europe/Berlin" } },
-          { type: "web_fetch_20260209", name: "web_fetch", max_uses: schnell ? 4 : 10 },
-        ],
-        messages,
-      });
-      laufenderStream = stream;
-      let textLaenge = 0;
-      stream.on("thinking", (delta) => {
-        const el = $("denken");
-        el.textContent = (el.textContent + delta).slice(-1200);
-        el.scrollTop = el.scrollHeight;
-      });
-      stream.on("text", (delta) => {
-        textLaenge += delta.length;
-        $("status").textContent = `Schreibe Bericht … (${Math.round(textLaenge / 100) / 10}k Zeichen)`;
-      });
-      stream.on("contentBlock", beschreibeBlock);
-
-      const antwort = await stream.finalMessage();
-      for (const b of antwort.content) if (b.type === "text") textTeile.push(textMitQuellen(b));
-
-      if (antwort.stop_reason === "pause_turn") {
-        // Server-Tools brauchen mehr Zeit: Antwort zurückgeben und weiterlaufen lassen
-        messages.push({ role: "assistant", content: antwort.content });
-        log("… recherchiere weiter");
-        continue;
-      }
-      if (antwort.stop_reason === "refusal") throw new Error("Die KI hat die Anfrage abgelehnt. Bitte Eingaben prüfen und erneut versuchen.");
-      if (antwort.stop_reason === "max_tokens") log("⚠ Bericht wurde wegen Längenlimit abgeschnitten.");
-      break;
-    }
-    const voll = textTeile.join("");
-    if (!voll.trim()) throw new Error("Die KI hat keinen Bericht geliefert. Bitte erneut versuchen.");
-    const { bericht, daten } = trenneJson(voll);
-    aktuell = {
-      id: String(Date.now()),
-      datum: new Date().toISOString(),
-      autor: geraet.name || null,
-      chat: [],
-      titel: daten?.titel || ersteUeberschrift(bericht) || link || "Objekt",
-      link,
-      bericht,
-      daten,
-      // Ohne Angabe: 25 % des Kaufpreises als Eigenkapital annehmen
-      finanz: { eigenkapital: num(eigenkapital) || (daten?.kaufpreis ? Math.round(daten.kaufpreis * 0.25) : null), zins_prozent: daten?.bauzins_prozent ?? 4.0, tilgung_prozent: 2 },
-    };
-    zeigeErgebnis();
-    log("✅ Fertig", true);
-    await speichereAktuell();
-  } catch (e) {
-    if (abgebrochen || e instanceof Anthropic.APIUserAbortError) fehler("Analyse abgebrochen.");
-    else if (e instanceof Anthropic.AuthenticationError) fehler("API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
-    else if (e instanceof Anthropic.PermissionDeniedError) fehler("Der API-Schlüssel hat keine Berechtigung (z. B. Websuche in der Console nicht freigeschaltet).");
-    else if (e instanceof Anthropic.RateLimitError) fehler("Zu viele Anfragen oder Guthaben aufgebraucht. Bitte kurz warten bzw. Guthaben in der Anthropic Console prüfen.");
-    else if (e instanceof Anthropic.APIConnectionError) fehler("Keine Verbindung zur KI. Bitte Internetverbindung prüfen.");
-    else if (e instanceof Anthropic.APIError) fehler(`Fehler der KI-Schnittstelle (${e.status ?? "?"}): ${e.message}`);
-    else fehler(e.message || String(e));
-  } finally {
-    laufenderStream = null;
-    abgebrochen = false;
-    setzeLaeuft(false);
-  }
+  const e = formularLesen();
+  if (!e.kaufpreis) { fehler("Bitte mindestens den Kaufpreis eintragen."); $("e-kaufpreis").focus(); return; }
+  if (!e.wohnflaeche_m2 && !/grundst/i.test(e.objektart || "")) { fehler("Bitte die Wohnfläche eintragen (bei Grundstücken: Objektart „Grundstück“ wählen)."); $("e-wohnflaeche_m2").focus(); return; }
+  if (/grundst/i.test(e.objektart || "") && !e.grundstueck_m2) { fehler("Bitte die Grundstücksgröße eintragen."); return; }
+  const { daten, finanz, bericht } = auswerten(e, annahmenLesen());
+  aktuell = {
+    id: String(Date.now()),
+    datum: new Date().toISOString(),
+    autor: geraet.name || null,
+    chat: [],
+    titel: daten.titel,
+    link: eingabeLink || null,
+    eingabe: e,
+    bericht,
+    daten,
+    finanz,
+  };
+  zeigeErgebnis();
+  await speichereAktuell();
 }
-
-// Quellen der Websuche als kleine Links hinter den zitierten Text hängen
-function textMitQuellen(block) {
-  const urls = [...new Set((block.citations || []).map((c) => c.url).filter(Boolean))];
-  if (!urls.length) return block.text;
-  return block.text + urls.map((u) => ` [↗](${u})`).join("");
-}
-
-function trenneJson(text) {
-  const treffer = [...text.matchAll(/```json\s*([\s\S]*?)```/g)];
-  if (!treffer.length) return { bericht: text, daten: null };
-  const letzter = treffer[treffer.length - 1];
-  let daten = null;
-  try { daten = JSON.parse(letzter[1]); } catch { /* Rechner bleibt dann leer */ }
-  const bericht = (text.slice(0, letzter.index) + text.slice(letzter.index + letzter[0].length)).trim();
-  return { bericht, daten };
-}
-function ersteUeberschrift(md) { return md.match(/^#\s+(.+)$/m)?.[1]?.trim(); }
-
-function setzeLaeuft(an) {
-  $("start").disabled = an;
-  $("stopp").classList.toggle("versteckt", !an);
-  $("fortschritt").classList.remove("versteckt");
-  $("spinner").classList.toggle("versteckt", !an);
-  $("status").textContent = an ? "Analyse läuft – KI liest das Inserat und recherchiert …" : "Analyse beendet";
-  if (an) $("ergebnis").classList.add("versteckt");
-}
-
 $("start").onclick = starteAnalyse;
-$("stopp").onclick = () => { abgebrochen = true; laufenderStream?.abort(); };
+$("leeren").onclick = () => { formularLeeren(); fehler(""); };
+
+// Bericht nach Änderung im Rechner neu schreiben, damit Text und Zahlen zusammenpassen
+function berichtAktualisieren() {
+  if (!aktuell?.eingabe) return;
+  const { bericht } = auswerten({ ...aktuell.eingabe, eigenkapital: aktuell.finanz?.eigenkapital }, { ...annahmenLesen(), zins: aktuell.finanz?.zins_prozent, tilgung: aktuell.finanz?.tilgung_prozent });
+  aktuell.bericht = bericht;
+  $("bericht").innerHTML = DOMPurify.sanitize(marked.parse(bericht));
+}
 
 // ---------- Ergebnis ----------
 function zeigeErgebnis() {
@@ -395,7 +208,7 @@ function zeigeErgebnis() {
   zeigeStrategien();
   rechne();
   aktuell.chat ||= [];
-  zeigeChat("objekt");
+  zeigeChat();
   teilenVorbereiten();
   const ziel = "#objekt-" + aktuell.id;
   if (location.hash !== ziel) { stillerWechsel = true; location.hash = ziel; }
@@ -500,7 +313,7 @@ $("rechner").addEventListener("change", (ev) => {
   rechne();
   speichereSpaeter();
 });
-for (const id of ["f-ek", "f-zins", "f-tilg", "f-stress"]) $(id).addEventListener("change", () => { rechne(); speichereSpaeter(); });
+for (const id of ["f-ek", "f-zins", "f-tilg", "f-stress"]) $(id).addEventListener("change", () => { rechne(); berichtAktualisieren(); speichereSpaeter(); });
 
 function zeigeUeberblick(r) {
   const d = aktuell.daten || {};
@@ -536,12 +349,16 @@ $("kopieren").onclick = async () => {
   setTimeout(() => ($("kopieren").textContent = "Bericht kopieren"), 2000);
 };
 $("neu").onclick = () => {
-  $("ergebnis").classList.add("versteckt");
-  $("fortschritt").classList.add("versteckt");
-  for (const id of ["text", "notizen"]) $(id).value = "";
-  anhaenge = [];
-  zeigeAnhaenge();
+  formularLeeren();
   location.hash = "#neu";
+};
+// Eingaben dieses Objekts zum Ändern zurück ins Formular holen
+$("bearbeiten").onclick = () => {
+  if (!aktuell?.eingabe) { hinweis("Für dieses Objekt sind keine Eingaben gespeichert."); return; }
+  formularLeeren();
+  formularFuellen({ ...aktuell.eingabe, link: aktuell.link });
+  location.hash = "#neu";
+  hinweis("Eingaben übernommen – ändern und neu auswerten.");
 };
 
 // ---------- Gemeinsame Objektliste ----------
@@ -590,142 +407,41 @@ function zeigeVerlauf(liste = []) {
   }
 }
 
-// ---------- KI-Chat (zum Objekt und allgemein) ----------
-const CHAT = {
-  objekt: { verlauf: "chat-verlauf", eingabe: "chat-eingabe", knopf: "chat-senden", eintraege: () => aktuell?.chat || [] },
-  allgemein: { verlauf: "allg-verlauf", eingabe: "allg-eingabe", knopf: "allg-senden", eintraege: () => allgemeinerChat },
-};
-let allgemeinerChat = [];
-
+// ---------- Notizen zum Objekt (zwischen euch beiden, ohne KI) ----------
 function md(text) {
   const el = document.createElement("div");
   el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
   el.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
   return el;
 }
-
-function zeigeChat(art) {
-  const c = CHAT[art];
-  const box = $(c.verlauf);
+function zeigeChat() {
+  const box = $("chat-verlauf");
   box.innerHTML = "";
-  for (const e of c.eintraege()) box.appendChild(chatBlase(e));
-  box.scrollTop = box.scrollHeight;
-}
-
-function chatBlase(e) {
-  const d = document.createElement("div");
-  d.className = "blase " + (e.rolle === "assistant" ? "ki" : "ich");
-  const kopf = document.createElement("div");
-  kopf.className = "hinweis";
-  kopf.textContent = (e.rolle === "assistant" ? "🤖 KI" : `🙂 ${e.autor || "Frage"}`) + (e.zeit ? " · " + new Date(e.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "");
-  d.append(kopf, md(e.text));
-  return d;
-}
-
-// Kompakter Stand des Rechners, damit die KI mit denselben Zahlen arbeitet
-function rechnerStand() {
-  if (!aktuell?.daten) return null;
-  const fin = finanzAusEingabe();
-  const real = { ...aktuell.daten.szenarien?.realistisch, sanierung: num(aktuell.daten.szenarien?.realistisch?.sanierung) * fin.sanFaktor };
-  const r = rechneSzenario(aktuell.daten, real, fin);
-  return { finanzierung: aktuell.finanz, stresstest: $("f-stress").value || "keiner", realistisch: {
-    gesamtinvestition: Math.round(r.invest), darlehen: Math.round(r.darlehen), rate_monat: Math.round(r.rateMonat),
-    reinertrag_jahr: Math.round(r.reinertrag), cashflow_monat: Math.round(r.cashflowMonat), bruttorendite: r.bruttorendite, faktor: r.faktor,
-    max_kaufpreis_cashflow_0: Math.round(maxKaufpreisCashflowNull(aktuell.daten, real, fin) || 0) } };
-}
-
-async function frage(art) {
-  const c = CHAT[art];
-  const text = $(c.eingabe).value.trim();
-  if (!text) return;
-  if (!apiKey) { fehler("Bitte zuerst anmelden bzw. den KI-Schlüssel hinterlegen."); geheZu("konto"); return; }
-  if (art === "objekt" && !aktuell) return;
-
-  const objektId = art === "objekt" ? aktuell.id : null;
-  const frageEintrag = { rolle: "user", text, autor: geraet.name || "Ich", zeit: new Date().toISOString() };
-  const bisher = c.eintraege().slice(-30);
-  $(c.eingabe).value = "";
-  $(c.knopf).disabled = true;
-
-  const box = $(c.verlauf);
-  box.appendChild(chatBlase(frageEintrag));
-  const antwortBlase = chatBlase({ rolle: "assistant", text: "_denkt nach …_" });
-  box.appendChild(antwortBlase);
-  box.scrollTop = box.scrollHeight;
-
-  const heute = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
-  const system = chatSystemPrompt(heute, art === "objekt" ? { ...aktuell, rechnerStand: rechnerStand() } : null);
-  const messages = [
-    ...bisher.map((e) => ({ role: e.rolle === "assistant" ? "assistant" : "user", content: e.rolle === "assistant" ? e.text : `${e.autor ? e.autor + ": " : ""}${e.text}` })),
-    { role: "user", content: `${frageEintrag.autor}: ${text}` },
-  ];
-  // Die API erwartet abwechselnde Rollen; aufeinanderfolgende gleiche Rollen zusammenfassen
-  const zusammen = [];
-  for (const m of messages) {
-    const letzte = zusammen[zusammen.length - 1];
-    if (letzte && letzte.role === m.role) letzte.content += "\n\n" + m.content;
-    else zusammen.push({ ...m });
+  for (const e of aktuell?.chat || []) {
+    const d = document.createElement("div");
+    d.className = "blase " + (e.autor && e.autor === geraet.name ? "ich" : "ki");
+    const kopf = document.createElement("div");
+    kopf.className = "hinweis";
+    kopf.textContent = `${e.autor || "?"}` + (e.zeit ? " · " + new Date(e.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "");
+    d.append(kopf, md(e.text));
+    box.appendChild(d);
   }
-  if (zusammen[0]?.role === "assistant") zusammen.shift();
-
-  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 3 });
-  let antwortText = "";
+  box.scrollTop = box.scrollHeight;
+}
+async function notizSenden() {
+  const text = $("chat-eingabe").value.trim();
+  if (!text || !aktuell) return;
+  const eintrag = { rolle: "user", text, autor: geraet.name || "Ich", zeit: new Date().toISOString() };
+  $("chat-senden").disabled = true;
   try {
-    for (let runde = 0; runde < 4; runde++) {
-      const stream = client.beta.messages.stream({
-        model: MODELL,
-        max_tokens: 16000,
-        output_config: { effort: "medium" },
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        cache_control: { type: "ephemeral" },
-        system,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5, user_location: { type: "approximate", country: "DE", timezone: "Europe/Berlin" } }],
-        messages: zusammen,
-      });
-      stream.on("text", (delta) => {
-        antwortText += delta;
-        antwortBlase.lastChild.replaceWith(md(antwortText));
-        box.scrollTop = box.scrollHeight;
-      });
-      stream.on("contentBlock", (b) => {
-        if (b.type === "server_tool_use" && b.name === "web_search" && !antwortText) antwortBlase.lastChild.replaceWith(md(`_🔎 sucht: ${b.input?.query ?? ""}_`));
-      });
-      const m = await stream.finalMessage();
-      if (m.stop_reason === "pause_turn") { zusammen.push({ role: "assistant", content: m.content }); continue; }
-      if (m.stop_reason === "refusal") antwortText ||= "Dazu kann ich leider nichts sagen.";
-      break;
-    }
-    if (!antwortText.trim()) antwortText = "Ich habe leider keine Antwort erhalten. Bitte noch einmal fragen.";
-    antwortBlase.lastChild.replaceWith(md(antwortText));
-    const antwortEintrag = { rolle: "assistant", text: antwortText, zeit: new Date().toISOString() };
-    const chat = await speicher.chatAnhaengen(objektId, [frageEintrag, antwortEintrag]);
-    if (art === "objekt" && aktuell && aktuell.id === objektId) aktuell.chat = chat;
-    if (art === "allgemein") allgemeinerChat = chat;
-  } catch (e) {
-    const meldung = e instanceof Anthropic.AuthenticationError ? "KI-Schlüssel ungültig." : e instanceof Anthropic.RateLimitError ? "Zu viele Anfragen oder Guthaben aufgebraucht." : (e.message || String(e));
-    antwortBlase.lastChild.replaceWith(md(`⚠️ ${meldung}`));
-    $(c.eingabe).value = text; // Frage nicht verlieren
-  } finally {
-    $(c.knopf).disabled = false;
-  }
+    aktuell.chat = await speicher.chatAnhaengen(aktuell.id, [eintrag]);
+    $("chat-eingabe").value = "";
+    zeigeChat();
+  } catch (e) { fehler("Notiz nicht gespeichert: " + e.message); }
+  finally { $("chat-senden").disabled = false; }
 }
-
-async function ladeAllgemeinenChat() {
-  try { allgemeinerChat = await speicher.allgemeinerChat(); } catch { allgemeinerChat = []; }
-  zeigeChat("allgemein");
-}
-
-for (const art of ["objekt", "allgemein"]) {
-  const c = CHAT[art];
-  $(c.knopf).onclick = () => frage(art);
-  $(c.eingabe).addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); frage(art); } });
-}
-document.querySelectorAll("[data-frage]").forEach((b) => {
-  b.onclick = () => { $("chat-eingabe").value = b.dataset.frage; frage("objekt"); };
-});
-
-verbinden();
+$("chat-senden").onclick = notizSenden;
+$("chat-eingabe").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); notizSenden(); } });
 
 // ---------- Navigation (Hash: #neu, #objekte, #funde, #fragen, #konto, #objekt-<id>) ----------
 let stillerWechsel = false;
@@ -756,7 +472,7 @@ async function route() {
     zeigeAnsicht(speicher.modus === "gemeinsam" ? "objekte" : "konto");
     return;
   }
-  zeigeAnsicht(["neu", "objekte", "funde", "fragen", "konto", "objekt"].includes(h) ? h : "neu");
+  zeigeAnsicht(["neu", "objekte", "funde", "konto", "objekt"].includes(h) ? h : "neu");
 }
 window.addEventListener("hashchange", route);
 
@@ -835,11 +551,12 @@ function zeigeFunde() {
     );
     const analysieren = document.createElement("button");
     analysieren.textContent = "Analysieren";
-    analysieren.onclick = () => {
+    analysieren.onclick = async () => {
+      formularLeeren();
       $("text").value = `${f.url}\n\n${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}\n${f.beschreibung || ""}`;
-      $("modus").value = "schnell";
       location.hash = "#neu";
-      starteAnalyse();
+      await auslesen();
+      if (formularLesen().kaufpreis) await starteAnalyse();
     };
     const wa = document.createElement("a");
     wa.className = "knopf zweit";
@@ -905,4 +622,7 @@ $("push-aus").onclick = async () => {
   await pushStatus();
 };
 if ("serviceWorker" in navigator) swRegistrierung().catch(() => {});
+
+annahmenZeigen();
+verbinden();
 window.__appBereit = true;
