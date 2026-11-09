@@ -16,7 +16,13 @@ Heute ist der ${heute}. Du erstellst eigenständig und vollständig eine ehrlich
    - Lage: Bevölkerungs-/Nachfrageentwicklung, Infrastruktur, Arbeitgeber, ÖPNV, Besonderheiten (Hochwasser, Lärm, Großprojekte).
    - Bei Ferienwohnungs-Potenzial: Vergleichsobjekte (Preis/Nacht, Auslastung) und Zweckentfremdungs-/Ferienwohnungsregeln der Gemeinde.
    - Bei Sanierungsbedarf: Kosten pro m² mit Spanne; Pflichten aus dem GEG (z. B. Heizungstausch, Dämmpflichten nach Eigentümerwechsel); Förderung (KfW, BAFA/BEG) kurz prüfen. Förderung darf die Entscheidung nicht allein tragen.
-4. **Varianten bilden:** 2–3 Nutzungskonzepte (z. B. A: Vermietung wie Bestand, B: Sanierung + Neuvermietung, C: Ferienwohnung / Eigennutzung), jeweils mit nötigen Genehmigungen. Immer eine einfache Rückfall-Variante.
+4. **Varianten bilden – prüfe jede Strategie des Käufers einzeln** und rechne sie, soweit Daten vorhanden:
+   - **Buy & Hold / positiver Cashflow** (Mehrfamilienhaus, Neuvermietung, Mieterhöhungspotenzial im Rahmen des Mietrechts),
+   - **Fix & Flip** (Ankauf, Sanierung, Wiederverkauf; Marge nach allen Kosten, Ziel ≥ 15–20 %),
+   - **Aufteilung in Eigentumswohnungen** (Abgeschlossenheit, Teilungserklärung, Umwandlungsverbot § 250 BauGB, Verkaufspreise ETW),
+   - **Grundstück** (Teilung/Abverkauf/Bebauung, Bodenrichtwert, Baurecht nach B-Plan oder § 34 BauGB),
+   - **Ferienwohnung / Monteurzimmer** (Vergleichspreise, Auslastung, Zweckentfremdung, Nutzungsänderung).
+   Nenne für jede Strategie, ob sie hier funktioniert und bei welchem Kaufpreis. Immer eine einfache Rückfall-Variante. Hinweis auf gewerblichen Grundstückshandel (mehr als 3 Objekte in 5 Jahren verkauft).
 5. **Rechnen** in drei Szenarien (Vorsichtig / Realistisch / Gut): Kaufnebenkosten (Grunderwerbsteuer, Notar/Grundbuch ca. 2 %, Makler), Sanierung, Gesamtinvestition, Jahreskaltmiete, Leerstand, nicht umlagefähige Kosten, Instandhaltung, Verwaltung, Finanzierung (Annuität), Cashflow vor Steuern pro Monat, Bruttorendite, Nettorendite, Kaufpreisfaktor, Kaufpreis €/m² vs. Markt. Rechne die Ergebnisse nach, bevor du sie schreibst.
 6. **Sensitivität:** Zins +1 %-Punkt, Miete −10 %, Sanierung +20 %.
 7. **Risiken** (die größten zuerst): Lage, Bausubstanz/Energie/GEG, Mietrecht (Mietpreisbremse, Kappungsgrenze, Bestandsmieter), Genehmigungen, WEG-Themen (Rücklage, Sonderumlagen, Protokolle), Finanzierung.
