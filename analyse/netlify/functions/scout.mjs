@@ -18,7 +18,7 @@ export async function lauf(store, holen = (pfad) => fetch(`https://www.kleinanze
         if (istNeu(o) && !o.ausschluss) neu.push({ ...o, gefunden: new Date().toISOString(), gut: istGut(o) });
       }
     } catch (e) { fehler.push(`${kategorie}: ${e.message}`); }
-    await pause(1200);
+    await pause(500);
   }
   neu.sort((a, b) => b.punkte - a.punkte || (a.preis_m2 ?? 9e9) - (b.preis_m2 ?? 9e9));
   await store.setJSON("funde/liste", [...neu, ...funde].slice(0, 200));
