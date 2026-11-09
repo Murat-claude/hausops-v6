@@ -1,43 +1,86 @@
 import Anthropic from "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.1.0/+esm";
-import { systemPrompt, userPrompt } from "./prompt.js";
+import { systemPrompt, userPrompt, chatSystemPrompt } from "./prompt.js";
 import { rechneSzenario, maxKaufpreisCashflowNull, num } from "./rechner.js";
+import { speicher, geraet, ZugangFalsch } from "./speicher.js";
 
 const MODELL = "claude-opus-5-5";
 const SZENARIEN = [["vorsichtig", "Vorsichtig"], ["realistisch", "Realistisch"], ["gut", "Gut"]];
-const KEY_SPEICHER = "immo-analyse-apikey";
-const VERLAUF_SPEICHER = "immo-analyse-verlauf";
 
 const $ = (id) => document.getElementById(id);
 const eur = (v) => (v == null || !Number.isFinite(v) ? "–" : v.toLocaleString("de-DE", { maximumFractionDigits: 0 }) + " €");
 const pct = (v) => (v == null || !Number.isFinite(v) ? "–" : v.toLocaleString("de-DE", { maximumFractionDigits: 2 }) + " %");
 const dez = (v, d = 1) => (v == null || !Number.isFinite(v) ? "–" : v.toLocaleString("de-DE", { maximumFractionDigits: d }));
 
-let aktuell = null; // { id, datum, titel, link, bericht, daten, finanz }
+let aktuell = null; // { id, datum, titel, link, bericht, daten, finanz, autor, chat }
 let laufenderStream = null;
 let abgebrochen = false;
+let apiKey = "";
 
-// ---------- Speicher (kann im privaten Modus fehlen) ----------
-function lese(key, fallback) {
-  try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }
-}
-function schreibe(key, wert) {
-  try { localStorage.setItem(key, JSON.stringify(wert)); return true; } catch { return false; }
+// ---------- Anmeldung & Einstellungen ----------
+function zeigeStatus() {
+  const gemeinsam = speicher.modus === "gemeinsam";
+  $("verbunden").textContent = gemeinsam
+    ? `✓ Gemeinsamer Speicher verbunden – angemeldet als ${geraet.name || "?"}`
+    : "Nur auf diesem Gerät (nicht verbunden)";
+  $("key-status").textContent = apiKey ? "✓ KI-Schlüssel vorhanden" + (gemeinsam ? " (gilt für euch beide)" : "") : "Noch kein KI-Schlüssel hinterlegt";
+  $("key-bereich").classList.toggle("versteckt", !!apiKey && gemeinsam);
+  $("abmelden").classList.toggle("versteckt", !gemeinsam);
+  const fertig = !!apiKey;
+  if (!fertig) $("einstellungen-details").open = true;
 }
 
-// ---------- Einstellungen ----------
-function zeigeKeyStatus() {
-  const k = lese(KEY_SPEICHER, "");
-  $("key-status").textContent = k ? "✓ Schlüssel gespeichert" : "Noch kein Schlüssel gespeichert";
-  if (!k) $("einstellungen-details").open = true;
+async function verbinden() {
+  fehler("");
+  try {
+    const d = await speicher.start();
+    apiKey = d.apiKey || "";
+    if (speicher.modus === "gemeinsam") {
+      const n = await speicher.lokaleHochladen();
+      if (n) log(`${n} frühere Analyse(n) dieses Geräts in den gemeinsamen Speicher übernommen`);
+      zeigeVerlauf(n ? await speicher.liste() : d.objekte);
+    } else {
+      zeigeVerlauf(d.objekte);
+      if (await speicher.serverDa()) $("einstellungen-details").open = true;
+    }
+  } catch (e) {
+    if (e instanceof ZugangFalsch) {
+      geraet.zugang = "";
+      $("login-fehler").textContent = "Zugangscode falsch – bitte prüfen.";
+      $("einstellungen-details").open = true;
+      return verbinden(); // ohne Code: lokal weiter
+    }
+    $("login-fehler").textContent = e.message;
+  }
+  zeigeStatus();
+  ladeAllgemeinenChat();
 }
-$("key-speichern").onclick = () => {
+
+$("anmelden").onclick = async () => {
+  const code = $("zugang").value.trim();
+  const name = $("name").value.trim();
+  if (!code || !name) { $("login-fehler").textContent = "Bitte Zugangscode und Namen eingeben."; return; }
+  $("login-fehler").textContent = "";
+  geraet.zugang = code;
+  geraet.name = name;
+  $("zugang").value = "";
+  await verbinden();
+};
+$("abmelden").onclick = () => { geraet.zugang = ""; apiKey = ""; verbinden(); };
+$("key-speichern").onclick = async () => {
   const k = $("apikey").value.trim();
   if (!k) return;
-  schreibe(KEY_SPEICHER, k);
-  $("apikey").value = "";
-  zeigeKeyStatus();
+  try {
+    await speicher.schluesselSpeichern(k);
+    apiKey = k;
+    $("apikey").value = "";
+    zeigeStatus();
+  } catch (e) { $("login-fehler").textContent = e.message; }
 };
-$("key-loeschen").onclick = () => { try { localStorage.removeItem(KEY_SPEICHER); } catch {} zeigeKeyStatus(); };
+// Wenn der Partner etwas Neues angelegt hat: beim Zurückkehren zur App neu laden
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || speicher.modus !== "gemeinsam") return;
+  try { zeigeVerlauf(await speicher.liste()); } catch { /* still */ }
+});
 
 // ---------- Ablage: Dateien, Screenshots, Einfügen, Hineinziehen ----------
 // Jeder Anhang: { name, art: "bild"|"pdf", media_type, data (base64), vorschau }
@@ -180,8 +223,7 @@ function beschreibeBlock(block) {
 // ---------- Analyse ----------
 async function starteAnalyse() {
   fehler("");
-  const apiKey = lese(KEY_SPEICHER, "");
-  if (!apiKey) { fehler("Bitte zuerst oben in den Einstellungen deinen Anthropic API-Schlüssel speichern."); $("einstellungen-details").open = true; return; }
+  if (!apiKey) { fehler("Bitte zuerst oben anmelden bzw. den KI-Schlüssel hinterlegen."); $("einstellungen-details").open = true; return; }
 
   const text = $("text").value.trim();
   const links = findeLinks(text);
@@ -254,8 +296,10 @@ async function starteAnalyse() {
     if (!voll.trim()) throw new Error("Die KI hat keinen Bericht geliefert. Bitte erneut versuchen.");
     const { bericht, daten } = trenneJson(voll);
     aktuell = {
-      id: Date.now(),
+      id: String(Date.now()),
       datum: new Date().toISOString(),
+      autor: geraet.name || null,
+      chat: [],
       titel: daten?.titel || ersteUeberschrift(bericht) || link || "Objekt",
       link,
       bericht,
@@ -263,9 +307,9 @@ async function starteAnalyse() {
       // Ohne Angabe: 25 % des Kaufpreises als Eigenkapital annehmen
       finanz: { eigenkapital: num(eigenkapital) || (daten?.kaufpreis ? Math.round(daten.kaufpreis * 0.25) : null), zins_prozent: daten?.bauzins_prozent ?? 4.0, tilgung_prozent: 2 },
     };
-    speichereAktuell();
     zeigeErgebnis();
     log("✅ Fertig", true);
+    await speichereAktuell();
   } catch (e) {
     if (abgebrochen || e instanceof Anthropic.APIUserAbortError) fehler("Analyse abgebrochen.");
     else if (e instanceof Anthropic.AuthenticationError) fehler("API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
@@ -324,6 +368,8 @@ function zeigeErgebnis() {
   $("rechner-karte").classList.toggle("versteckt", !aktuell.daten);
   zeigeStrategien();
   rechne();
+  aktuell.chat ||= [];
+  zeigeChat("objekt");
   $("ergebnis").scrollIntoView({ behavior: "smooth" });
 }
 
@@ -422,9 +468,9 @@ $("rechner").addEventListener("change", (ev) => {
   if (bereich === "basis") aktuell.daten[feld] = wert;
   else aktuell.daten.szenarien[bereich][feld] = wert;
   rechne();
-  speichereAktuell();
+  speichereSpaeter();
 });
-for (const id of ["f-ek", "f-zins", "f-tilg", "f-stress"]) $(id).addEventListener("change", () => { rechne(); speichereAktuell(); });
+for (const id of ["f-ek", "f-zins", "f-tilg", "f-stress"]) $(id).addEventListener("change", () => { rechne(); speichereSpaeter(); });
 
 function zeigeUeberblick(r) {
   const d = aktuell.daten || {};
@@ -467,37 +513,191 @@ $("neu").onclick = () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 
-// ---------- Verlauf ----------
-function speichereAktuell() {
+// ---------- Gemeinsame Objektliste ----------
+let speicherTimer = null;
+async function speichereAktuell() {
   if (!aktuell) return;
-  let liste = lese(VERLAUF_SPEICHER, []).filter((e) => e.id !== aktuell.id);
-  liste.unshift(aktuell);
-  liste = liste.slice(0, 25);
-  while (liste.length && !schreibe(VERLAUF_SPEICHER, liste)) liste.pop(); // Speicher voll: älteste entfernen
-  zeigeVerlauf();
+  try {
+    await speicher.speichern(aktuell);
+    zeigeVerlauf(await speicher.liste());
+  } catch (e) {
+    fehler("Speichern fehlgeschlagen: " + e.message);
+  }
 }
-function zeigeVerlauf() {
-  const liste = lese(VERLAUF_SPEICHER, []);
+// Rechner-Änderungen gebündelt speichern
+function speichereSpaeter() {
+  clearTimeout(speicherTimer);
+  speicherTimer = setTimeout(speichereAktuell, 1500);
+}
+
+function zeigeVerlauf(liste = []) {
   const box = $("verlauf");
+  $("verlauf-titel").textContent = speicher.modus === "gemeinsam" ? "Unsere Objekte (gemeinsam)" : "Frühere Analysen (dieses Gerät)";
   if (!liste.length) { box.innerHTML = `<p class="hinweis">Noch keine.</p>`; return; }
   box.innerHTML = "";
   for (const e of liste) {
     const zeile = document.createElement("div");
     zeile.className = "verlauf-eintrag";
     const a = document.createElement("a");
-    a.textContent = `${{ gruen: "🟢", gelb: "🟡", rot: "🔴" }[e.daten?.ampel] ?? "⚪"} ${e.titel}`;
-    a.onclick = () => { aktuell = e; zeigeErgebnis(); };
+    a.textContent = `${{ gruen: "🟢", gelb: "🟡", rot: "🔴" }[e.ampel] ?? "⚪"} ${e.titel}`;
+    a.onclick = async () => {
+      try {
+        const o = await speicher.laden(e.id);
+        if (!o) { fehler("Objekt nicht gefunden."); return; }
+        aktuell = o;
+        zeigeErgebnis();
+      } catch (err) { fehler(err.message); }
+    };
     const rechts = document.createElement("span");
     rechts.className = "hinweis";
-    rechts.textContent = new Date(e.datum).toLocaleDateString("de-DE") + " ";
+    rechts.textContent = `${e.autor ? e.autor + " · " : ""}${e.datum ? new Date(e.datum).toLocaleDateString("de-DE") : ""} `;
     const x = document.createElement("a");
     x.textContent = "löschen";
-    x.onclick = () => { schreibe(VERLAUF_SPEICHER, lese(VERLAUF_SPEICHER, []).filter((v) => v.id !== e.id)); zeigeVerlauf(); };
+    x.onclick = async () => {
+      if (!confirm(`„${e.titel}" wirklich löschen? Das gilt für euch beide.`)) return;
+      await speicher.loeschen(e.id);
+      if (aktuell && String(aktuell.id) === String(e.id)) $("ergebnis").classList.add("versteckt");
+      zeigeVerlauf(await speicher.liste());
+    };
     rechts.appendChild(x);
     zeile.append(a, rechts);
     box.appendChild(zeile);
   }
 }
 
-zeigeKeyStatus();
-zeigeVerlauf();
+// ---------- KI-Chat (zum Objekt und allgemein) ----------
+const CHAT = {
+  objekt: { verlauf: "chat-verlauf", eingabe: "chat-eingabe", knopf: "chat-senden", eintraege: () => aktuell?.chat || [] },
+  allgemein: { verlauf: "allg-verlauf", eingabe: "allg-eingabe", knopf: "allg-senden", eintraege: () => allgemeinerChat },
+};
+let allgemeinerChat = [];
+
+function md(text) {
+  const el = document.createElement("div");
+  el.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+  el.querySelectorAll("a").forEach((a) => { a.target = "_blank"; a.rel = "noopener"; });
+  return el;
+}
+
+function zeigeChat(art) {
+  const c = CHAT[art];
+  const box = $(c.verlauf);
+  box.innerHTML = "";
+  for (const e of c.eintraege()) box.appendChild(chatBlase(e));
+  box.scrollTop = box.scrollHeight;
+}
+
+function chatBlase(e) {
+  const d = document.createElement("div");
+  d.className = "blase " + (e.rolle === "assistant" ? "ki" : "ich");
+  const kopf = document.createElement("div");
+  kopf.className = "hinweis";
+  kopf.textContent = (e.rolle === "assistant" ? "🤖 KI" : `🙂 ${e.autor || "Frage"}`) + (e.zeit ? " · " + new Date(e.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "");
+  d.append(kopf, md(e.text));
+  return d;
+}
+
+// Kompakter Stand des Rechners, damit die KI mit denselben Zahlen arbeitet
+function rechnerStand() {
+  if (!aktuell?.daten) return null;
+  const fin = finanzAusEingabe();
+  const real = { ...aktuell.daten.szenarien?.realistisch, sanierung: num(aktuell.daten.szenarien?.realistisch?.sanierung) * fin.sanFaktor };
+  const r = rechneSzenario(aktuell.daten, real, fin);
+  return { finanzierung: aktuell.finanz, stresstest: $("f-stress").value || "keiner", realistisch: {
+    gesamtinvestition: Math.round(r.invest), darlehen: Math.round(r.darlehen), rate_monat: Math.round(r.rateMonat),
+    reinertrag_jahr: Math.round(r.reinertrag), cashflow_monat: Math.round(r.cashflowMonat), bruttorendite: r.bruttorendite, faktor: r.faktor,
+    max_kaufpreis_cashflow_0: Math.round(maxKaufpreisCashflowNull(aktuell.daten, real, fin) || 0) } };
+}
+
+async function frage(art) {
+  const c = CHAT[art];
+  const text = $(c.eingabe).value.trim();
+  if (!text) return;
+  if (!apiKey) { fehler("Bitte zuerst anmelden bzw. den KI-Schlüssel hinterlegen."); $("einstellungen-details").open = true; return; }
+  if (art === "objekt" && !aktuell) return;
+
+  const objektId = art === "objekt" ? aktuell.id : null;
+  const frageEintrag = { rolle: "user", text, autor: geraet.name || "Ich", zeit: new Date().toISOString() };
+  const bisher = c.eintraege().slice(-30);
+  $(c.eingabe).value = "";
+  $(c.knopf).disabled = true;
+
+  const box = $(c.verlauf);
+  box.appendChild(chatBlase(frageEintrag));
+  const antwortBlase = chatBlase({ rolle: "assistant", text: "_denkt nach …_" });
+  box.appendChild(antwortBlase);
+  box.scrollTop = box.scrollHeight;
+
+  const heute = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
+  const system = chatSystemPrompt(heute, art === "objekt" ? { ...aktuell, rechnerStand: rechnerStand() } : null);
+  const messages = [
+    ...bisher.map((e) => ({ role: e.rolle === "assistant" ? "assistant" : "user", content: e.rolle === "assistant" ? e.text : `${e.autor ? e.autor + ": " : ""}${e.text}` })),
+    { role: "user", content: `${frageEintrag.autor}: ${text}` },
+  ];
+  // Die API erwartet abwechselnde Rollen; aufeinanderfolgende gleiche Rollen zusammenfassen
+  const zusammen = [];
+  for (const m of messages) {
+    const letzte = zusammen[zusammen.length - 1];
+    if (letzte && letzte.role === m.role) letzte.content += "\n\n" + m.content;
+    else zusammen.push({ ...m });
+  }
+  if (zusammen[0]?.role === "assistant") zusammen.shift();
+
+  const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 3 });
+  let antwortText = "";
+  try {
+    for (let runde = 0; runde < 4; runde++) {
+      const stream = client.beta.messages.stream({
+        model: MODELL,
+        max_tokens: 16000,
+        output_config: { effort: "medium" },
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        cache_control: { type: "ephemeral" },
+        system,
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5, user_location: { type: "approximate", country: "DE", timezone: "Europe/Berlin" } }],
+        messages: zusammen,
+      });
+      stream.on("text", (delta) => {
+        antwortText += delta;
+        antwortBlase.lastChild.replaceWith(md(antwortText));
+        box.scrollTop = box.scrollHeight;
+      });
+      stream.on("contentBlock", (b) => {
+        if (b.type === "server_tool_use" && b.name === "web_search" && !antwortText) antwortBlase.lastChild.replaceWith(md(`_🔎 sucht: ${b.input?.query ?? ""}_`));
+      });
+      const m = await stream.finalMessage();
+      if (m.stop_reason === "pause_turn") { zusammen.push({ role: "assistant", content: m.content }); continue; }
+      if (m.stop_reason === "refusal") antwortText ||= "Dazu kann ich leider nichts sagen.";
+      break;
+    }
+    if (!antwortText.trim()) antwortText = "Ich habe leider keine Antwort erhalten. Bitte noch einmal fragen.";
+    antwortBlase.lastChild.replaceWith(md(antwortText));
+    const antwortEintrag = { rolle: "assistant", text: antwortText, zeit: new Date().toISOString() };
+    const chat = await speicher.chatAnhaengen(objektId, [frageEintrag, antwortEintrag]);
+    if (art === "objekt" && aktuell && aktuell.id === objektId) aktuell.chat = chat;
+    if (art === "allgemein") allgemeinerChat = chat;
+  } catch (e) {
+    const meldung = e instanceof Anthropic.AuthenticationError ? "KI-Schlüssel ungültig." : e instanceof Anthropic.RateLimitError ? "Zu viele Anfragen oder Guthaben aufgebraucht." : (e.message || String(e));
+    antwortBlase.lastChild.replaceWith(md(`⚠️ ${meldung}`));
+    $(c.eingabe).value = text; // Frage nicht verlieren
+  } finally {
+    $(c.knopf).disabled = false;
+  }
+}
+
+async function ladeAllgemeinenChat() {
+  try { allgemeinerChat = await speicher.allgemeinerChat(); } catch { allgemeinerChat = []; }
+  zeigeChat("allgemein");
+}
+
+for (const art of ["objekt", "allgemein"]) {
+  const c = CHAT[art];
+  $(c.knopf).onclick = () => frage(art);
+  $(c.eingabe).addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); frage(art); } });
+}
+document.querySelectorAll("[data-frage]").forEach((b) => {
+  b.onclick = () => { $("chat-eingabe").value = b.dataset.frage; frage("objekt"); };
+});
+
+verbinden();

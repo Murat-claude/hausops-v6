@@ -72,6 +72,17 @@
     .anhang { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--input); display: grid; place-items: center; font-size: .7rem; text-align: center; padding: 2px; }
     .anhang img { width: 100%; height: 100%; object-fit: cover; }
     .anhang button { position: absolute; top: 2px; right: 2px; padding: 0 6px; border-radius: 50%; background: rgba(0,0,0,.6); font-size: .8rem; line-height: 1.4; }
+    .chat { max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .chat:empty { display: none; }
+    .blase { border-radius: 12px; padding: 8px 12px; max-width: 92%; overflow-wrap: anywhere; }
+    .blase.ich { align-self: flex-end; background: var(--accent-soft); }
+    .blase.ki { align-self: flex-start; border: 1px solid var(--line); }
+    .blase p { margin: 4px 0; } .blase table { display: block; overflow-x: auto; font-size: .85rem; }
+    .blase a { color: var(--accent); }
+    .chat-eingabe { display: flex; gap: 8px; align-items: flex-end; }
+    .chat-eingabe textarea { min-height: 48px; }
+    .vorschlaege { display: flex; flex-wrap: wrap; gap: 6px; }
+    .vorschlaege button { padding: 6px 10px; font-size: .82rem; font-weight: 500; }
     .strategien { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
     .strategie { border: 1px solid var(--line); border-left: 5px solid var(--muted); border-radius: 10px; padding: 10px; }
     .strategie.gut { border-left-color: var(--gruen); } .strategie.bedingt { border-left-color: var(--gelb); } .strategie.nein { border-left-color: var(--rot); opacity: .8; }
@@ -95,11 +106,20 @@
   <main>
     <section class="card kein-druck" id="einstellungen">
       <details id="einstellungen-details">
-        <summary>⚙️ Einstellungen (Claude API-Schlüssel)</summary>
-        <label for="apikey">Anthropic API-Schlüssel</label>
-        <input id="apikey" type="password" placeholder="sk-ant-…" autocomplete="off" />
-        <p class="hinweis">Der Schlüssel bleibt nur auf diesem Gerät gespeichert (Browser-Speicher) und geht direkt an api.anthropic.com. Einen Schlüssel erstellst du unter console.anthropic.com → API Keys. Eine Analyse kostet je nach Umfang grob 0,30–1,50 €.</p>
-        <div class="reihe"><button class="zweit" id="key-speichern">Speichern</button><button class="zweit" id="key-loeschen">Schlüssel löschen</button><span id="key-status" class="hinweis"></span></div>
+        <summary>👥 Anmeldung &amp; Einstellungen <span id="verbunden" class="hinweis" style="font-weight:400"></span></summary>
+        <div class="grid2">
+          <div><label for="zugang">Gemeinsamer Zugangscode</label><input id="zugang" type="password" autocomplete="current-password" placeholder="vom Einrichten" /></div>
+          <div><label for="name">Wer bist du?</label><input id="name" list="namen" autocomplete="name" placeholder="z. B. Murat oder Yasemin" />
+            <datalist id="namen"><option value="Murat"></option><option value="Yasemin"></option></datalist></div>
+        </div>
+        <div class="reihe"><button id="anmelden">Anmelden</button><button class="zweit versteckt" id="abmelden">Abmelden</button><span id="login-fehler" class="hinweis" style="color:var(--rot)"></span></div>
+        <div id="key-bereich">
+          <label for="apikey">KI-Schlüssel (Anthropic API, einmalig – gilt danach für euch beide)</label>
+          <input id="apikey" type="password" placeholder="sk-ant-…" autocomplete="off" />
+          <div class="reihe"><button class="zweit" id="key-speichern">Schlüssel speichern</button></div>
+          <p class="hinweis">Schlüssel erstellen: console.anthropic.com → API Keys. Eine Analyse kostet grob 0,30–1,50 €, eine Chat-Frage meist wenige Cent.</p>
+        </div>
+        <p class="hinweis" id="key-status"></p>
       </details>
     </section>
 
@@ -187,6 +207,21 @@
         <div class="tab-wrap"><table id="rechner"></table></div>
       </section>
 
+      <section class="card kein-druck" id="chat-karte">
+        <h2>💬 Fragen zu diesem Objekt</h2>
+        <div class="vorschlaege">
+          <button class="zweit" data-frage="Was wäre ein realistischer Kaufpreis, damit der Cashflow positiv wird – und wie begründe ich das in der Verhandlung?">Verhandlungspreis?</button>
+          <button class="zweit" data-frage="Welche Strategie bringt hier am meisten, und was wären die nächsten 3 konkreten Schritte?">Beste Strategie?</button>
+          <button class="zweit" data-frage="Welche Unterlagen und Fragen soll ich vor der Besichtigung vom Makler anfordern? Bitte als Liste und als fertige E-Mail.">Fragen an den Makler</button>
+          <button class="zweit" data-frage="Was sind die größten Risiken, und wie kann ich sie vor dem Kauf prüfen?">Risiken prüfen</button>
+        </div>
+        <div class="chat" id="chat-verlauf"></div>
+        <div class="chat-eingabe">
+          <textarea id="chat-eingabe" rows="2" placeholder="Frag die KI etwas zu diesem Objekt … (Enter = senden)"></textarea>
+          <button id="chat-senden">Senden</button>
+        </div>
+      </section>
+
       <section class="card"><div id="bericht"></div></section>
 
       <section class="card kein-druck">
@@ -199,8 +234,18 @@
     </div>
 
     <section class="card kein-druck" id="verlauf-karte">
-      <h2>Frühere Analysen (dieses Gerät)</h2>
+      <h2 id="verlauf-titel">Frühere Analysen</h2>
       <div id="verlauf"><p class="hinweis">Noch keine.</p></div>
+    </section>
+
+    <section class="card kein-druck" id="allg-karte">
+      <h2>🤖 Frag die KI (allgemein)</h2>
+      <p class="hinweis" style="margin-top:-6px">Finanzierung, Steuern, Förderung, Strategie, Mietrecht, Markt … – die KI sucht bei Bedarf aktuell im Web.</p>
+      <div class="chat" id="allg-verlauf"></div>
+      <div class="chat-eingabe">
+        <textarea id="allg-eingabe" rows="2" placeholder="z. B. Lohnt sich gerade ein Mehrfamilienhaus in Hamm mit 20 % Eigenkapital?"></textarea>
+        <button id="allg-senden">Senden</button>
+      </div>
     </section>
 
     <p class="hinweis kein-druck">Die Analyse ist eine KI-gestützte Ersteinschätzung und ersetzt keine Prüfung durch Gutachter, Bank, Steuerberater oder Anwalt. Zahlen immer an den Quellen und Unterlagen gegenprüfen.</p>

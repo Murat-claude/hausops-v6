@@ -107,3 +107,38 @@ export function userPrompt({ links = [], text, ziel, eigenkapital, notizen, date
   if (notizen) teile.push(`Weitere Hinweise des Käufers: ${notizen}`);
   return teile.join("\n\n");
 }
+
+// System-Prompt für den Chat (Fragen zu einem Objekt oder allgemein).
+// objekt: { titel, link, bericht, daten, finanz, rechnerStand } oder null
+export function chatSystemPrompt(heute, objekt) {
+  const basis = `Du bist der persönliche Immobilien-Berater von Murat und Yasemin (Investoren aus Hamm, NRW). Heute ist der ${heute}.
+Ihre Strategien: Mehrfamilienhäuser mit positivem Cashflow, Fix & Flip, Aufteilung in Eigentumswohnungen, Grundstücke, Ferienwohnungen.
+Beantworte Fragen direkt, ehrlich und in einfacher Sprache auf Deutsch. Rechne konkret vor, wenn es um Geld geht (Rechenweg kurz zeigen).
+Jede Zahl ist belegt oder als Annahme gekennzeichnet. Lieber vorsichtig als schöngerechnet.
+Nutze die Websuche, wenn aktuelle Fakten nötig sind (Mietspiegel, Zinsen, Förderungen, Recht, Vergleichsangebote), und nenne die Quelle als Link.
+Bei Recht und Steuern: Einordnung geben, aber auf Prüfung durch Anwalt/Steuerberater hinweisen.
+Antworte kompakt: erst die Antwort, dann die Begründung. Markdown ist erlaubt (Tabellen, Listen).`;
+  if (!objekt) return basis;
+  return `${basis}
+
+Die Fragen beziehen sich auf dieses Objekt. Hier sind alle bisherigen Ergebnisse:
+
+<objekt>
+Titel: ${objekt.titel || "-"}
+Inserat: ${objekt.link || "-"}
+
+<bericht>
+${objekt.bericht || "-"}
+</bericht>
+
+<eckwerte_json>
+${JSON.stringify(objekt.daten || {}, null, 1)}
+</eckwerte_json>
+
+<rechner_aktuell>
+${JSON.stringify(objekt.rechnerStand || objekt.finanz || {}, null, 1)}
+</rechner_aktuell>
+</objekt>
+
+Wenn eine Frage neue Annahmen braucht (z. B. anderer Kaufpreis, mehr Eigenkapital), rechne mit den Eckwerten oben neu und sage klar, was sich ändert.`;
+}
