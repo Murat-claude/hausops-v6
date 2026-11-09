@@ -495,7 +495,49 @@ function teilenText() {
   ];
   return zeilen.filter((z) => z !== null).join("\n");
 }
+// Fertige Anfrage für Claude (läuft über das Claude-Abo, keine API-Kosten)
+function claudeAnfrage(o) {
+  const d = o.daten || {};
+  const e = o.eingabe || {};
+  const fin = o.finanz || {};
+  const real = d.szenarien?.realistisch && d.wohnflaeche_m2 ? rechneSzenario(d, d.szenarien.realistisch, { eigenkapital: fin.eigenkapital, zins_prozent: fin.zins_prozent, tilgung_prozent: fin.tilgung_prozent }) : null;
+  const zeile = (k, v) => (v == null || v === "" ? null : `- ${k}: ${v}`);
+  const teile = [
+    "Bitte prüfe dieses Immobilienangebot für uns (Murat & Yasemin, Investoren aus Hamm) vollständig mit dem Skill immobilien-analyse, falls vorhanden.",
+    o.link ? `Anzeige: ${o.link}` : null,
+    "",
+    "Eckdaten (aus der Anzeige bzw. von uns ergänzt):",
+    zeile("Objekt", d.titel),
+    zeile("Objektart", d.objektart), zeile("Ort", d.ort),
+    zeile("Kaufpreis", d.kaufpreis ? eur(d.kaufpreis) : null),
+    zeile("Wohnfläche", d.wohnflaeche_m2 ? d.wohnflaeche_m2 + " m²" : null),
+    zeile("Grundstück", d.grundstueck_m2 ? d.grundstueck_m2 + " m²" : null),
+    zeile("Einheiten", d.einheiten), zeile("Baujahr", d.baujahr), zeile("Energieklasse", d.energieklasse),
+    zeile("Ist-Kaltmiete", e.ist_miete_monat ? eur(e.ist_miete_monat) + "/Monat" : null),
+    zeile("Hausgeld", e.hausgeld_monat ? eur(e.hausgeld_monat) + "/Monat" : null),
+    zeile("Makler", d.makler_prozent != null ? String(d.makler_prozent).replace(".", ",") + " %" : null),
+    zeile("Merkmale", Object.entries(e.merkmale || {}).filter(([, v]) => v).map(([k]) => k.replace(/_/g, " ")).join(", ") || null),
+    "",
+    "Unsere Vorab-Rechnung (feste Annahmen, ohne Marktrecherche):",
+    real ? `- Faktor ${dez(real.faktor)}, Cashflow ${eur(real.cashflowMonat)}/Monat bei ${eur(fin.eigenkapital)} Eigenkapital, ${fin.zins_prozent} % Zins` : null,
+    ...(d.strategien || []).map((st) => `- ${st.name}: ${st.eignung}${st.max_kaufpreis ? ", lohnt sich bis ca. " + eur(st.max_kaufpreis) : ""}`),
+    d.verhandlungsziel ? `- Verhandlungsziel: ${eur(d.verhandlungsziel)}` : null,
+    "",
+    "Bitte: Anzeige lesen, Mietspiegel, Vergleichspreise und Bodenrichtwert aktuell recherchieren, alle Strategien (Cashflow, Fix & Flip, Aufteilung, Grundstück, Ferienwohnung) mit echten Marktdaten neu rechnen, die größten Risiken nennen, ein Verhandlungsziel begründen und offene Fragen an den Makler auflisten.",
+  ];
+  return teile.filter((t) => t !== null).join("\n");
+}
+function claudeLink(text) {
+  // claude.ai übernimmt den Text als neue Nachricht; sehr lange Texte kürzen
+  return "https://claude.ai/new?q=" + encodeURIComponent(text.slice(0, 6000));
+}
+$("claude-pruefen").addEventListener("click", async () => {
+  // Zusätzlich in die Zwischenablage, falls die Claude-App den Text nicht übernimmt
+  try { await navigator.clipboard.writeText(claudeAnfrage(aktuell)); hinweis("Anfrage auch in die Zwischenablage kopiert – falls Claude leer öffnet, einfach einfügen."); } catch { /* egal */ }
+});
+
 function teilenVorbereiten() {
+  $("claude-pruefen").href = claudeLink(claudeAnfrage(aktuell));
   $("whatsapp").href = "https://wa.me/?text=" + encodeURIComponent(teilenText());
   $("teilen").hidden = !navigator.share;
 }
@@ -564,7 +606,13 @@ function zeigeFunde() {
     wa.target = "_blank"; wa.rel = "noopener";
     wa.href = "https://wa.me/?text=" + encodeURIComponent(`🏠 ${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}${fak ? ` · Faktor ~${fak}` : ""}\n${f.url}`);
     wa.style.padding = "7px 10px"; wa.style.fontSize = ".82rem";
-    z.querySelector(".rechts").append(analysieren, wa);
+    const cl = document.createElement("a");
+    cl.className = "knopf zweit";
+    cl.textContent = "Claude";
+    cl.target = "_blank"; cl.rel = "noopener";
+    cl.href = claudeLink(`Bitte prüfe dieses Immobilienangebot für uns (Murat & Yasemin, Investoren aus Hamm) vollständig mit dem Skill immobilien-analyse, falls vorhanden: ${f.url}\n\n${f.titel} · ${f.preis_text} · ${f.groesse_text} · ${f.ort}\n\nBitte Anzeige lesen, Marktdaten aktuell recherchieren, alle Strategien (Cashflow, Fix & Flip, Aufteilung, Grundstück, Ferienwohnung) rechnen, Risiken und Verhandlungsziel nennen.`);
+    cl.style.padding = "7px 10px"; cl.style.fontSize = ".82rem";
+    z.querySelector(".rechts").append(analysieren, wa, cl);
     box.appendChild(z);
   }
 }

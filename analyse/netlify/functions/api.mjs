@@ -139,7 +139,11 @@ export function erstelleHandler(store, zugang, benachrichtige = (n) => sendePush
       try {
         const r = await fetch(`https://www.kleinanzeigen.de${u.pathname}`, { headers: { "User-Agent": "immo-scout/1.0 (private Objektsuche, wenige Abrufe)", "Accept-Language": "de-DE" } });
         if (!r.ok) return json(502, { fehler: `Anzeige nicht erreichbar (${r.status}). Ist sie noch online?` });
+        // Gelöschte Anzeigen leiten auf andere Seiten weiter – dann nichts übernehmen
+        const id = (/\/(\d+)-\d+-\d+\/?$/.exec(u.pathname) || [])[1];
+        if (id && !new URL(r.url).pathname.includes(`/${id}-`)) return json(404, { fehler: "Diese Anzeige gibt es nicht mehr (Kleinanzeigen leitet weiter). Bitte prüfen, ob der Link stimmt." });
         html = await r.text();
+        if (id && !html.includes(`/${id}-`)) return json(404, { fehler: "Diese Anzeige gibt es nicht mehr. Bitte prüfen, ob der Link stimmt." });
       } catch {
         return json(502, { fehler: "Kleinanzeigen ist gerade nicht erreichbar. Bitte den Anzeigentext kopieren und einfügen." });
       }

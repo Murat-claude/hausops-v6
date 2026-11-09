@@ -188,6 +188,8 @@
     .schluessel-box { margin-top: 16px; padding: 14px; border-radius: 10px; border: 2px solid var(--messing); background: color-mix(in srgb, var(--messing) 8%, var(--flaeche)); }
     .schritte { margin: 8px 0 0; padding-left: 20px; font-size: .92rem; display: grid; gap: 4px; }
     code { font-family: var(--f-zahl); font-size: .85em; }
+    .claude-box { margin-top: 14px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 12px 14px; border-radius: 10px; background: var(--akzent-weich); }
+    .claude-box > div { flex: 1 1 220px; min-width: 0; }
     .toast { position: fixed; z-index: 40; left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px));
       top: calc(env(safe-area-inset-top, 0px) + 64px); max-width: 640px; margin: 0 auto; padding: 12px 14px; border-radius: 10px;
       font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.18); cursor: pointer; }
@@ -305,6 +307,10 @@
             <a class="knopf wa" id="whatsapp" href="#" target="_blank" rel="noopener">Per WhatsApp schicken</a>
             <button class="zweit" id="teilen">Teilen …</button>
             <button class="zweit" id="link-kopieren">Link kopieren</button>
+          </div>
+          <div class="claude-box kein-druck">
+            <div><b>Genauer prüfen lassen</b><br /><span class="hinweis">Öffnet Claude mit allen Daten dieses Objekts. Claude recherchiert live Mieten, Vergleichspreise und Bodenrichtwert und beantwortet eure Rückfragen – über dein Claude-Abo, ohne Zusatzkosten.</span></div>
+            <a class="knopf" id="claude-pruefen" href="#" target="_blank" rel="noopener">Mit Claude prüfen</a>
           </div>
         </div>
         <div class="karte versteckt" id="strategien-karte">
