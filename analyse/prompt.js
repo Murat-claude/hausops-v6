@@ -79,15 +79,27 @@ Ganz am Ende, nach dem Bericht, gibst du einen Codeblock mit der Sprache \`json\
   "ampel": "gruen|gelb|rot",
   "score": 0,
   "empfehlung": "string",
-  "verhandlungsziel": 0
+  "verhandlungsziel": 0,
+  "max_kaufpreis_cashflow_positiv": 0,
+  "strategien": [
+    { "name": "Halten & vermieten", "eignung": "gut|bedingt|nein", "cashflow_monat": 0, "max_kaufpreis": 0, "begruendung": "string" },
+    { "name": "Fix & Flip", "eignung": "gut|bedingt|nein", "gewinn": 0, "max_kaufpreis": 0, "begruendung": "string" },
+    { "name": "Aufteilung in ETW", "eignung": "gut|bedingt|nein", "gewinn": 0, "max_kaufpreis": 0, "begruendung": "string" },
+    { "name": "Grundstück / Bebauung", "eignung": "gut|bedingt|nein", "gewinn": 0, "max_kaufpreis": 0, "begruendung": "string" },
+    { "name": "Ferienwohnung / Monteurzimmer", "eignung": "gut|bedingt|nein", "cashflow_monat": 0, "max_kaufpreis": 0, "begruendung": "string" }
+  ]
 }
-\`\`\``;
+\`\`\`
+"max_kaufpreis_cashflow_positiv" ist der Kaufpreis, bei dem das realistische Szenario mit dem angegebenen Eigenkapital (sonst 25 % des Kaufpreises) einen Cashflow von mindestens 0 vor Steuern erreicht. In "strategien" bewertest du nur Strategien, die zum Objekt passen können; "max_kaufpreis" ist jeweils der Preis, bei dem die Strategie aufgeht (Cashflow ≥ 0 bzw. mindestens 15 % Marge).`;
 }
 
-export function userPrompt({ link, text, ziel, eigenkapital, notizen, dateinamen }) {
+export function userPrompt({ links = [], text, ziel, eigenkapital, notizen, dateinamen, modus }) {
   const teile = [];
-  teile.push("Bitte erstelle eine vollständige Immobilienanalyse für dieses Objekt.");
-  if (link) teile.push(`Link zum Inserat: ${link}`);
+  teile.push(modus === "schnell"
+    ? "SCHNELLCHECK: Erstelle eine kompakte Analyse (höchstens 5 Websuchen, kurze Abschnitte). Rechne trotzdem alle Szenarien, Strategien und den JSON-Block vollständig."
+    : "Bitte erstelle eine vollständige Immobilienanalyse für dieses Objekt.");
+  if (links.length) teile.push(`Link(s) zum Inserat / zu Unterlagen:\n${links.join("\n")}`);
+  teile.push("Angehängte Bilder sind Fotos oder Screenshots der Anzeige bzw. des Exposés: lies alle Zahlen und Angaben daraus ab.");
   if (text) teile.push(`Text aus dem Inserat / Exposé:\n"""\n${text}\n"""`);
   if (dateinamen?.length) teile.push(`Angehängte Unterlagen: ${dateinamen.join(", ")}`);
   teile.push(`Ziel des Käufers: ${ziel}`);

@@ -1,6 +1,6 @@
 import Anthropic from "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.1.0/+esm";
 import { systemPrompt, userPrompt } from "./prompt.js";
-import { rechneSzenario, num } from "./rechner.js";
+import { rechneSzenario, maxKaufpreisCashflowNull, num } from "./rechner.js";
 
 const MODELL = "claude-opus-5-5";
 const SZENARIEN = [["vorsichtig", "Vorsichtig"], ["realistisch", "Realistisch"], ["gut", "Gut"]];
@@ -39,23 +39,113 @@ $("key-speichern").onclick = () => {
 };
 $("key-loeschen").onclick = () => { try { localStorage.removeItem(KEY_SPEICHER); } catch {} zeigeKeyStatus(); };
 
-// ---------- Dateien ----------
-const MEDIEN = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-async function dateiZuBlock(file) {
-  const b64 = await new Promise((res, rej) => {
+// ---------- Ablage: Dateien, Screenshots, Einfügen, Hineinziehen ----------
+// Jeder Anhang: { name, art: "bild"|"pdf", media_type, data (base64), vorschau }
+let anhaenge = [];
+const MAX_KANTE = 2000; // Bilder werden verkleinert, das spart Zeit und Kosten
+
+function leseDataUrl(file) {
+  return new Promise((res, rej) => {
     const r = new FileReader();
-    r.onload = () => res(String(r.result).split(",")[1]);
+    r.onload = () => res(String(r.result));
     r.onerror = () => rej(r.error);
     r.readAsDataURL(file);
   });
-  if (file.type === "application/pdf") {
-    return { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 }, title: file.name };
-  }
-  if (MEDIEN.includes(file.type)) {
-    return { type: "image", source: { type: "base64", media_type: file.type, data: b64 } };
-  }
-  throw new Error(`Dateityp nicht unterstützt: ${file.name}`);
 }
+
+async function bildVorbereiten(file) {
+  // In JPEG umwandeln und verkleinern (auch HEIC von iPhones, sofern der Browser es lesen kann)
+  try {
+    const bmp = await createImageBitmap(file);
+    const f = Math.min(1, MAX_KANTE / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * f);
+    c.height = Math.round(bmp.height * f);
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    const url = c.toDataURL("image/jpeg", 0.85);
+    return { media_type: "image/jpeg", data: url.split(",")[1], vorschau: url };
+  } catch {
+    const url = await leseDataUrl(file);
+    const typ = url.slice(5, url.indexOf(";"));
+    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(typ)) throw new Error(`Bildformat nicht lesbar: ${file.name}`);
+    return { media_type: typ, data: url.split(",")[1], vorschau: url };
+  }
+}
+
+async function dateienHinzufuegen(liste) {
+  for (const file of liste) {
+    try {
+      if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+        const url = await leseDataUrl(file);
+        anhaenge.push({ name: file.name, art: "pdf", media_type: "application/pdf", data: url.split(",")[1] });
+      } else if (file.type.startsWith("image/") || /\.(heic|heif|png|jpe?g|webp|gif)$/i.test(file.name)) {
+        anhaenge.push({ name: file.name || "Screenshot", art: "bild", ...(await bildVorbereiten(file)) });
+      } else {
+        fehler(`Dateityp nicht unterstützt: ${file.name}`);
+      }
+    } catch (e) {
+      fehler(e.message);
+    }
+  }
+  zeigeAnhaenge();
+}
+
+function zeigeAnhaenge() {
+  const box = $("anhaenge");
+  box.innerHTML = "";
+  anhaenge.forEach((a, i) => {
+    const d = document.createElement("div");
+    d.className = "anhang";
+    if (a.art === "bild") {
+      const img = document.createElement("img");
+      img.src = a.vorschau;
+      img.alt = a.name;
+      d.appendChild(img);
+    } else {
+      d.textContent = "📄 " + a.name;
+    }
+    const x = document.createElement("button");
+    x.type = "button";
+    x.textContent = "×";
+    x.title = "Entfernen";
+    x.onclick = () => { anhaenge.splice(i, 1); zeigeAnhaenge(); };
+    d.appendChild(x);
+    box.appendChild(d);
+  });
+  const mb = anhaenge.reduce((s, a) => s + a.data.length * 0.75, 0) / 1024 / 1024;
+  $("ablage-info").textContent = anhaenge.length ? `${anhaenge.length} Anhang/Anhänge · ${mb.toFixed(1)} MB` : "";
+}
+
+function anhangZuBlock(a) {
+  return a.art === "pdf"
+    ? { type: "document", source: { type: "base64", media_type: a.media_type, data: a.data }, title: a.name }
+    : { type: "image", source: { type: "base64", media_type: a.media_type, data: a.data } };
+}
+
+function findeLinks(text) {
+  return [...new Set((text.match(/https?:\/\/[^\s<>"')]+/g) || []).map((u) => u.replace(/[.,;]+$/, "")))];
+}
+
+$("datei-knopf").onclick = () => $("dateien").click();
+$("dateien").onchange = (e) => { dateienHinzufuegen([...e.target.files]); e.target.value = ""; };
+document.addEventListener("paste", (e) => {
+  const dateien = [...(e.clipboardData?.files || [])];
+  if (dateien.length) { e.preventDefault(); dateienHinzufuegen(dateien); }
+});
+const ablage = $("ablage");
+["dragenter", "dragover"].forEach((t) => ablage.addEventListener(t, (e) => { e.preventDefault(); ablage.classList.add("ziehen"); }));
+["dragleave", "drop"].forEach((t) => ablage.addEventListener(t, () => ablage.classList.remove("ziehen")));
+ablage.addEventListener("drop", (e) => {
+  e.preventDefault();
+  if (e.dataTransfer.files.length) dateienHinzufuegen([...e.dataTransfer.files]);
+  else {
+    const t = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
+    if (t) $("text").value += ($("text").value ? "\n" : "") + t;
+  }
+});
 
 // ---------- Fortschritt ----------
 function log(text, ok = false) {
@@ -93,19 +183,20 @@ async function starteAnalyse() {
   const apiKey = lese(KEY_SPEICHER, "");
   if (!apiKey) { fehler("Bitte zuerst oben in den Einstellungen deinen Anthropic API-Schlüssel speichern."); $("einstellungen-details").open = true; return; }
 
-  const link = $("link").value.trim();
   const text = $("text").value.trim();
-  const files = [...$("dateien").files];
-  if (!link && !text && !files.length) { fehler("Bitte einen Link, den Anzeigentext oder ein Exposé angeben."); return; }
-  const gesamtGroesse = files.reduce((s, f) => s + f.size, 0);
-  if (gesamtGroesse > 24 * 1024 * 1024) { fehler("Die Dateien sind zusammen zu groß (max. ca. 24 MB). Bitte weniger oder kleinere Dateien wählen."); return; }
+  const links = findeLinks(text);
+  const link = links[0] || "";
+  if (!text && !anhaenge.length) { fehler("Bitte einen Link, Text, Screenshots oder ein Exposé reinlegen."); return; }
+  const gesamtGroesse = anhaenge.reduce((s, a) => s + a.data.length * 0.75, 0);
+  if (gesamtGroesse > 24 * 1024 * 1024) { fehler("Die Anhänge sind zusammen zu groß (max. ca. 24 MB). Bitte weniger oder kleinere Dateien wählen."); return; }
 
   const ziel = $("ziel").value;
   const eigenkapital = $("ek").value.trim();
+  const modus = $("modus").value;
+  const schnell = modus === "schnell";
 
-  let bloecke;
-  try { bloecke = await Promise.all(files.map(dateiZuBlock)); } catch (e) { fehler(e.message); return; }
-  bloecke.push({ type: "text", text: userPrompt({ link, text, ziel, eigenkapital, notizen: $("notizen").value.trim(), dateinamen: files.map((f) => f.name) }) });
+  const bloecke = anhaenge.map(anhangZuBlock);
+  bloecke.push({ type: "text", text: userPrompt({ links, text, ziel, eigenkapital, notizen: $("notizen").value.trim(), dateinamen: anhaenge.map((a) => a.name), modus }) });
 
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true, maxRetries: 3 });
   const messages = [{ role: "user", content: bloecke }];
@@ -123,13 +214,13 @@ async function starteAnalyse() {
         model: MODELL,
         max_tokens: 64000,
         thinking: { type: "adaptive", display: "summarized" },
-        output_config: { effort: "high" },
+        output_config: { effort: schnell ? "low" : "high" },
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
         system: systemPrompt(heute),
         tools: [
-          { type: "web_search_20260209", name: "web_search", max_uses: 20, user_location: { type: "approximate", country: "DE", timezone: "Europe/Berlin" } },
-          { type: "web_fetch_20260209", name: "web_fetch", max_uses: 10 },
+          { type: "web_search_20260209", name: "web_search", max_uses: schnell ? 5 : 20, user_location: { type: "approximate", country: "DE", timezone: "Europe/Berlin" } },
+          { type: "web_fetch_20260209", name: "web_fetch", max_uses: schnell ? 4 : 10 },
         ],
         messages,
       });
@@ -169,7 +260,8 @@ async function starteAnalyse() {
       link,
       bericht,
       daten,
-      finanz: { eigenkapital: num(eigenkapital) || null, zins_prozent: daten?.bauzins_prozent ?? 3.8, tilgung_prozent: 2 },
+      // Ohne Angabe: 25 % des Kaufpreises als Eigenkapital annehmen
+      finanz: { eigenkapital: num(eigenkapital) || (daten?.kaufpreis ? Math.round(daten.kaufpreis * 0.25) : null), zins_prozent: daten?.bauzins_prozent ?? 4.0, tilgung_prozent: 2 },
     };
     speichereAktuell();
     zeigeErgebnis();
@@ -230,8 +322,30 @@ function zeigeErgebnis() {
   $("f-tilg").value = f.tilgung_prozent ?? 2;
   $("f-stress").value = "";
   $("rechner-karte").classList.toggle("versteckt", !aktuell.daten);
+  zeigeStrategien();
   rechne();
   $("ergebnis").scrollIntoView({ behavior: "smooth" });
+}
+
+function zeigeStrategien() {
+  const liste = Array.isArray(aktuell.daten?.strategien) ? aktuell.daten.strategien : [];
+  $("strategien-karte").classList.toggle("versteckt", !liste.length);
+  const box = $("strategien");
+  box.innerHTML = "";
+  const rang = { gut: 0, bedingt: 1, nein: 2 };
+  for (const s of [...liste].sort((a, b) => (rang[a.eignung] ?? 3) - (rang[b.eignung] ?? 3))) {
+    const d = document.createElement("div");
+    d.className = "strategie " + (rang[s.eignung] !== undefined ? s.eignung : "");
+    const zahl = s.cashflow_monat != null ? `Cashflow ${eur(s.cashflow_monat)}/Monat` : s.gewinn != null ? `Gewinn ${eur(s.gewinn)}` : "";
+    const symbol = { gut: "✅", bedingt: "⚠️", nein: "❌" }[s.eignung] || "•";
+    d.innerHTML = `<b></b><div class="zahl"></div><div class="hinweis"></div><div style="margin-top:6px;font-size:.88rem"></div>`;
+    d.children[0].textContent = `${symbol} ${s.name ?? ""}`;
+    d.children[1].textContent = zahl;
+    d.children[1].className = "zahl " + ((s.cashflow_monat ?? s.gewinn ?? 0) < 0 ? "neg" : "pos");
+    d.children[2].textContent = s.max_kaufpreis ? `lohnt sich bis ca. ${eur(s.max_kaufpreis)} Kaufpreis` : "";
+    d.children[3].textContent = s.begruendung ?? "";
+    box.appendChild(d);
+  }
 }
 
 function finanzAusEingabe() {
@@ -295,6 +409,8 @@ function rechne() {
   html += zeile("Eigenkapitalrendite", (e) => pct(e.ekRendite));
   html += zeile("Eigenkapital für Cashflow 0", (e) => eur(e.ekFuerCashflow0));
   $("rechner").innerHTML = html;
+  const real = { ...d.szenarien.realistisch, sanierung: num(d.szenarien.realistisch.sanierung) * fin.sanFaktor };
+  erg.realistisch.maxKpCf0 = maxKaufpreisCashflowNull(d, real, fin);
   zeigeUeberblick(erg.realistisch);
 }
 
@@ -332,6 +448,7 @@ function zeigeUeberblick(r) {
       <div class="kpi"><b>${dez(r.faktor)}</b><span>Kaufpreisfaktor</span></div>
       <div class="kpi"><b class="${r.cashflowMonat < 0 ? "neg" : "pos"}">${eur(r.cashflowMonat)}</b><span>Cashflow/Monat (realistisch)</span></div>
       <div class="kpi"><b>${eur(r.ekFuerCashflow0)}</b><span>Eigenkapital für Cashflow 0</span></div>
+      <div class="kpi"><b class="${r.maxKpCf0 >= num(d.kaufpreis) ? "pos" : "neg"}">${eur(r.maxKpCf0)}</b><span>Max. Kaufpreis für Cashflow ≥ 0 (bei ${eur(r.eigenkapital)} EK)</span></div>
     </div>` : `<p class="hinweis">Für den Rechner fehlten strukturierte Zahlen – siehe Bericht.</p>`}`;
 }
 
@@ -344,8 +461,9 @@ $("kopieren").onclick = async () => {
 $("neu").onclick = () => {
   $("ergebnis").classList.add("versteckt");
   $("fortschritt").classList.add("versteckt");
-  for (const id of ["link", "text", "notizen"]) $(id).value = "";
-  $("dateien").value = "";
+  for (const id of ["text", "notizen"]) $(id).value = "";
+  anhaenge = [];
+  zeigeAnhaenge();
   window.scrollTo({ top: 0, behavior: "smooth" });
 };
 

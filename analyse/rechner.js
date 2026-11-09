@@ -49,6 +49,17 @@ export function rechneSzenario(basis, s, fin) {
   };
 }
 
+// Kaufpreis, bei dem der Cashflow vor Steuern genau 0 ist (bei gegebenem Eigenkapital).
+// Nebenkosten skalieren mit dem Kaufpreis; Sanierung und Bewirtschaftung bleiben gleich.
+export function maxKaufpreisCashflowNull(basis, s, fin) {
+  const nkFaktor = 1 + (num(basis.grunderwerbsteuer_prozent) + num(basis.notar_grundbuch_prozent) + num(basis.makler_prozent)) / 100;
+  const r = rechneSzenario(basis, s, fin);
+  const satz = (num(fin.zins_prozent) + num(fin.zins_aufschlag) + num(fin.tilgung_prozent)) / 100;
+  if (satz <= 0) return null;
+  const maxInvest = Math.max(r.reinertrag, 0) / satz + num(fin.eigenkapital);
+  return Math.max((maxInvest - num(s.sanierung)) / nkFaktor, 0);
+}
+
 function ekFuerCashflowNull(invest, reinertrag, zins, tilgung) {
   const satz = (zins + tilgung) / 100;
   if (satz <= 0) return 0;

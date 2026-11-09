@@ -64,6 +64,18 @@
     .verlauf-eintrag { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
     .verlauf-eintrag a { color: var(--accent); cursor: pointer; }
     .versteckt { display: none !important; }
+    .ablage { border: 2px dashed var(--line); border-radius: 12px; padding: 10px; transition: border-color .15s, background .15s; }
+    .ablage.ziehen { border-color: var(--accent); background: var(--accent-soft); }
+    .ablage textarea { border: 0; background: transparent; min-height: 140px; padding: 4px; }
+    .ablage textarea:focus { outline: none; }
+    .anhaenge { display: flex; flex-wrap: wrap; gap: 8px; }
+    .anhang { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--input); display: grid; place-items: center; font-size: .7rem; text-align: center; padding: 2px; }
+    .anhang img { width: 100%; height: 100%; object-fit: cover; }
+    .anhang button { position: absolute; top: 2px; right: 2px; padding: 0 6px; border-radius: 50%; background: rgba(0,0,0,.6); font-size: .8rem; line-height: 1.4; }
+    .strategien { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+    .strategie { border: 1px solid var(--line); border-left: 5px solid var(--muted); border-radius: 10px; padding: 10px; }
+    .strategie.gut { border-left-color: var(--gruen); } .strategie.bedingt { border-left-color: var(--gelb); } .strategie.nein { border-left-color: var(--rot); opacity: .8; }
+    .strategie b { display: block; } .strategie .zahl { font-size: 1.05rem; font-weight: 700; margin: 4px 0; }
     .fehler { background: #fbe9e9; color: #8a2222; border-radius: 8px; padding: 10px; margin-top: 10px; }
     @media print {
       body { background: #fff; color: #000; }
@@ -92,13 +104,26 @@
     </section>
 
     <section class="card kein-druck" id="eingabe">
-      <h2>Objekt</h2>
-      <label for="link">Link zur Anzeige (ImmoScout24, Immowelt, Kleinanzeigen, Makler-Website …)</label>
-      <input id="link" type="url" placeholder="https://www.immobilienscout24.de/expose/…" />
-      <label for="text">Oder / zusätzlich: Text aus der Anzeige einfügen</label>
-      <textarea id="text" placeholder="Viele Portale blockieren automatische Abrufe. Dann einfach die Anzeige markieren, kopieren und hier einfügen."></textarea>
-      <label for="dateien">Exposé (PDF) oder Screenshots der Anzeige</label>
-      <input id="dateien" type="file" multiple accept="application/pdf,image/png,image/jpeg,image/webp,image/gif" />
+      <h2>Objekt reinlegen</h2>
+      <div id="ablage" class="ablage">
+        <textarea id="text" placeholder="Hier alles reinlegen:&#10;• Link(s) zur Anzeige (Kleinanzeigen, ImmoScout24, Immowelt, Makler …)&#10;• Text aus der Anzeige oder dem Exposé&#10;• Screenshots: einfach einfügen (Strg+V / lange tippen → Einsetzen) oder hierher ziehen"></textarea>
+        <div id="anhaenge" class="anhaenge"></div>
+        <div class="reihe" style="margin-top:8px">
+          <button type="button" class="zweit" id="datei-knopf">📎 Fotos, Screenshots oder PDF hinzufügen</button>
+          <span class="hinweis" id="ablage-info"></span>
+        </div>
+        <input id="dateien" type="file" multiple accept="application/pdf,image/*" hidden />
+      </div>
+      <div class="grid2">
+        <div>
+          <label for="modus">Analyse</label>
+          <select id="modus">
+            <option value="schnell">⚡ Schnellcheck (ca. 1–2 Min.)</option>
+            <option value="gruendlich">🔍 Gründliche Analyse (ca. 3–6 Min.)</option>
+          </select>
+        </div>
+        <div></div>
+      </div>
       <div class="grid2">
         <div>
           <label for="ziel">Ziel</label>
@@ -120,7 +145,7 @@
       <div class="reihe">
         <button id="start">Analyse starten</button>
         <button class="zweit versteckt" id="stopp">Abbrechen</button>
-        <span class="hinweis">Dauert meist 2–6 Minuten. Die KI recherchiert dabei live im Web.</span>
+        <span class="hinweis">Die KI liest alles, recherchiert live im Web und rechnet alle Strategien durch.</span>
       </div>
       <div id="fehler" class="fehler versteckt"></div>
     </section>
@@ -133,6 +158,11 @@
 
     <div id="ergebnis" class="versteckt">
       <section class="card" id="ueberblick"></section>
+
+      <section class="card versteckt" id="strategien-karte">
+        <h2>🎯 Was ist möglich? Strategien im Vergleich</h2>
+        <div class="strategien" id="strategien"></div>
+      </section>
 
       <section class="card" id="rechner-karte">
         <h2>🧮 Rechner <span class="hinweis">(gelbe Felder änderbar, alles vor Steuern)</span></h2>
