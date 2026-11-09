@@ -19,7 +19,7 @@ let apiKey = "";
 // ---------- Anmeldung & Einstellungen ----------
 function zeigeStatus() {
   const gemeinsam = speicher.modus === "gemeinsam";
-  $("verbunden").textContent = gemeinsam ? `${geraet.name || "?"} · verbunden` : "nicht angemeldet";
+  $("verbunden").textContent = !gemeinsam ? "nicht angemeldet" : apiKey ? `${geraet.name || "?"} · verbunden` : `${geraet.name || "?"} · KI-Schlüssel fehlt`;
   $("key-status").textContent = apiKey ? "✓ KI-Schlüssel vorhanden" + (gemeinsam ? " (gilt für euch beide)" : "") : "Noch kein KI-Schlüssel hinterlegt";
   $("key-bereich").classList.toggle("versteckt", !!apiKey && gemeinsam);
   $("abmelden").classList.toggle("versteckt", !gemeinsam);
@@ -244,7 +244,7 @@ function beschreibeBlock(block) {
 async function starteAnalyse() {
   fehler("");
   if (!apiKey) {
-    fehler(speicher.modus === "gemeinsam" ? "Es ist noch kein KI-Schlüssel hinterlegt. Bitte unter „Konto“ eintragen." : "Bitte zuerst unter „Konto“ anmelden (Zugangscode und Name).");
+    fehler(speicher.modus === "gemeinsam" ? "Du bist angemeldet – es fehlt nur noch der KI-Schlüssel (beginnt mit sk-ant-). Bitte im gelben Kasten unter „Konto“ eintragen." : "Bitte zuerst unter „Konto“ anmelden (Zugangscode und Name).");
     geheZu("konto");
     return;
   }

@@ -175,6 +175,9 @@
     .filter { display: flex; gap: 6px; flex-wrap: wrap; }
     .filter button[aria-pressed="true"] { background: var(--akzent); color: var(--flaeche); }
 
+    .schluessel-box { margin-top: 16px; padding: 14px; border-radius: 10px; border: 2px solid var(--messing); background: color-mix(in srgb, var(--messing) 8%, var(--flaeche)); }
+    .schritte { margin: 8px 0 0; padding-left: 20px; font-size: .92rem; display: grid; gap: 4px; }
+    code { font-family: var(--f-zahl); font-size: .85em; }
     .toast { position: fixed; z-index: 40; left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px));
       top: calc(env(safe-area-inset-top, 0px) + 64px); max-width: 640px; margin: 0 auto; padding: 12px 14px; border-radius: 10px;
       font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.18); cursor: pointer; }
@@ -366,8 +369,16 @@
             <datalist id="namen"><option value="Murat"></option><option value="Yasemin"></option></datalist></div>
         </div>
         <div class="reihe"><button id="anmelden">Anmelden</button><button class="zweit versteckt" id="abmelden">Abmelden</button><span id="login-fehler" class="hinweis" style="color:var(--kritisch)"></span></div>
-        <div id="key-bereich">
-          <label for="apikey">KI-Schlüssel (Anthropic API, einmalig für euch beide)</label>
+        <div id="key-bereich" class="schluessel-box">
+          <h3>Letzter Schritt: KI-Schlüssel eintragen</h3>
+          <p class="hinweis" style="margin:6px 0 0">Du bist angemeldet. Damit die KI analysieren kann, braucht die App einmalig einen Schlüssel von Anthropic. Das ist nicht dein Claude-Abo, sondern ein eigenes Konto mit Guthaben:</p>
+          <ol class="schritte">
+            <li><a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> öffnen und anmelden bzw. registrieren</li>
+            <li>Unter „Billing“ Guthaben aufladen (z. B. 10 €)</li>
+            <li>Unter „API Keys“ → „Create Key“, den Schlüssel kopieren (beginnt mit <code>sk-ant-</code>)</li>
+            <li>Hier einfügen und speichern – gilt danach auch für Yasemin</li>
+          </ol>
+          <label for="apikey">KI-Schlüssel</label>
           <input id="apikey" type="password" placeholder="sk-ant-…" autocomplete="off" />
           <div class="reihe"><button class="zweit" id="key-speichern">Schlüssel speichern</button></div>
           <p class="hinweis">Schlüssel erstellen unter console.anthropic.com → API Keys. Eine Analyse kostet grob 0,30–1,50 €, eine Chat-Frage meist wenige Cent.</p>
