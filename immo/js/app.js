@@ -1047,8 +1047,8 @@ function viewRents() {
   const cell = {};
   for (const r of year) cell[`${r.contractId}|${r.key}`] = r;
   const yContracts = state.contracts.filter((c) => months.some((m) => C.contractActiveIn(c, m)));
-  return head("Mieteingänge", "Soll/Ist-Abgleich je Mietvertrag", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("backfill", "⧉ Vergangene Monate nachtragen", "primary") + btn("newPayment", "+ Zahlung manuell")) + `
-    ${ui.lastBatch ? `<div class="note">✓ ${ui.lastBatch.n} Zahlungen nachgetragen (${eur(ui.lastBatch.sum)}). ${btn("undoBackfill", "↶ Rückgängig machen", "sm")}</div>` : ""}
+  return head("Mieteingänge", "Soll/Ist-Abgleich je Mietvertrag", `<input type="month" value="${key}" data-change="month" style="width:auto">` + btn("backfill", "⧉ Vergangene Monate nachtragen", "primary") + btn("tableImport", "📊 Eigene Tabelle übernehmen") + btn("newPayment", "+ Zahlung manuell")) + `
+    ${ui.lastBatch ? `<div class="note">✓ ${ui.lastBatch.n} Einträge übernommen (Einnahmen ${eur(ui.lastBatch.sum)}). ${btn("undoBackfill", "↶ Rückgängig machen", "sm")}</div>` : ""}
     <div class="kpis">
       <div class="kpi"><div class="l">Soll ${C.fmtMonth(key)}</div><div class="v">${eur(sum(rows, (r) => r.soll))}</div></div>
       <div class="kpi"><div class="l">Ist</div><div class="v">${eur(sum(rows, (r) => r.ist))}</div></div>
@@ -1068,6 +1068,92 @@ function viewRents() {
         return `<td class="m"><span class="dot ${cls}" title="Soll ${eur(r.soll)} · Ist ${eur(r.ist)}">${cls === "ok" ? "✓" : cls === "no" ? "✗" : cls === "part" ? "½" : cls === "over" ? "+" : "·"}</span></td>`; }).join("")}
         <td class="num ${sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff) < 0 ? "neg" : ""}">${eur(sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff))}</td></tr>`).join("")}
       </tbody></table></div><p class="small muted" style="margin-top:6px">✓ bezahlt · ½ teilweise · ✗ offen · + Überzahlung · Saldo bis heute</p></div>`;
+}
+
+// ---------------------------------------------------------------- Eigene Monatstabelle übernehmen (Foto mit KI oder CSV-Export)
+function tableImportStart() {
+  dialog({
+    title: "📊 Eigene Monatstabelle übernehmen",
+    body: `<p style="margin-bottom:12px">Du führst eine Tabelle mit den monatlichen Einnahmen (Mieten, Ferienwohnungen, Garagen)? Die App übernimmt sie – danach siehst du alles in „Mieteingänge“, im Monatsbericht und in der Steuer.</p>
+      <div class="qgrid">
+        <label class="qtile"><span>📷</span>Foto / Screenshot der Tabelle<small class="muted">KI liest die Zahlen</small><input type="file" accept="image/*,application/pdf" data-change="tableImportPhoto" hidden></label>
+        <label class="qtile"><span>📄</span>CSV-Datei<small class="muted">Numbers/Excel: Exportieren → CSV – 100 % genau</small><input type="file" accept=".csv,text/csv,text/plain" data-change="tableImportCsv" hidden></label>
+      </div>
+      <p class="small muted">Vor dem Eintragen siehst du jede Zeile und kannst die Zuordnung ändern. Summenzeilen werden übersprungen, Monate, die schon erfasst sind, ebenfalls.${K.hasKey() ? "" : ' Für das Foto bitte unter <a href="#/einstellungen">Einstellungen → KI</a> den Schlüssel eintragen – die CSV-Datei geht ohne.'}</p>
+      <div id="tiMsg" class="small"></div>`,
+  });
+}
+
+async function tableImportRead(file, kind) {
+  const msg = $("#tiMsg");
+  try {
+    let t;
+    if (kind === "csv") {
+      const buf = await file.arrayBuffer();
+      let text = new TextDecoder("utf-8").decode(buf); if (text.includes("\uFFFD")) text = new TextDecoder("windows-1252").decode(buf);
+      t = C.parseMonthTable(C.parseCsv(text), ui.year);
+    } else {
+      if (!K.hasKey()) { msg.innerHTML = '<span class="neg">Für das Foto zuerst unter Einstellungen → KI den Schlüssel eintragen – oder die CSV-Datei nehmen.</span>'; return; }
+      if (msg) msg.textContent = "✨ Lese die Tabelle … (ca. 20–60 Sekunden)";
+      let blob = file, mediaType = file.type === "application/pdf" ? "application/pdf" : "image/jpeg";
+      if (mediaType !== "application/pdf") blob = (await F.prepareImage(file, false)).blob;
+      const r = await K.readMonthTable({ base64: await F.blobToBase64(blob), mediaType });
+      t = { year: r.year || ui.year, rows: r.rows.map((x) => ({ section: x.section, object: x.object, label: [x.object, x.label].filter(Boolean).join(" · "), kind: x.kind, months: x.months.slice(0, 12).map((v) => Math.round(Math.abs(Number(v) || 0) * 100)) })).filter((x) => x.months.some(Boolean)) };
+    }
+    if (!t.rows.length) throw new Error("Keine Zeilen mit Beträgen gefunden.");
+    for (const r of t.rows) r.target = C.guessTableTarget(state, r);
+    ui.tableImport = t;
+    tableImportReview();
+  } catch (e) { if (msg) msg.innerHTML = `<span class="neg">Konnte nicht gelesen werden: ${esc(K.friendlyError(e))}</span>`; else alert(e.message); }
+}
+
+function tableImportReview() {
+  const t = ui.tableImport;
+  const targetOpts = [["ignore", "– nicht übernehmen –"],
+    ...fewoUnits().map((u) => [`fewo:${u.id}`, `🏖 Ferienwohnung: ${unitLabel(u)}`]),
+    ...state.objects.map((o) => [`newfewo:${o.id}`, `🏖 neue Ferienwohnung anlegen in „${o.name}“`]),
+    ...state.contracts.filter((c) => (c.tenantIds || []).length).map((c) => [`miete:${c.id}`, `👥 Miete: ${contractLabel(c)}`]),
+    ["expense", "📉 Ausgabe"]];
+  const val = (tg) => tg.type === "fewo" ? `fewo:${tg.unitId}` : tg.type === "miete" ? `miete:${tg.contractId}` : tg.type === "expense" ? "expense" : tg.type === "newfewo" ? `newfewo:${tg.objectId}` : "ignore";
+  const mm = C.MONTHS_DE.map((x) => x.slice(0, 3));
+  const rowHtml = (r, i) => `<tr><td><b>${esc(r.label)}</b>${r.section ? `<div class="small muted">${esc(r.section)}</div>` : ""}
+      <div class="small muted">${r.months.map((v, m) => (v ? `${mm[m]} ${eur(v)}` : "")).filter(Boolean).join(" · ")}</div></td>
+    <td class="num nowrap">${r.kind === "ausgabe" ? "−" : ""}${eur(sum(r.months, (x) => x))}</td>
+    <td style="min-width:280px"><select data-ti="${i}" name="t${i}">${opt(targetOpts, val(r.target))}</select>
+      <div class="inline" data-tix="${i}" style="margin-top:4px;${r.target.type === "expense" ? "" : "display:none"}"><select name="c${i}">${opt(Object.entries(C.EXPENSE_CATEGORIES).filter(([, v]) => v.av).map(([k, v]) => [k, v.label]), r.target.category || "sonstiges")}</select><select name="o${i}">${opt(objectOpts(), r.target.objectId || "")}</select></div></td></tr>`;
+  dialog({
+    title: "📊 Tabelle prüfen und übernehmen", wide: true, submit: "Übernehmen",
+    body: `<div class="inline" style="margin-bottom:10px"><label class="small">Jahr <input type="number" name="year" value="${t.year}" style="width:90px"></label><span class="small muted">${t.rows.length} Zeilen erkannt – bitte die Zuordnung prüfen. Kredite/Tilgung werden nicht übernommen (Zinsen bitte über den Kontoauszug bzw. die Zinsbescheinigung).</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Zeile aus deiner Tabelle</th><th class="num">Summe</th><th>wird in Homevio …</th></tr></thead><tbody>${t.rows.map(rowHtml).join("")}</tbody></table></div>
+      <div id="tiPreview" class="note" style="margin-top:10px"></div>`,
+    onOpen: (form) => {
+      const read = () => t.rows.forEach((r, i) => {
+        const v = form[`t${i}`].value;
+        r.target = v === "expense" ? { type: "expense", category: form[`c${i}`].value, objectId: form[`o${i}`].value } : v.startsWith("fewo:") ? { type: "fewo", unitId: v.slice(5) } : v.startsWith("miete:") ? { type: "miete", contractId: v.slice(6) } : v.startsWith("newfewo:") ? { type: "newfewo", objectId: v.slice(8) } : { type: "ignore" };
+        $(`[data-tix="${i}"]`, form).style.display = v === "expense" ? "" : "none";
+      });
+      const show = () => { read(); const e = C.monthTableEntries(state, Number(form.year.value), t.rows.map((r) => (r.target.type === "newfewo" ? { ...r, target: { type: "ignore" } } : r))); const nf = t.rows.filter((r) => r.target.type === "newfewo");
+        $("#tiPreview", form).innerHTML = `Es werden <b>${e.payments.length} Einnahmen</b> (${eur(sum(e.payments, (p) => p.amount))})${nf.length ? ` plus ${nf.length} neue Ferienwohnung(en) mit ihren Umsätzen` : ""} und <b>${e.expenses.length} Ausgaben</b> (${eur(sum(e.expenses, (x) => x.amount))}) eingetragen.${e.skipped.length ? ` ${e.skipped.length} Monate sind schon erfasst und werden übersprungen.` : ""}`; };
+      form.addEventListener("change", show); form.addEventListener("input", show); show();
+    },
+    onSubmit: (form) => {
+      const year = Number(form.year.value), batch = C.uid("b_");
+      for (const r of t.rows) if (r.target.type === "newfewo") {
+        const name = (r.label.split(" · ").pop() || r.label).replace(/\s*\(gemietet\)\s*/i, "").slice(0, 60);
+        const u = { id: C.uid("u_"), objectId: r.target.objectId, type: "ferienwohnung", name, vat: 7 };
+        state.units.push(u); r.target = { type: "fewo", unitId: u.id };
+      }
+      const e = C.monthTableEntries(state, year, t.rows, { batch });
+      if (!e.payments.length && !e.expenses.length) { toast("Nichts Neues zu übernehmen."); return false; }
+      state.payments.push(...e.payments); state.expenses.push(...e.expenses);
+      const first = [...e.payments, ...e.expenses].map((x) => x.date.slice(0, 7)).sort()[0];
+      if (state.settings.sollStart && first < state.settings.sollStart) state.settings.sollStart = first;
+      ui.lastBatch = { id: batch, n: e.payments.length + e.expenses.length, sum: sum(e.payments, (p) => p.amount) };
+      ui.tableImport = null; ui.year = year;
+      commit(`Tabelle übernommen: ${e.payments.length} Einnahmen, ${e.expenses.length} Ausgaben`);
+      location.hash = "#/mieten";
+    },
+  });
 }
 
 // Angemietete Objekte: an den Vermieter gezahlte Miete für mehrere Monate als Ausgabe eintragen
@@ -1572,7 +1658,7 @@ function viewTax() {
   const incomeRows = [["kalt", "Mieteinnahmen (Kaltmiete, Zuschläge)"], ["umlage", "Umlagen / Nebenkosten-Vorauszahlungen und -Nachzahlungen"], ["fewo", "Einnahmen Ferienwohnung (netto)"], ["sonstige", "Sonstige Einnahmen"]];
   const col = (r, fn) => av.map((x) => `<td class="num">${eur(fn(x))}</td>`).join("") + (av.length > 1 ? `<td class="num"><b>${eur(sum(av, fn))}</b></td>` : "");
   return head("Steuer & DATEV", "Anlage V, DATEV-Export und Monatspaket für den Steuerberater", btn("year", "‹ " + (y - 1), "", y - 1) + `<b style="padding:0 6px">${y}</b>` + btn("year", (y + 1) + " ›", "", y + 1)) + `
-    <div class="card noprint"><h2>📬 Monatsbericht für den Steuerberater</h2><p class="small muted" style="margin-bottom:8px">Alle Mieteinnahmen und alle Ferienwohnungs-Einnahmen eines Monats als PDF, Excel-Tabelle und DATEV-Datei – mit einem Klick an deinen Steuerberater.</p><a class="btn primary" href="#/monat/${C.addMonths(C.monthKey(today()), -1)}">Monatsbericht öffnen</a></div>
+    <div class="card noprint"><h2>📬 Monatsbericht für den Steuerberater</h2><p class="small muted" style="margin-bottom:8px">Alle Mieteinnahmen und alle Ferienwohnungs-Einnahmen eines Monats als PDF, Excel-Tabelle und DATEV-Datei – mit einem Klick an deinen Steuerberater.</p><a class="btn primary" href="#/monat/${C.addMonths(C.monthKey(today()), -1)}">Monatsbericht öffnen</a> ${btn("tableImport", "📊 Eigene Monatstabelle übernehmen")}</div>
     <div class="card noprint"><h2>DATEV-Export & Steuerberater-Paket</h2>
       <div class="inline" style="margin-bottom:10px">
         <label class="small">von <input type="date" value="${from}" data-change="datevFrom"></label>
@@ -5002,7 +5088,8 @@ const actions = {
     state.contracts = state.contracts.filter((x) => x.id !== id); commit("Vertrag gelöscht");
   },
   newPayment: () => editPayment(), editPayment, backfill: backfillDialog, leaseBackfill: leaseBackfillDialog,
-  undoBackfill: () => { const b = ui.lastBatch; if (!b) return; state.payments = state.payments.filter((p) => p.batch !== b.id); ui.lastBatch = null; commit("Nachtragen rückgängig gemacht"); }, newExpense: () => editExpense(), editExpense,
+  undoBackfill: () => { const b = ui.lastBatch; if (!b) return; state.payments = state.payments.filter((p) => p.batch !== b.id); state.expenses = state.expenses.filter((x) => x.batch !== b.id); ui.lastBatch = null; commit("Rückgängig gemacht"); },
+  tableImport: tableImportStart, newExpense: () => editExpense(), editExpense,
   newAccount: () => editAccount(), editAccount,
   assign: assignDialog,
   accept: (id) => { const tx = byId("transactions", id); applyAssignment(tx, C.suggestAssignment(tx, state), false); commit("Zugeordnet"); },
@@ -5113,6 +5200,7 @@ document.addEventListener("change", async (e) => {
   if (!k) return;
   if (k === "docUpload" || k === "docScan") { await addFiles(e.target.files, { scan: k === "docScan" }); e.target.value = ""; return; }
   if (k === "autoKi") { ui.autoKi = e.target.checked; return; }
+  if (k === "tableImportCsv" || k === "tableImportPhoto") { const f = e.target.files[0]; e.target.value = ""; if (f) await tableImportRead(f, k === "tableImportCsv" ? "csv" : "photo"); return; }
   if (k === "addrScanText") return;
   if (k === "addrScan") { const f = e.target.files[0]; e.target.value = ""; if (f) await addrScanFill(e.target.closest("form"), { blob: f }); return; }
   if (k === "ablageUpload") { const fl = [...e.target.files]; e.target.value = ""; await bulkImport(fl, ui.ablageObj); return; }

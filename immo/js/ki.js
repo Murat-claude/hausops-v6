@@ -258,3 +258,26 @@ export async function readAddress({ base64, mediaType, text }) {
     messages: [{ role: "user", content }],
   });
 }
+
+// ---------------------------------------------------------------- Monatstabelle (Mieteinnahmen-Übersicht) aus Foto lesen
+const TABLE_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["year", "rows"],
+  properties: {
+    year: { type: "integer" },
+    rows: { type: "array", items: { type: "object", additionalProperties: false, required: ["section", "object", "label", "kind", "months"],
+      properties: {
+        section: { type: "string", description: "Überschrift des Blocks (z. B. FERIENWOHNUNGEN, FESTMIETER, GARAGEN)" },
+        object: { type: "string", description: "Spalte Objekt (z. B. Hamm Heessen, Amtstr.63 – OG li)" },
+        label: { type: "string", description: "Mieter / Wohnung bzw. Bezeichnung der Zeile, wörtlich" },
+        kind: { type: "string", enum: ["einnahme", "ausgabe", "kredit"], description: "ausgabe bei Kosten/negativen Beträgen, kredit bei Kredit-/Darlehensraten" },
+        months: { type: "array", items: { type: "number" }, minItems: 12, maxItems: 12, description: "Beträge Januar bis Dezember in Euro als positive Zahl, 0 wenn leer" },
+      } } },
+  },
+};
+export async function readMonthTable({ base64, mediaType }) {
+  return call({
+    effort: "medium", format: TABLE_SCHEMA, maxTokens: 16000,
+    system: `Du liest eine selbst geführte Tabelle eines Vermieters mit monatlichen Mieteinnahmen ab (Foto oder Screenshot). Gib jede Datenzeile mit ihren 12 Monatswerten zurück – exakt abgelesen, nichts schätzen, nichts runden. Lass alle Summen-, Zwischensummen-, Netto-, Brutto- und Gesamtzeilen sowie die Spalten Kalt/NK/Gesamt-pro-Monat/Jahressumme weg. Zeilen mit Kosten (z. B. "Zu zahlende Mietkosten", "Fixkosten") als kind "ausgabe" mit positiven Beträgen; Kredit-/Darlehensraten als "kredit". Leere Zellen = 0.`,
+    messages: [{ role: "user", content: [mediaType === "application/pdf" ? { type: "document", source: { type: "base64", media_type: mediaType, data: base64 } } : { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } }, { type: "text", text: "Lies alle Zeilen dieser Mieteinnahmen-Tabelle aus." }] }],
+  });
+}

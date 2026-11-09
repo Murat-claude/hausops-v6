@@ -500,7 +500,7 @@ export function splitPayment(state, p) {
         rest -= amt;
         parts.push({ type: s.type, amount: amt, vat: s.vat, kleinunternehmer: s.ku });
       });
-    } else parts.push({ type: "fewo", amount: p.amount, vat: 7 });
+    } else parts.push({ type: "fewo", amount: p.amount, vat: 7, kleinunternehmer: !!state.settings?.kleinunternehmer });
   } else if (p.kind === "kaution") {
     parts.push({ type: "kaution", amount: p.amount, vat: 0 });
   } else {
@@ -1224,4 +1224,102 @@ export function backfillLeaseExpenses(state, objectId, { from, to, day = 1 }) {
     out.push({ id: uid("e_"), date: `${key}-${String(dd).padStart(2, "0")}`, period: key, amount: o.leaseRent, category: "anmietung", objectId, vendor: o.landlordName || "Vermieter", note: `Miete ${key}`, belegNr: "", fileIds: [] });
   }
   return out;
+}
+
+// ---------------------------------------------------------------- Monatstabelle übernehmen (eigene Excel-/Numbers-Tabelle oder Foto davon)
+const MONTH_HEAD = [/^jan/, /^feb/, /^m(ae|a)r/, /^apr/, /^mai|^may/, /^jun/, /^jul/, /^aug/, /^sep/, /^okt|^oct/, /^nov/, /^dez|^dec/];
+const SKIP_ROW = /summe|gesamt|netto|brutto|abzgl|uebertrag|zwischensumme|^total/;
+
+// rows: Zellen der Tabelle (z. B. aus parseCsv). Ergebnis: { year, rows: [{ section, object, label, kind, months: [12 × Cent] }] }
+export function parseMonthTable(rows, fallbackYear = new Date().getFullYear()) {
+  let head = -1, cols = [];
+  for (let i = 0; i < Math.min(rows.length, 40) && head < 0; i++) {
+    const idx = MONTH_HEAD.map((re) => rows[i].findIndex((c) => re.test(normalize(c))));
+    if (idx.filter((x) => x >= 0).length >= 10) { head = i; cols = idx; }
+  }
+  if (head < 0) throw new Error("Keine Monatsspalten (Jan … Dez) gefunden.");
+  const firstMonthCol = Math.min(...cols.filter((x) => x >= 0));
+  const yearHit = rows.slice(0, head + 1).flat().join(" ").match(/\b(20\d\d)\b/);
+  const out = { year: yearHit ? Number(yearHit[1]) : fallbackYear, rows: [] };
+  let section = "";
+  for (const r of rows.slice(head + 1)) {
+    const textCells = r.slice(0, firstMonthCol).map((c) => String(c || "").trim());
+    const label = textCells.filter(Boolean).filter((c) => !/^-?[\d.,\s€]+$/.test(c)).join(" · ");
+    const months = cols.map((ci) => (ci >= 0 ? parseAmount(r[ci]) : 0));
+    const has = months.some((v) => v !== 0);
+    if (!has) { if (label && !SKIP_ROW.test(normalize(label))) section = label; continue; }
+    const n = normalize(label);
+    if (!label || SKIP_ROW.test(n)) continue;
+    const neg = months.filter((v) => v < 0).length > months.filter((v) => v > 0).length;
+    const kind = /kredit|darlehen|tilgung/.test(n) ? "kredit" : neg ? "ausgabe" : "einnahme";
+    out.rows.push({ section, object: textCells[0] || "", label, kind, months: months.map((v) => Math.abs(v)) });
+  }
+  return out;
+}
+
+// Zeile → passendes Ziel in Homevio raten (Mietvertrag, Ferienwohnung, Ausgabe)
+export function guessTableTarget(state, row) {
+  const words = (s) => normalize(s).split(" ").filter((w) => w.length >= 3 && !/^(und|der|die|das|links|rechts|garage|wohnung|apart|gemietet|mieter|neu|fuer|ab)$/.test(w));
+  const hay = ` ${normalize(`${row.section} ${row.object} ${row.label}`)} `;
+  const hit = (s) => words(s).filter((w) => hay.includes(` ${w} `)).length;
+  if (row.kind === "kredit") return { type: "ignore" };
+  if (row.kind === "ausgabe") {
+    const obj = (state.objects || []).map((o) => [o, hit(`${o.name} ${o.city || ""}`)]).sort((a, b) => b[1] - a[1])[0];
+    return { type: "expense", category: /miet|pacht/.test(hay) ? "anmietung" : /zins/.test(hay) ? "zinsen" : "sonstiges", objectId: obj && obj[1] ? obj[0].id : "" };
+  }
+  const tenants = new Map((state.tenants || []).map((t) => [t.id, t]));
+  const units = new Map((state.units || []).map((u) => [u.id, u]));
+  let best = { type: "ignore", score: 0 };
+  for (const u of state.units || []) {
+    if (u.type !== "ferienwohnung") continue;
+    const sc = Math.max(hit(u.name), hit(u.smoobuName || "")) * 2 + (/^apart\d+/.test(normalize(u.name)) && hay.includes(` ${normalize(u.name).split(" ")[0]} `) ? 3 : 0);
+    if (sc > best.score) best = { type: "fewo", unitId: u.id, score: sc };
+  }
+  for (const c of state.contracts || []) {
+    const names = (c.tenantIds || []).map((id) => tenants.get(id)?.name || "").join(" ");
+    const sc = hit(names) * 3 + hit(units.get(c.unitId)?.name || "");
+    if (sc > best.score && hit(names)) best = { type: "miete", contractId: c.id, score: sc };
+  }
+  if (best.score) return best;
+  // Ferienwohnung aus der Tabelle, die es in Homevio noch nicht gibt → als neue Ferienwohnung im passenden Objekt anlegen
+  if (/ferien|fewo|apart/.test(hay) && (state.objects || []).length) {
+    const obj = (state.objects || []).map((o) => [o, hit(`${o.name} ${o.street || ""} ${o.city || ""}`)]).sort((a, b) => b[1] - a[1])[0][0];
+    return { type: "newfewo", objectId: obj.id };
+  }
+  return { type: "ignore" };
+}
+
+// Einträge erzeugen (nur Monate, die noch nicht erfasst sind). Liefert { payments, expenses, skipped }
+export function monthTableEntries(state, year, rows, { batch = "" } = {}) {
+  const payments = [], expenses = [], skipped = [];
+  const key = (m) => `${year}-${String(m + 1).padStart(2, "0")}`;
+  const units = new Map((state.units || []).map((u) => [u.id, u]));
+  const lastDay = (k) => `${k}-${String(daysInMonth(k)).padStart(2, "0")}`;
+  for (const r of rows) {
+    const t = r.target || {};
+    r.months.forEach((amount, m) => {
+      if (!amount || t.type === "ignore" || !t.type) return;
+      const k = key(m);
+      if (t.type === "miete") {
+        const c = (state.contracts || []).find((x) => x.id === t.contractId); if (!c) return;
+        if ((state.payments || []).some((p) => p.kind === "miete" && p.period === k && p.contractId === c.id)) return skipped.push(`${r.label} ${k}`);
+        // Mehrere Verträge derselben Person (z. B. 2 Garagen) und Betrag = Summe → aufteilen
+        const tn = (c.tenantIds || []).map((id) => normalize((state.tenants || []).find((x) => x.id === id)?.name)).join(" ");
+        const same = (state.contracts || []).filter((x) => contractActiveIn(x, k) && (x.tenantIds || []).map((id) => normalize((state.tenants || []).find((y) => y.id === id)?.name)).join(" ") === tn);
+        const solls = same.map((x) => rentForMonth(x, k).total);
+        const targets = same.length > 1 && solls.reduce((a, b) => a + b, 0) === amount ? same : [c];
+        const parts = targets.length > 1 ? solls : [amount];
+        targets.forEach((x, i) => payments.push({ id: uid("p_"), date: `${k}-03`, amount: parts[i], kind: "miete", contractId: x.id, period: k, invoiceId: null, objectId: null, txId: null, note: "aus Monatstabelle", batch }));
+      } else if (t.type === "fewo") {
+        const u = units.get(t.unitId); if (!u) return;
+        const inv = (state.invoices || []).filter((i) => i.unitId === u.id).map((i) => i.id);
+        if ((state.payments || []).some((p) => p.kind === "fewo" && p.date.slice(0, 7) === k && (p.unitId === u.id || inv.includes(p.invoiceId)))) return skipped.push(`${r.label} ${k}`);
+        payments.push({ id: uid("p_"), date: lastDay(k), amount, kind: "fewo", contractId: null, period: k, invoiceId: null, unitId: u.id, objectId: u.objectId, txId: null, note: `Monatsumsatz ${u.name} (aus Tabelle)`, batch });
+      } else if (t.type === "expense") {
+        if ((state.expenses || []).some((e) => e.category === t.category && (e.objectId || "") === (t.objectId || "") && e.date.slice(0, 7) === k && (e.period === k || e.batch))) return skipped.push(`${r.label} ${k}`);
+        expenses.push({ id: uid("e_"), date: `${k}-01`, period: k, amount, category: t.category || "sonstiges", objectId: t.objectId || null, vendor: r.label.slice(0, 60), note: "aus Monatstabelle", belegNr: "", fileIds: [], batch });
+      }
+    });
+  }
+  return { payments, expenses, skipped };
 }

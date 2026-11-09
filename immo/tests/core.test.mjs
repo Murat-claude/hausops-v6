@@ -414,3 +414,32 @@ test("Angemietete Ferienwohnung: keine AfA, Miete an Vermieter als Ausgabe, Bank
   const r = anlageV(s, 2026).find((x) => x.objectId === "o1");
   assert.equal(r.angemietet, true); assert.equal(r.costs.afa, 0); assert.equal(r.costs.sonstige, 285000);
 });
+
+test("Eigene Monatstabelle übernehmen (Mieteinnahmen 2026)", async () => {
+  const { parseMonthTable, guessTableTarget, monthTableEntries, parseCsv } = await import("../js/core.js");
+  const { readFileSync } = await import("node:fs");
+  const t = parseMonthTable(parseCsv(readFileSync(new URL("./fixtures/mieteinnahmen-2026.csv", import.meta.url), "utf8")));
+  assert.equal(t.year, 2026);
+  assert.deepEqual(t.rows.map((r) => [r.label.split(" · ")[1] || r.label, r.kind]), [["Apart79 1 – EG Links", "einnahme"], ["Apart125 Drensteinfurt (gemietet)", "einnahme"], ["– Zu zahlende Mietkosten (monatl. Fixkosten Drensteinfurt+Winterberg)", "ausgabe"], ["Bacak – OG links", "einnahme"], ["Kötter Garage 2+3 (2x)", "einnahme"], ["Kredite", "kredit"]]);
+  assert.equal(t.rows[0].months[0], 225269);
+  assert.equal(t.rows[2].months[0], 204000);
+  const s = emptyState();
+  s.objects = [{ id: "o1", name: "Amtsstraße 63", city: "Hamm" }, { id: "o2", name: "Drensteinfurt Herrenstein 28a", city: "Drensteinfurt", ownership: "angemietet" }];
+  s.units = [{ id: "f79", objectId: "o1", name: "Apart79 1 – EG Links", type: "ferienwohnung" }, { id: "f125", objectId: "o2", name: "Apart125", type: "ferienwohnung" }, { id: "w1", objectId: "o1", name: "OG links", type: "wohnung" }, { id: "g2", objectId: "o1", name: "Garage 2", type: "garage" }, { id: "g3", objectId: "o1", name: "Garage 3", type: "garage" }];
+  s.tenants = [{ id: "t1", name: "Gülhanim Bacak" }, { id: "t2", name: "Max Kötter" }, { id: "t3", name: "Max Kötter" }];
+  const k = (id, unitId, tid, kalt, nk = 0) => ({ id, unitId, tenantIds: [tid], start: "2026-01-01", kalt, nk, extra: 0, steps: [] });
+  s.contracts = [k("c1", "w1", "t1", 58800, 20000), k("c2", "g2", "t2", 7000), k("c3", "g3", "t3", 7000)];
+  for (const r of t.rows) r.target = guessTableTarget(s, r);
+  assert.deepEqual(t.rows.map((r) => r.target.type), ["fewo", "fewo", "expense", "miete", "miete", "ignore"]);
+  assert.equal(t.rows[1].target.unitId, "f125");
+  assert.equal(t.rows[2].target.category, "anmietung");
+  s.payments = [{ id: "x", kind: "miete", contractId: "c1", period: "2026-01", amount: 78800, date: "2026-01-03" }];
+  const e = monthTableEntries(s, t.year, t.rows);
+  // Bacak: Januar schon erfasst → 11 neue Zahlungen; Kötter: 12 Monate × 2 Garagen à 70 €
+  assert.equal(e.payments.filter((p) => p.contractId === "c1").length, 11);
+  assert.deepEqual([...new Set(e.payments.filter((p) => ["c2", "c3"].includes(p.contractId)).map((p) => p.amount))], [7000]);
+  assert.equal(e.payments.filter((p) => p.contractId === "c2").length, 12);
+  assert.equal(e.payments.filter((p) => p.kind === "fewo" && p.unitId === "f79").length, 10);
+  assert.equal(e.expenses.length, 10);
+  assert.equal(e.skipped.length, 1);
+});
