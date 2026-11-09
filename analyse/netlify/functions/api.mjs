@@ -10,7 +10,8 @@
 // GET    /api/allgemein              -> allgemeiner Chat
 // POST   /api/allgemein              -> { eintraege: [...] } anhängen
 import { getStore } from "@netlify/blobs";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, createHash } from "node:crypto";
+import { sendePush } from "../../lib/push.mjs";
 
 const MAX_CHAT = 400;
 
@@ -48,7 +49,7 @@ function bereinigeEintraege(eintraege) {
   }));
 }
 
-export function erstelleHandler(store, zugang) {
+export function erstelleHandler(store, zugang, benachrichtige = (n) => sendePush(store, n)) {
   return async (req) => {
     if (!codeOk(req.headers.get("x-zugang"), zugang)) return json(401, { fehler: "Zugangscode falsch" });
     const url = new URL(req.url);
@@ -80,6 +81,8 @@ export function erstelleHandler(store, zugang) {
         const neu = bereinigeEintraege((await body())?.eintraege);
         alt.chat = [...(alt.chat || []), ...neu].slice(-MAX_CHAT);
         await store.setJSON(key, alt, { metadata: kurzinfo(alt) });
+        const frage = neu.find((e) => e.rolle === "user");
+        if (frage) await benachrichtige({ titel: `💬 ${frage.autor || "Partner"} fragt zu ${alt.titel || "einem Objekt"}`, text: frage.text.slice(0, 140), url: `/#objekt-${teile[1]}`, ausser: frage.autor }).catch(() => 0);
         return json(200, { chat: alt.chat });
       }
       if (methode === "GET") {
@@ -94,12 +97,39 @@ export function erstelleHandler(store, zugang) {
         const groesse = JSON.stringify(neu).length;
         if (groesse > 4_000_000) return json(413, { fehler: "Objekt zu groß" });
         await store.setJSON(key, neu, { metadata: kurzinfo(neu) });
+        if (!alt) {
+          const ampel = { gruen: "🟢", gelb: "🟡", rot: "🔴" }[neu.daten?.ampel] || "🏠";
+          await benachrichtige({ titel: `${ampel} ${neu.autor || "Partner"} hat ein Objekt analysiert`, text: `${neu.titel}${neu.daten?.empfehlung ? " – " + neu.daten.empfehlung : ""}`.slice(0, 160), url: `/#objekt-${teile[1]}`, ausser: neu.autor }).catch(() => 0);
+        }
         return json(200, { ok: true });
       }
       if (methode === "DELETE") {
         await store.delete(key);
         return json(200, { ok: true });
       }
+    }
+
+    if (teile[0] === "push" && teile[1] === "abo") {
+      const b = await body();
+      const endpoint = b?.subscription?.endpoint || b?.endpoint;
+      if (!endpoint || !/^https:\/\//.test(endpoint)) return json(400, { fehler: "Ungültiges Abo" });
+      const key = "abos/" + createHash("sha256").update(endpoint).digest("hex").slice(0, 24);
+      if (methode === "POST") {
+        await store.setJSON(key, { subscription: b.subscription, name: String(b.name || "").slice(0, 40), seit: new Date().toISOString() });
+        return json(200, { ok: true });
+      }
+      if (methode === "DELETE") { await store.delete(key); return json(200, { ok: true }); }
+    }
+
+    if (teile[0] === "push" && teile[1] === "test" && methode === "POST") {
+      const n = await benachrichtige({ titel: "🔔 Benachrichtigungen aktiv", text: "So sehen Meldungen der Immo-Analyse aus.", url: "/" });
+      return json(200, { gesendet: n });
+    }
+
+    if (teile[0] === "funde" && methode === "GET") {
+      const funde = (await store.get("funde/liste", { type: "json" })) || [];
+      const status = await store.get("scout/status", { type: "json" });
+      return json(200, { funde, status });
     }
 
     if (teile[0] === "allgemein") {

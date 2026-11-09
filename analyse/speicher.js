@@ -122,3 +122,11 @@ export const speicher = {
     return lokal.length;
   },
 };
+
+// ---------- Funde & Benachrichtigungen (nur gemeinsamer Speicher) ----------
+export const extras = {
+  async funde() { return speicher.modus === "gemeinsam" ? api("funde") : { funde: [], status: null }; },
+  async pushAbo(subscription, name) { return api("push/abo", "POST", { subscription, name }); },
+  async pushAbmelden(endpoint) { return api("push/abo", "DELETE", { endpoint }); },
+  async pushTest() { return api("push/test", "POST", {}); },
+};

@@ -2,253 +2,366 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#1f2a24" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#173a31" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Immo-Analyse" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icon-192.png" />
-  <title>Immo-Analyse KI</title>
+  <title>Immo-Analyse Hamm</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Sans+3:wght@400;600;700&family=IBM+Plex+Mono:wght@500&display=swap" />
   <style>
+    /* Layout: App-Hülle – oben schmale Statusleiste, Ansichten als Karten-Stapel, unten Tab-Leiste (Handy) bzw. oben Tabs (Desktop).
+       Thema: Grundbuch-Grün als Leitfarbe, Messing für Geldbeträge, die verhandelt werden; Ampelfarben nur für Bewertungen. */
     :root {
-      --bg: #f3f4f1; --card: #ffffff; --text: #1d211f; --muted: #66706a; --line: #dfe3de;
-      --accent: #2f6b4f; --accent-soft: #e5efe9; --gelb: #c8930f; --rot: #b33a3a; --gruen: #2f8a57;
-      --input: #fafbf9;
+      --papier: #f2f4f3; --flaeche: #ffffff; --tinte: #17231f; --leise: #5c6a65; --linie: #d8dfdc;
+      --akzent: #1f5d4c; --akzent-weich: #e3efea; --messing: #9a6a1f; --kopf: #173a31; --kopf-text: #eef5f2;
+      --gut: #2c8653; --warn: #b9820f; --kritisch: #b4413a; --eingabe: #f8faf9; --hervor: #fff4d6;
+      --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+      --f-text: "Source Sans 3", -apple-system, "Segoe UI", Roboto, sans-serif;
+      --f-zahl: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --r: 10px; --tabhoehe: 64px;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
-        --bg: #141816; --card: #1d2320; --text: #e8ece9; --muted: #9aa59f; --line: #2e3632;
-        --accent: #6cc196; --accent-soft: #23352c; --input: #171c19;
+        --papier: #0f1513; --flaeche: #172019; --tinte: #e4ebe8; --leise: #9aa8a2; --linie: #2a3632;
+        --akzent: #74c3a6; --akzent-weich: #1d2e28; --messing: #d9a75a; --kopf: #0c1f1a; --kopf-text: #e4ebe8;
+        --gut: #5cc48a; --warn: #e2b04a; --kritisch: #e2766f; --eingabe: #121a17; --hervor: #3a3218; color-scheme: dark;
       }
     }
+    :root[data-theme="dark"] {
+      --papier: #0f1513; --flaeche: #172019; --tinte: #e4ebe8; --leise: #9aa8a2; --linie: #2a3632;
+      --akzent: #74c3a6; --akzent-weich: #1d2e28; --messing: #d9a75a; --kopf: #0c1f1a; --kopf-text: #e4ebe8;
+      --gut: #5cc48a; --warn: #e2b04a; --kritisch: #e2766f; --eingabe: #121a17; --hervor: #3a3218; color-scheme: dark;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
-    header { background: #1f2a24; color: #fff; padding: 18px 16px; }
-    header h1 { margin: 0; font-size: 1.25rem; }
-    header p { margin: 4px 0 0; opacity: .75; font-size: .9rem; }
-    main { max-width: 980px; margin: 0 auto; padding: 16px; }
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-    .card h2 { margin: 0 0 12px; font-size: 1.05rem; }
-    label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
-    input, textarea, select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--input); color: var(--text); font: inherit; }
-    textarea { min-height: 110px; resize: vertical; }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
-    button { font: inherit; border: 0; border-radius: 8px; padding: 11px 16px; cursor: pointer; background: var(--accent); color: #fff; font-weight: 600; }
-    button.zweit { background: var(--accent-soft); color: var(--accent); }
-    button:disabled { opacity: .5; cursor: default; }
+    html, body { margin: 0; }
+    body { background: var(--papier); color: var(--tinte); font: 16px/1.5 var(--f-text); -webkit-text-size-adjust: 100%; }
+    [hidden], .versteckt { display: none !important; }
+    h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+    h2 { font-size: 1.25rem; font-weight: 700; }
+    h3 { font-size: 1.02rem; font-weight: 700; }
+    a { color: var(--akzent); }
+    :focus-visible { outline: 3px solid var(--akzent); outline-offset: 2px; }
+    .zahl, td, .kpi b { font-variant-numeric: tabular-nums; }
+
+    /* Kopfleiste */
+    body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--kopf); }
+    .kopf { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--kopf); color: var(--kopf-text);
+      padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    .kopf-innen { max-width: 1040px; margin: 0 auto; display: flex; align-items: center; gap: 12px; }
+    .marke { font-family: var(--f-display); font-weight: 700; font-size: 1.15rem; letter-spacing: -.01em; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+    @media (max-width: 420px) { .marke small { display: none; } }
+    .marke small { font-family: var(--f-text); font-weight: 400; font-size: .8rem; opacity: .7; }
+    .kopf .status { margin-left: auto; font-size: .78rem; border: 1px solid color-mix(in srgb, var(--kopf-text) 30%, transparent); border-radius: 99px; padding: 2px 10px; white-space: nowrap; }
+    .tabs { display: flex; gap: 2px; }
+    .tabs a { color: var(--kopf-text); text-decoration: none; padding: 8px 12px; border-radius: 8px; font-weight: 600; font-size: .92rem; opacity: .8; display: flex; align-items: center; gap: 6px; position: relative; }
+    .tabs a[aria-current="page"] { opacity: 1; background: color-mix(in srgb, var(--kopf-text) 14%, transparent); }
+    .tabs .punkt { min-width: 18px; height: 18px; border-radius: 9px; background: var(--messing); color: #fff; font-size: .7rem; display: inline-grid; place-items: center; padding: 0 5px; }
+    .tabs svg { width: 20px; height: 20px; }
+    @media (max-width: 760px) {
+      .kopf .tabs { position: fixed; inset: auto 0 0 0; z-index: 25; background: var(--kopf); justify-content: space-around;
+        padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+        padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+      .tabs a { flex-direction: column; gap: 2px; font-size: .7rem; padding: 4px 6px; }
+      .tabs .punkt { position: absolute; top: 0; right: 4px; }
+      main { padding-bottom: calc(var(--tabhoehe) + env(safe-area-inset-bottom, 0px) + 16px) !important; }
+    }
+
+    main { max-width: 1040px; margin: 0 auto; padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+    .ansicht { display: grid; gap: 16px; }
+    .karte { background: var(--flaeche); border: 1px solid var(--linie); border-radius: var(--r); padding: 18px; min-width: 0; }
+    .karte > h2 + * { margin-top: 12px; }
+    .eyebrow { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--leise); font-weight: 700; }
+    .hinweis { font-size: .85rem; color: var(--leise); }
+    label { display: block; font-size: .82rem; font-weight: 600; color: var(--leise); margin: 12px 0 4px; }
+    input, textarea, select { width: 100%; padding: 10px 12px; border: 1px solid var(--linie); border-radius: 8px; background: var(--eingabe); color: var(--tinte); font: inherit; }
+    textarea { resize: vertical; }
+    .raster2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+    @media (max-width: 640px) { .raster2 { grid-template-columns: 1fr; } }
     .reihe { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
-    .hinweis { font-size: .82rem; color: var(--muted); }
-    details summary { cursor: pointer; font-weight: 600; }
-    #log { font-size: .85rem; max-height: 260px; overflow: auto; border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
-    #log div { padding: 2px 0; color: var(--muted); overflow-wrap: anywhere; }
-    #log div.ok { color: var(--text); }
-    #denken { font-size: .82rem; color: var(--muted); white-space: pre-wrap; max-height: 120px; overflow: auto; }
-    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: dreh 1s linear infinite; vertical-align: -2px; margin-right: 6px; }
-    @keyframes dreh { to { transform: rotate(360deg); } }
-    .ampel { display: flex; gap: 14px; align-items: center; }
-    .ampel .punkt { width: 54px; height: 54px; border-radius: 50%; flex: none; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 1.1rem; }
-    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 14px; }
-    .kpi { background: var(--accent-soft); border-radius: 10px; padding: 10px; }
-    .kpi b { display: block; font-size: 1.1rem; }
-    .kpi span { font-size: .78rem; color: var(--muted); }
-    .tab-wrap { overflow-x: auto; }
-    table { border-collapse: collapse; width: 100%; font-size: .9rem; }
-    th, td { border-bottom: 1px solid var(--line); padding: 7px 8px; text-align: right; white-space: nowrap; }
-    th:first-child, td:first-child { text-align: left; white-space: normal; }
-    td input { width: 110px; padding: 5px 6px; text-align: right; background: #fff7d6; color: #1d211f; }
-    tr.summe td { font-weight: 700; }
-    .neg { color: var(--rot); } .pos { color: var(--gruen); }
-    #bericht { overflow-wrap: anywhere; }
-    #bericht table { margin: 10px 0; display: block; overflow-x: auto; }
-    #bericht a { color: var(--accent); }
-    #bericht h1 { font-size: 1.4rem; } #bericht h2 { font-size: 1.15rem; margin-top: 1.6em; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
-    .verlauf-eintrag { display: flex; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-    .verlauf-eintrag a { color: var(--accent); cursor: pointer; }
-    .versteckt { display: none !important; }
-    .ablage { border: 2px dashed var(--line); border-radius: 12px; padding: 10px; transition: border-color .15s, background .15s; }
-    .ablage.ziehen { border-color: var(--accent); background: var(--accent-soft); }
-    .ablage textarea { border: 0; background: transparent; min-height: 140px; padding: 4px; }
+    button, .knopf { font: 600 .95rem var(--f-text); border: 0; border-radius: 8px; padding: 11px 16px; cursor: pointer; background: var(--akzent); color: var(--flaeche); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+    button.zweit, .knopf.zweit { background: var(--akzent-weich); color: var(--akzent); }
+    button.leise { background: transparent; color: var(--akzent); padding: 6px 8px; }
+    .knopf.wa { background: #1f8a4c; color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    .fehler { background: color-mix(in srgb, var(--kritisch) 14%, var(--flaeche)); color: var(--kritisch); border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
+
+    /* Ablage */
+    .ablage { border: 2px dashed var(--linie); border-radius: var(--r); padding: 10px; transition: border-color .15s, background .15s; }
+    .ablage.ziehen { border-color: var(--akzent); background: var(--akzent-weich); }
+    .ablage textarea { border: 0; background: transparent; min-height: 150px; padding: 6px; }
     .ablage textarea:focus { outline: none; }
     .anhaenge { display: flex; flex-wrap: wrap; gap: 8px; }
-    .anhang { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--input); display: grid; place-items: center; font-size: .7rem; text-align: center; padding: 2px; }
+    .anhang { position: relative; width: 84px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid var(--linie); background: var(--eingabe); display: grid; place-items: center; font-size: .7rem; text-align: center; padding: 2px; }
     .anhang img { width: 100%; height: 100%; object-fit: cover; }
-    .anhang button { position: absolute; top: 2px; right: 2px; padding: 0 6px; border-radius: 50%; background: rgba(0,0,0,.6); font-size: .8rem; line-height: 1.4; }
-    .chat { max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+    .anhang button { position: absolute; top: 3px; right: 3px; padding: 0 7px; border-radius: 50%; background: rgba(0,0,0,.6); color: #fff; font-size: .85rem; line-height: 1.5; }
+
+    /* Fortschritt */
+    #log { font: .82rem/1.5 var(--f-text); max-height: 240px; overflow: auto; border-top: 1px solid var(--linie); margin-top: 10px; padding-top: 8px; }
+    #log div { color: var(--leise); overflow-wrap: anywhere; } #log div.ok { color: var(--tinte); }
+    #denken { font-size: .82rem; color: var(--leise); white-space: pre-wrap; max-height: 110px; overflow: auto; margin-top: 8px; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--linie); border-top-color: var(--akzent); border-radius: 50%; animation: dreh 1s linear infinite; vertical-align: -2px; margin-right: 8px; }
+    @keyframes dreh { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+    /* Objekt-Kopf */
+    .objektkopf { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: start; }
+    .ampel { width: 58px; height: 58px; border-radius: 12px; display: grid; place-items: center; color: #fff; font: 700 1.25rem var(--f-zahl); }
+    .objektkopf h2 { font-size: 1.4rem; }
+    .empfehlung { font-weight: 700; margin-top: 4px; }
+    .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 16px; }
+    .kpi { background: var(--flaeche); padding: 10px 12px; border: 1px solid var(--linie); border-radius: 8px; }
+    .kpi b { display: block; font: 500 1.08rem var(--f-zahl); }
+    .kpi span { font-size: .76rem; color: var(--leise); }
+    .kpi.messing b { color: var(--messing); }
+    .neg { color: var(--kritisch); } .pos { color: var(--gut); }
+    .teilen { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+    /* Strategien */
+    .strategien { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+    .strategie { border: 1px solid var(--linie); border-radius: var(--r); padding: 12px; display: grid; gap: 4px; align-content: start; }
+    .strategie .chip { justify-self: start; font-size: .72rem; font-weight: 700; border-radius: 99px; padding: 2px 9px; letter-spacing: .03em; }
+    .strategie.gut .chip { background: color-mix(in srgb, var(--gut) 16%, var(--flaeche)); color: var(--gut); }
+    .strategie.bedingt .chip { background: color-mix(in srgb, var(--warn) 18%, var(--flaeche)); color: var(--warn); }
+    .strategie.nein .chip { background: color-mix(in srgb, var(--kritisch) 14%, var(--flaeche)); color: var(--kritisch); }
+    .strategie .zahl { font: 500 1.05rem var(--f-zahl); }
+    .strategie p { margin: 0; font-size: .9rem; }
+
+    /* Rechner */
+    .tab-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+    th, td { border-bottom: 1px solid var(--linie); padding: 7px 8px; text-align: right; white-space: nowrap; }
+    th { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--leise); }
+    th:first-child, td:first-child { text-align: left; white-space: normal; }
+    td input { width: 110px; padding: 5px 6px; text-align: right; background: var(--hervor); font-family: var(--f-zahl); font-size: .85rem; }
+    tr.summe td { font-weight: 700; }
+
+    /* Bericht */
+    #bericht { overflow-wrap: anywhere; max-width: 72ch; }
+    #bericht table { display: block; overflow-x: auto; margin: 10px 0; }
+    #bericht h1 { font-size: 1.5rem; } #bericht h2 { margin-top: 1.6em; padding-bottom: 4px; border-bottom: 1px solid var(--linie); }
+
+    /* Chat */
+    .chat { max-height: 480px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
     .chat:empty { display: none; }
-    .blase { border-radius: 12px; padding: 8px 12px; max-width: 92%; overflow-wrap: anywhere; }
-    .blase.ich { align-self: flex-end; background: var(--accent-soft); }
-    .blase.ki { align-self: flex-start; border: 1px solid var(--line); }
+    .blase { border-radius: 12px; padding: 8px 12px; max-width: 92%; overflow-wrap: anywhere; min-width: 0; }
+    .blase.ich { align-self: flex-end; background: var(--akzent-weich); }
+    .blase.ki { align-self: flex-start; border: 1px solid var(--linie); }
     .blase p { margin: 4px 0; } .blase table { display: block; overflow-x: auto; font-size: .85rem; }
-    .blase a { color: var(--accent); }
     .chat-eingabe { display: flex; gap: 8px; align-items: flex-end; }
     .chat-eingabe textarea { min-height: 48px; }
     .vorschlaege { display: flex; flex-wrap: wrap; gap: 6px; }
-    .vorschlaege button { padding: 6px 10px; font-size: .82rem; font-weight: 500; }
-    .strategien { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
-    .strategie { border: 1px solid var(--line); border-left: 5px solid var(--muted); border-radius: 10px; padding: 10px; }
-    .strategie.gut { border-left-color: var(--gruen); } .strategie.bedingt { border-left-color: var(--gelb); } .strategie.nein { border-left-color: var(--rot); opacity: .8; }
-    .strategie b { display: block; } .strategie .zahl { font-size: 1.05rem; font-weight: 700; margin: 4px 0; }
-    .fehler { background: #fbe9e9; color: #8a2222; border-radius: 8px; padding: 10px; margin-top: 10px; }
+    .vorschlaege button { padding: 6px 11px; font-size: .84rem; font-weight: 600; }
+
+    /* Listen */
+    .liste { display: grid; }
+    .zeile { display: grid; grid-template-columns: 6px 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--linie); }
+    .zeile:last-child { border-bottom: 0; }
+    .zeile .streifen { align-self: stretch; border-radius: 3px; background: var(--linie); }
+    .zeile .streifen.gruen { background: var(--gut); } .zeile .streifen.gelb { background: var(--warn); } .zeile .streifen.rot { background: var(--kritisch); }
+    .zeile .titel { font-weight: 700; color: var(--tinte); text-decoration: none; cursor: pointer; display: block; overflow-wrap: anywhere; }
+    .zeile .meta { font-size: .82rem; color: var(--leise); }
+    .zeile .meta .zahl { font-family: var(--f-zahl); font-size: .8rem; color: var(--tinte); }
+    .zeile .rechts { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+    .zeile .rechts button { padding: 7px 10px; font-size: .82rem; }
+    @media (max-width: 640px) {
+      .zeile { grid-template-columns: 6px 1fr; row-gap: 8px; }
+      .zeile .rechts { grid-column: 2; justify-content: flex-start; }
+    }
+    .marke-gut { font-size: .7rem; font-weight: 700; color: var(--gut); border: 1px solid currentColor; border-radius: 99px; padding: 0 7px; margin-left: 6px; }
+    .filter { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter button[aria-pressed="true"] { background: var(--akzent); color: var(--flaeche); }
+
     @media print {
-      body { background: #fff; color: #000; }
-      header, .kein-druck { display: none !important; }
-      .card { border: 0; padding: 0; }
-      td input { border: 0; background: none; }
+      body { background: #fff; color: #000; } body::before, .kopf, .kein-druck { display: none !important; }
+      .karte { border: 0; padding: 0; } td input { border: 0; background: none; }
     }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
 </head>
 <body>
-  <header>
-    <h1>🏠 Immo-Analyse KI</h1>
-    <p>Link, Exposé oder Inserat-Text rein, fertige Analyse raus: Markt, Rendite, Cashflow, Risiken, offene Fragen.</p>
+  <header class="kopf">
+    <div class="kopf-innen">
+      <div class="marke">Immo-Analyse <small>Hamm · 30 km</small></div>
+      <nav class="tabs" aria-label="Bereiche">
+        <a href="#neu" data-tab="neu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Analysieren</a>
+        <a href="#objekte" data-tab="objekte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Objekte</a>
+        <a href="#funde" data-tab="funde"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Funde <span class="punkt" id="funde-zahl" hidden></span></a>
+        <a href="#fragen" data-tab="fragen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 5h16v11H8l-4 4z"/></svg>KI fragen</a>
+        <a href="#konto" data-tab="konto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Konto</a>
+      </nav>
+      <span class="status" id="verbunden">nicht angemeldet</span>
+    </div>
   </header>
+
   <main>
-    <section class="card kein-druck" id="einstellungen">
-      <details id="einstellungen-details">
-        <summary>👥 Anmeldung &amp; Einstellungen <span id="verbunden" class="hinweis" style="font-weight:400"></span></summary>
-        <div class="grid2">
-          <div><label for="zugang">Gemeinsamer Zugangscode</label><input id="zugang" type="password" autocomplete="current-password" placeholder="vom Einrichten" /></div>
-          <div><label for="name">Wer bist du?</label><input id="name" list="namen" autocomplete="name" placeholder="z. B. Murat oder Yasemin" />
-            <datalist id="namen"><option value="Murat"></option><option value="Yasemin"></option></datalist></div>
-        </div>
-        <div class="reihe"><button id="anmelden">Anmelden</button><button class="zweit versteckt" id="abmelden">Abmelden</button><span id="login-fehler" class="hinweis" style="color:var(--rot)"></span></div>
-        <div id="key-bereich">
-          <label for="apikey">KI-Schlüssel (Anthropic API, einmalig – gilt danach für euch beide)</label>
-          <input id="apikey" type="password" placeholder="sk-ant-…" autocomplete="off" />
-          <div class="reihe"><button class="zweit" id="key-speichern">Schlüssel speichern</button></div>
-          <p class="hinweis">Schlüssel erstellen: console.anthropic.com → API Keys. Eine Analyse kostet grob 0,30–1,50 €, eine Chat-Frage meist wenige Cent.</p>
-        </div>
-        <p class="hinweis" id="key-status"></p>
-      </details>
-    </section>
-
-    <section class="card kein-druck" id="eingabe">
-      <h2>Objekt reinlegen</h2>
-      <div id="ablage" class="ablage">
-        <textarea id="text" placeholder="Hier alles reinlegen:&#10;• Link(s) zur Anzeige (Kleinanzeigen, ImmoScout24, Immowelt, Makler …)&#10;• Text aus der Anzeige oder dem Exposé&#10;• Screenshots: einfach einfügen (Strg+V / lange tippen → Einsetzen) oder hierher ziehen"></textarea>
-        <div id="anhaenge" class="anhaenge"></div>
-        <div class="reihe" style="margin-top:8px">
-          <button type="button" class="zweit" id="datei-knopf">📎 Fotos, Screenshots oder PDF hinzufügen</button>
-          <span class="hinweis" id="ablage-info"></span>
-        </div>
-        <input id="dateien" type="file" multiple accept="application/pdf,image/*" hidden />
-      </div>
-      <div class="grid2">
-        <div>
-          <label for="modus">Analyse</label>
-          <select id="modus">
-            <option value="schnell">⚡ Schnellcheck (ca. 1–2 Min.)</option>
-            <option value="gruendlich">🔍 Gründliche Analyse (ca. 3–6 Min.)</option>
-          </select>
-        </div>
-        <div></div>
-      </div>
-      <div class="grid2">
-        <div>
-          <label for="ziel">Ziel</label>
-          <select id="ziel">
-            <option>Kapitalanlage (langfristig vermieten)</option>
-            <option>Eigennutzung</option>
-            <option>Ferienwohnung / Kurzzeitvermietung</option>
-            <option>Sanieren und vermieten (Value-Add)</option>
-            <option>Sanieren und weiterverkaufen (Fix &amp; Flip)</option>
-          </select>
-        </div>
-        <div>
-          <label for="ek">Verfügbares Eigenkapital (€)</label>
-          <input id="ek" type="number" inputmode="numeric" placeholder="z. B. 60000" />
-        </div>
-      </div>
-      <label for="notizen">Weitere Hinweise (optional)</label>
-      <input id="notizen" placeholder="z. B. Besichtigung: Fenster alt, Dach 2010 neu; Steuersatz 42 %" />
-      <div class="reihe">
-        <button id="start">Analyse starten</button>
-        <button class="zweit versteckt" id="stopp">Abbrechen</button>
-        <span class="hinweis">Die KI liest alles, recherchiert live im Web und rechnet alle Strategien durch.</span>
-      </div>
-      <div id="fehler" class="fehler versteckt"></div>
-    </section>
-
-    <section class="card kein-druck versteckt" id="fortschritt">
-      <h2><span class="spinner" id="spinner"></span><span id="status">Analyse läuft …</span></h2>
-      <div id="denken"></div>
-      <div id="log"></div>
-    </section>
-
-    <div id="ergebnis" class="versteckt">
-      <section class="card" id="ueberblick"></section>
-
-      <section class="card versteckt" id="strategien-karte">
-        <h2>🎯 Was ist möglich? Strategien im Vergleich</h2>
-        <div class="strategien" id="strategien"></div>
-      </section>
-
-      <section class="card" id="rechner-karte">
-        <h2>🧮 Rechner <span class="hinweis">(gelbe Felder änderbar, alles vor Steuern)</span></h2>
-        <div class="grid2 kein-druck" style="margin-bottom:10px">
-          <div class="grid2">
-            <div><label for="f-ek">Eigenkapital (€)</label><input id="f-ek" type="number" /></div>
-            <div><label for="f-zins">Zins (%)</label><input id="f-zins" type="number" step="0.05" /></div>
+    <!-- Analysieren -->
+    <section class="ansicht" data-ansicht="neu">
+      <div class="karte kein-druck">
+        <span class="eyebrow">Neues Objekt</span>
+        <h2>Link, Text, Screenshots oder Exposé reinlegen</h2>
+        <div id="ablage" class="ablage">
+          <textarea id="text" placeholder="Link(s) zur Anzeige einfügen, Text aus dem Inserat kopieren oder Screenshots einfügen (lange tippen → Einsetzen) bzw. hierher ziehen."></textarea>
+          <div id="anhaenge" class="anhaenge"></div>
+          <div class="reihe" style="margin-top:8px">
+            <button type="button" class="zweit" id="datei-knopf">Fotos, Screenshots oder PDF</button>
+            <span class="hinweis" id="ablage-info"></span>
           </div>
-          <div class="grid2">
-            <div><label for="f-tilg">Tilgung (%)</label><input id="f-tilg" type="number" step="0.25" value="2" /></div>
-            <div><label for="f-stress">Stresstest</label>
-              <select id="f-stress">
-                <option value="">keiner</option>
-                <option value="zins">Zins +1 %-Punkt</option>
-                <option value="miete">Miete −10 %</option>
-                <option value="san">Sanierung +20 %</option>
-                <option value="alle">alle drei zusammen</option>
-              </select>
+          <input id="dateien" type="file" multiple accept="application/pdf,image/*" hidden />
+        </div>
+        <div class="raster2">
+          <div><label for="modus">Analyse</label>
+            <select id="modus"><option value="schnell">Schnellcheck · ca. 1–2 Min.</option><option value="gruendlich">Gründlich · ca. 3–6 Min.</option></select></div>
+          <div><label for="ziel">Ziel</label>
+            <select id="ziel">
+              <option>Alle Strategien prüfen (Cashflow, Flip, Aufteilung, Grundstück, FeWo)</option>
+              <option>Kapitalanlage (langfristig vermieten)</option>
+              <option>Sanieren und weiterverkaufen (Fix &amp; Flip)</option>
+              <option>Aufteilung in Eigentumswohnungen</option>
+              <option>Ferienwohnung / Kurzzeitvermietung</option>
+              <option>Eigennutzung</option>
+            </select></div>
+          <div><label for="ek">Eigenkapital (€)</label><input id="ek" type="number" inputmode="numeric" placeholder="leer = 25 % vom Kaufpreis" /></div>
+          <div><label for="notizen">Hinweise (optional)</label><input id="notizen" placeholder="z. B. Dach 2010 neu, Fenster alt" /></div>
+        </div>
+        <div class="reihe">
+          <button id="start">Analyse starten</button>
+          <button class="zweit versteckt" id="stopp">Abbrechen</button>
+        </div>
+        <div id="fehler" class="fehler versteckt"></div>
+      </div>
+      <div class="karte kein-druck versteckt" id="fortschritt">
+        <h3><span class="spinner" id="spinner"></span><span id="status">Analyse läuft …</span></h3>
+        <div id="denken"></div>
+        <div id="log"></div>
+      </div>
+    </section>
+
+    <!-- Ein Objekt -->
+    <section class="ansicht" data-ansicht="objekt" hidden>
+      <div id="ergebnis" class="ansicht versteckt">
+        <div class="karte" id="ueberblick-karte">
+          <div id="ueberblick"></div>
+          <div class="teilen kein-druck">
+            <a class="knopf wa" id="whatsapp" href="#" target="_blank" rel="noopener">Per WhatsApp schicken</a>
+            <button class="zweit" id="teilen">Teilen …</button>
+            <button class="zweit" id="link-kopieren">Link kopieren</button>
+          </div>
+        </div>
+        <div class="karte versteckt" id="strategien-karte">
+          <span class="eyebrow">Was ist möglich?</span>
+          <h2>Strategien im Vergleich</h2>
+          <div class="strategien" id="strategien"></div>
+        </div>
+        <div class="karte kein-druck" id="chat-karte">
+          <span class="eyebrow">KI-Berater</span>
+          <h2>Fragen zu diesem Objekt</h2>
+          <div class="vorschlaege">
+            <button class="zweit" data-frage="Was wäre ein realistischer Kaufpreis, damit der Cashflow positiv wird – und wie begründe ich das in der Verhandlung?">Verhandlungspreis</button>
+            <button class="zweit" data-frage="Welche Strategie bringt hier am meisten, und was wären die nächsten 3 konkreten Schritte?">Beste Strategie</button>
+            <button class="zweit" data-frage="Welche Unterlagen und Fragen soll ich vor der Besichtigung vom Makler anfordern? Bitte als Liste und als fertige E-Mail.">Anfrage an Makler</button>
+            <button class="zweit" data-frage="Was sind die größten Risiken, und wie kann ich sie vor dem Kauf prüfen?">Risiken prüfen</button>
+          </div>
+          <div class="chat" id="chat-verlauf"></div>
+          <div class="chat-eingabe">
+            <textarea id="chat-eingabe" rows="2" placeholder="Frage zu diesem Objekt … (Enter = senden)"></textarea>
+            <button id="chat-senden">Senden</button>
+          </div>
+        </div>
+        <div class="karte" id="rechner-karte">
+          <span class="eyebrow">Rechner · vor Steuern</span>
+          <h2>Cashflow und Rendite</h2>
+          <div class="raster2 kein-druck">
+            <div class="raster2">
+              <div><label for="f-ek">Eigenkapital (€)</label><input id="f-ek" type="number" /></div>
+              <div><label for="f-zins">Zins (%)</label><input id="f-zins" type="number" step="0.05" /></div>
+            </div>
+            <div class="raster2">
+              <div><label for="f-tilg">Tilgung (%)</label><input id="f-tilg" type="number" step="0.25" value="2" /></div>
+              <div><label for="f-stress">Stresstest</label>
+                <select id="f-stress"><option value="">keiner</option><option value="zins">Zins +1 %-Punkt</option><option value="miete">Miete −10 %</option><option value="san">Sanierung +20 %</option><option value="alle">alle drei</option></select></div>
             </div>
           </div>
+          <p class="hinweis">Gelb hinterlegte Felder sind änderbar. Änderungen werden für euch beide gespeichert.</p>
+          <div class="tab-wrap"><table id="rechner"></table></div>
         </div>
-        <div class="tab-wrap"><table id="rechner"></table></div>
-      </section>
-
-      <section class="card kein-druck" id="chat-karte">
-        <h2>💬 Fragen zu diesem Objekt</h2>
-        <div class="vorschlaege">
-          <button class="zweit" data-frage="Was wäre ein realistischer Kaufpreis, damit der Cashflow positiv wird – und wie begründe ich das in der Verhandlung?">Verhandlungspreis?</button>
-          <button class="zweit" data-frage="Welche Strategie bringt hier am meisten, und was wären die nächsten 3 konkreten Schritte?">Beste Strategie?</button>
-          <button class="zweit" data-frage="Welche Unterlagen und Fragen soll ich vor der Besichtigung vom Makler anfordern? Bitte als Liste und als fertige E-Mail.">Fragen an den Makler</button>
-          <button class="zweit" data-frage="Was sind die größten Risiken, und wie kann ich sie vor dem Kauf prüfen?">Risiken prüfen</button>
+        <div class="karte"><div id="bericht"></div></div>
+        <div class="karte kein-druck">
+          <div class="reihe" style="margin-top:0">
+            <button class="zweit" id="drucken">Als PDF speichern</button>
+            <button class="zweit" id="kopieren">Bericht kopieren</button>
+            <button class="zweit" id="neu">Neue Analyse</button>
+          </div>
         </div>
-        <div class="chat" id="chat-verlauf"></div>
-        <div class="chat-eingabe">
-          <textarea id="chat-eingabe" rows="2" placeholder="Frag die KI etwas zu diesem Objekt … (Enter = senden)"></textarea>
-          <button id="chat-senden">Senden</button>
-        </div>
-      </section>
-
-      <section class="card"><div id="bericht"></div></section>
-
-      <section class="card kein-druck">
-        <div class="reihe" style="margin-top:0">
-          <button id="drucken">Als PDF speichern / drucken</button>
-          <button class="zweit" id="kopieren">Bericht kopieren (Markdown)</button>
-          <button class="zweit" id="neu">Neue Analyse</button>
-        </div>
-      </section>
-    </div>
-
-    <section class="card kein-druck" id="verlauf-karte">
-      <h2 id="verlauf-titel">Frühere Analysen</h2>
-      <div id="verlauf"><p class="hinweis">Noch keine.</p></div>
-    </section>
-
-    <section class="card kein-druck" id="allg-karte">
-      <h2>🤖 Frag die KI (allgemein)</h2>
-      <p class="hinweis" style="margin-top:-6px">Finanzierung, Steuern, Förderung, Strategie, Mietrecht, Markt … – die KI sucht bei Bedarf aktuell im Web.</p>
-      <div class="chat" id="allg-verlauf"></div>
-      <div class="chat-eingabe">
-        <textarea id="allg-eingabe" rows="2" placeholder="z. B. Lohnt sich gerade ein Mehrfamilienhaus in Hamm mit 20 % Eigenkapital?"></textarea>
-        <button id="allg-senden">Senden</button>
       </div>
     </section>
 
-    <p class="hinweis kein-druck">Die Analyse ist eine KI-gestützte Ersteinschätzung und ersetzt keine Prüfung durch Gutachter, Bank, Steuerberater oder Anwalt. Zahlen immer an den Quellen und Unterlagen gegenprüfen.</p>
+    <!-- Objekte -->
+    <section class="ansicht" data-ansicht="objekte" hidden>
+      <div class="karte">
+        <h2 id="verlauf-titel">Unsere Objekte</h2>
+        <div id="verlauf" class="liste"><p class="hinweis">Noch keine Analysen. Leg unter „Analysieren“ das erste Objekt an.</p></div>
+      </div>
+    </section>
+
+    <!-- Funde -->
+    <section class="ansicht" data-ansicht="funde" hidden>
+      <div class="karte">
+        <span class="eyebrow">Immo-Scout · stündlich 6–21 Uhr</span>
+        <h2>Neue Anzeigen im Umkreis von 30 km</h2>
+        <p class="hinweis" id="funde-status">Wird geladen …</p>
+        <div class="filter kein-druck" id="funde-filter">
+          <button class="zweit" data-filter="gut" aria-pressed="true">Nur gute</button>
+          <button class="zweit" data-filter="alle" aria-pressed="false">Alle</button>
+        </div>
+        <div id="funde" class="liste"></div>
+      </div>
+    </section>
+
+    <!-- KI fragen -->
+    <section class="ansicht" data-ansicht="fragen" hidden>
+      <div class="karte">
+        <span class="eyebrow">KI-Berater</span>
+        <h2>Allgemeine Fragen</h2>
+        <p class="hinweis">Finanzierung, Steuern, Förderung, Mietrecht, Markt. Die KI sucht bei Bedarf aktuell im Web. Ihr seht beide den Verlauf.</p>
+        <div class="chat" id="allg-verlauf"></div>
+        <div class="chat-eingabe">
+          <textarea id="allg-eingabe" rows="2" placeholder="z. B. Lohnt sich gerade ein Mehrfamilienhaus in Hamm mit 20 % Eigenkapital?"></textarea>
+          <button id="allg-senden">Senden</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Konto -->
+    <section class="ansicht" data-ansicht="konto" hidden>
+      <div class="karte" id="einstellungen">
+        <h2>Anmeldung</h2>
+        <p class="hinweis">Jeder meldet sich mit eigenem Namen an. Der Zugangscode ist für euch beide gleich.</p>
+        <div class="raster2">
+          <div><label for="zugang">Gemeinsamer Zugangscode</label><input id="zugang" type="password" autocomplete="current-password" /></div>
+          <div><label for="name">Dein Name</label><input id="name" list="namen" autocomplete="name" placeholder="Murat oder Yasemin" />
+            <datalist id="namen"><option value="Murat"></option><option value="Yasemin"></option></datalist></div>
+        </div>
+        <div class="reihe"><button id="anmelden">Anmelden</button><button class="zweit versteckt" id="abmelden">Abmelden</button><span id="login-fehler" class="hinweis" style="color:var(--kritisch)"></span></div>
+        <div id="key-bereich">
+          <label for="apikey">KI-Schlüssel (Anthropic API, einmalig für euch beide)</label>
+          <input id="apikey" type="password" placeholder="sk-ant-…" autocomplete="off" />
+          <div class="reihe"><button class="zweit" id="key-speichern">Schlüssel speichern</button></div>
+          <p class="hinweis">Schlüssel erstellen unter console.anthropic.com → API Keys. Eine Analyse kostet grob 0,30–1,50 €, eine Chat-Frage meist wenige Cent.</p>
+        </div>
+        <p class="hinweis" id="key-status"></p>
+      </div>
+      <div class="karte">
+        <h2>Benachrichtigungen</h2>
+        <p class="hinweis">Du bekommst eine Meldung, wenn gute Objekte gefunden werden, wenn dein Partner ein Objekt analysiert oder eine Frage stellt. Auf dem iPhone geht das nur, wenn die App über Teilen → „Zum Home-Bildschirm“ installiert ist (ab iOS 16.4).</p>
+        <div class="reihe"><button id="push-an">Benachrichtigungen einschalten</button><button class="zweit versteckt" id="push-test">Test senden</button><button class="leise versteckt" id="push-aus">Ausschalten</button></div>
+        <p class="hinweis" id="push-status"></p>
+      </div>
+    </section>
   </main>
   <script type="module" src="app.js"></script>
 </body>

@@ -1,7 +1,7 @@
 import Anthropic from "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.1.0/+esm";
 import { systemPrompt, userPrompt, chatSystemPrompt } from "./prompt.js";
 import { rechneSzenario, maxKaufpreisCashflowNull, num } from "./rechner.js";
-import { speicher, geraet, ZugangFalsch } from "./speicher.js";
+import { speicher, geraet, ZugangFalsch, extras, lese, schreibe } from "./speicher.js";
 
 const MODELL = "claude-opus-5-5";
 const SZENARIEN = [["vorsichtig", "Vorsichtig"], ["realistisch", "Realistisch"], ["gut", "Gut"]];
@@ -19,14 +19,12 @@ let apiKey = "";
 // ---------- Anmeldung & Einstellungen ----------
 function zeigeStatus() {
   const gemeinsam = speicher.modus === "gemeinsam";
-  $("verbunden").textContent = gemeinsam
-    ? `✓ Gemeinsamer Speicher verbunden – angemeldet als ${geraet.name || "?"}`
-    : "Nur auf diesem Gerät (nicht verbunden)";
+  $("verbunden").textContent = gemeinsam ? `${geraet.name || "?"} · verbunden` : "nicht angemeldet";
   $("key-status").textContent = apiKey ? "✓ KI-Schlüssel vorhanden" + (gemeinsam ? " (gilt für euch beide)" : "") : "Noch kein KI-Schlüssel hinterlegt";
   $("key-bereich").classList.toggle("versteckt", !!apiKey && gemeinsam);
   $("abmelden").classList.toggle("versteckt", !gemeinsam);
   const fertig = !!apiKey;
-  if (!fertig) $("einstellungen-details").open = true;
+  if (!fertig) geheZu("konto");
 }
 
 async function verbinden() {
@@ -40,19 +38,22 @@ async function verbinden() {
       zeigeVerlauf(n ? await speicher.liste() : d.objekte);
     } else {
       zeigeVerlauf(d.objekte);
-      if (await speicher.serverDa()) $("einstellungen-details").open = true;
+      if (await speicher.serverDa()) geheZu("konto");
     }
   } catch (e) {
     if (e instanceof ZugangFalsch) {
       geraet.zugang = "";
       $("login-fehler").textContent = "Zugangscode falsch – bitte prüfen.";
-      $("einstellungen-details").open = true;
+      geheZu("konto");
       return verbinden(); // ohne Code: lokal weiter
     }
     $("login-fehler").textContent = e.message;
   }
   zeigeStatus();
   ladeAllgemeinenChat();
+  ladeFunde();
+  pushStatus();
+  route();
 }
 
 $("anmelden").onclick = async () => {
@@ -64,6 +65,7 @@ $("anmelden").onclick = async () => {
   geraet.name = name;
   $("zugang").value = "";
   await verbinden();
+  if (speicher.modus === "gemeinsam") { const ziel = offenerLink || "#objekte"; offenerLink = ""; location.hash = ziel; }
 };
 $("abmelden").onclick = () => { geraet.zugang = ""; apiKey = ""; verbinden(); };
 $("key-speichern").onclick = async () => {
@@ -223,7 +225,7 @@ function beschreibeBlock(block) {
 // ---------- Analyse ----------
 async function starteAnalyse() {
   fehler("");
-  if (!apiKey) { fehler("Bitte zuerst oben anmelden bzw. den KI-Schlüssel hinterlegen."); $("einstellungen-details").open = true; return; }
+  if (!apiKey) { fehler("Bitte zuerst oben anmelden bzw. den KI-Schlüssel hinterlegen."); geheZu("konto"); return; }
 
   const text = $("text").value.trim();
   const links = findeLinks(text);
@@ -370,7 +372,11 @@ function zeigeErgebnis() {
   rechne();
   aktuell.chat ||= [];
   zeigeChat("objekt");
-  $("ergebnis").scrollIntoView({ behavior: "smooth" });
+  teilenVorbereiten();
+  const ziel = "#objekt-" + aktuell.id;
+  if (location.hash !== ziel) { stillerWechsel = true; location.hash = ziel; }
+  zeigeAnsicht("objekt");
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function zeigeStrategien() {
@@ -474,21 +480,22 @@ for (const id of ["f-ek", "f-zins", "f-tilg", "f-stress"]) $(id).addEventListene
 
 function zeigeUeberblick(r) {
   const d = aktuell.daten || {};
-  const farbe = { gruen: "var(--gruen)", gelb: "var(--gelb)", rot: "var(--rot)" }[d.ampel] || "var(--muted)";
+  const farbe = { gruen: "var(--gut)", gelb: "var(--warn)", rot: "var(--kritisch)" }[d.ampel] || "var(--leise)";
   const markt = d.markt_kaufpreis_m2;
   const marktText = markt?.min && markt?.max ? `${eur(markt.min)} – ${eur(markt.max)}` : "–";
   const esc = (s) => DOMPurify.sanitize(String(s ?? ""), { ALLOWED_TAGS: [] });
   $("ueberblick").innerHTML = `
-    <div class="ampel">
-      <div class="punkt" style="background:${farbe}">${d.score ?? "?"}</div>
-      <div>
-        <h2 style="margin:0">${esc(aktuell.titel)}</h2>
-        <div class="hinweis">${esc([d.objektart, d.ort, d.baujahr && "Bj. " + d.baujahr].filter(Boolean).join(" · "))}${aktuell.link ? ` · <a href="${esc(aktuell.link)}" target="_blank" rel="noopener">Inserat</a>` : ""}</div>
-        ${d.empfehlung ? `<div style="margin-top:4px"><b>${esc(d.empfehlung)}</b></div>` : ""}
+    <div class="objektkopf">
+      <div class="ampel" style="background:${farbe}" title="Bewertung 0–100">${d.score ?? "?"}</div>
+      <div style="min-width:0">
+        <span class="eyebrow">${esc([d.objektart, d.ort, d.baujahr && "Bj. " + d.baujahr].filter(Boolean).join(" · "))}</span>
+        <h2>${esc(aktuell.titel)}</h2>
+        ${d.empfehlung ? `<div class="empfehlung">${esc(d.empfehlung)}</div>` : ""}
+        <div class="hinweis">${aktuell.autor ? "Analysiert von " + esc(aktuell.autor) + " · " : ""}${aktuell.datum ? new Date(aktuell.datum).toLocaleDateString("de-DE") : ""}${aktuell.link ? ` · <a href="${esc(aktuell.link)}" target="_blank" rel="noopener">Zum Inserat</a>` : ""}</div>
       </div>
     </div>
     ${r ? `<div class="kpis">
-      <div class="kpi"><b>${eur(d.verhandlungsziel)}</b><span>Verhandlungsziel</span></div>
+      <div class="kpi messing"><b>${eur(d.verhandlungsziel)}</b><span>Verhandlungsziel</span></div>
       <div class="kpi"><b>${eur(r.preisM2)}</b><span>Preis/m² (Markt ${marktText})</span></div>
       <div class="kpi"><b>${pct(r.bruttorendite)}</b><span>Bruttorendite (realistisch)</span></div>
       <div class="kpi"><b>${dez(r.faktor)}</b><span>Kaufpreisfaktor</span></div>
@@ -502,7 +509,7 @@ function zeigeUeberblick(r) {
 $("drucken").onclick = () => window.print();
 $("kopieren").onclick = async () => {
   try { await navigator.clipboard.writeText(aktuell.bericht); $("kopieren").textContent = "✓ Kopiert"; } catch { $("kopieren").textContent = "Kopieren nicht möglich"; }
-  setTimeout(() => ($("kopieren").textContent = "Bericht kopieren (Markdown)"), 2000);
+  setTimeout(() => ($("kopieren").textContent = "Bericht kopieren"), 2000);
 };
 $("neu").onclick = () => {
   $("ergebnis").classList.add("versteckt");
@@ -510,7 +517,7 @@ $("neu").onclick = () => {
   for (const id of ["text", "notizen"]) $(id).value = "";
   anhaenge = [];
   zeigeAnhaenge();
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  location.hash = "#neu";
 };
 
 // ---------- Gemeinsame Objektliste ----------
@@ -530,37 +537,31 @@ function speichereSpaeter() {
   speicherTimer = setTimeout(speichereAktuell, 1500);
 }
 
+const AMPEL = { gruen: "gruen", gelb: "gelb", rot: "rot" };
 function zeigeVerlauf(liste = []) {
   const box = $("verlauf");
-  $("verlauf-titel").textContent = speicher.modus === "gemeinsam" ? "Unsere Objekte (gemeinsam)" : "Frühere Analysen (dieses Gerät)";
-  if (!liste.length) { box.innerHTML = `<p class="hinweis">Noch keine.</p>`; return; }
+  $("verlauf-titel").textContent = speicher.modus === "gemeinsam" ? "Unsere Objekte" : "Objekte auf diesem Gerät";
+  if (!liste.length) { box.innerHTML = `<p class="hinweis">Noch keine Analysen. Leg unter „Analysieren“ das erste Objekt an.</p>`; return; }
   box.innerHTML = "";
   for (const e of liste) {
     const zeile = document.createElement("div");
-    zeile.className = "verlauf-eintrag";
-    const a = document.createElement("a");
-    a.textContent = `${{ gruen: "🟢", gelb: "🟡", rot: "🔴" }[e.ampel] ?? "⚪"} ${e.titel}`;
-    a.onclick = async () => {
-      try {
-        const o = await speicher.laden(e.id);
-        if (!o) { fehler("Objekt nicht gefunden."); return; }
-        aktuell = o;
-        zeigeErgebnis();
-      } catch (err) { fehler(err.message); }
-    };
-    const rechts = document.createElement("span");
-    rechts.className = "hinweis";
-    rechts.textContent = `${e.autor ? e.autor + " · " : ""}${e.datum ? new Date(e.datum).toLocaleDateString("de-DE") : ""} `;
-    const x = document.createElement("a");
-    x.textContent = "löschen";
-    x.onclick = async () => {
-      if (!confirm(`„${e.titel}" wirklich löschen? Das gilt für euch beide.`)) return;
+    zeile.className = "zeile";
+    zeile.innerHTML = `<span class="streifen"></span><div style="min-width:0"><a class="titel"></a><div class="meta"></div></div><div class="rechts"></div>`;
+    zeile.firstChild.classList.add(AMPEL[e.ampel] || "x");
+    const titel = zeile.querySelector(".titel");
+    titel.textContent = e.titel;
+    titel.href = "#objekt-" + e.id;
+    zeile.querySelector(".meta").textContent = `${e.autor ? e.autor + " · " : ""}${e.datum ? new Date(e.datum).toLocaleDateString("de-DE") : ""}`;
+    const loeschen = document.createElement("button");
+    loeschen.className = "leise";
+    loeschen.textContent = "Löschen";
+    loeschen.onclick = async () => {
+      if (loeschen.dataset.sicher !== "1") { loeschen.dataset.sicher = "1"; loeschen.textContent = "Für beide löschen?"; setTimeout(() => { loeschen.dataset.sicher = ""; loeschen.textContent = "Löschen"; }, 4000); return; }
       await speicher.loeschen(e.id);
-      if (aktuell && String(aktuell.id) === String(e.id)) $("ergebnis").classList.add("versteckt");
+      if (aktuell && String(aktuell.id) === String(e.id)) { aktuell = null; $("ergebnis").classList.add("versteckt"); }
       zeigeVerlauf(await speicher.liste());
     };
-    rechts.appendChild(x);
-    zeile.append(a, rechts);
+    zeile.querySelector(".rechts").appendChild(loeschen);
     box.appendChild(zeile);
   }
 }
@@ -613,7 +614,7 @@ async function frage(art) {
   const c = CHAT[art];
   const text = $(c.eingabe).value.trim();
   if (!text) return;
-  if (!apiKey) { fehler("Bitte zuerst anmelden bzw. den KI-Schlüssel hinterlegen."); $("einstellungen-details").open = true; return; }
+  if (!apiKey) { fehler("Bitte zuerst anmelden bzw. den KI-Schlüssel hinterlegen."); geheZu("konto"); return; }
   if (art === "objekt" && !aktuell) return;
 
   const objektId = art === "objekt" ? aktuell.id : null;
@@ -701,3 +702,182 @@ document.querySelectorAll("[data-frage]").forEach((b) => {
 });
 
 verbinden();
+
+// ---------- Navigation (Hash: #neu, #objekte, #funde, #fragen, #konto, #objekt-<id>) ----------
+let stillerWechsel = false;
+let offenerLink = "";
+function zeigeAnsicht(name) {
+  document.querySelectorAll("[data-ansicht]").forEach((el) => { el.hidden = el.dataset.ansicht !== name; });
+  document.querySelectorAll("[data-tab]").forEach((a) => {
+    const aktiv = a.dataset.tab === name || (name === "objekt" && a.dataset.tab === "objekte");
+    if (aktiv) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+  if (name === "funde") { schreibe("immo-funde-gesehen", new Date().toISOString()); zeigeFundeZahl(); }
+}
+function geheZu(name) {
+  if (location.hash !== "#" + name) location.hash = "#" + name; else zeigeAnsicht(name);
+}
+async function route() {
+  if (stillerWechsel) { stillerWechsel = false; return; }
+  const h = location.hash.slice(1) || (aktuell ? "objekt" : "neu");
+  const m = /^objekt-([A-Za-z0-9_-]+)$/.exec(h);
+  if (m) {
+    if (aktuell && String(aktuell.id) === m[1]) { zeigeAnsicht("objekt"); return; }
+    try {
+      const o = await speicher.laden(m[1]);
+      if (o) { aktuell = o; zeigeErgebnis(); return; }
+      if (speicher.modus !== "gemeinsam") { offenerLink = "#" + h; $("login-fehler").textContent = "Bitte anmelden – danach öffnet sich das geteilte Objekt."; }
+      else fehler("Dieses Objekt gibt es nicht mehr.");
+    } catch (e) { fehler(e.message); }
+    zeigeAnsicht(speicher.modus === "gemeinsam" ? "objekte" : "konto");
+    return;
+  }
+  zeigeAnsicht(["neu", "objekte", "funde", "fragen", "konto", "objekt"].includes(h) ? h : "neu");
+}
+window.addEventListener("hashchange", route);
+
+// ---------- Teilen (WhatsApp, Teilen-Menü, Link) ----------
+function objektLink() { return `${location.origin}${location.pathname}#objekt-${aktuell.id}`; }
+function teilenText() {
+  const d = aktuell.daten || {};
+  const fin = finanzAusEingabe();
+  const real = d.szenarien?.realistisch ? rechneSzenario(d, { ...d.szenarien.realistisch }, fin) : null;
+  const ampel = { gruen: "🟢", gelb: "🟡", rot: "🔴" }[d.ampel] || "🏠";
+  const zeilen = [
+    `${ampel} *${aktuell.titel}*`,
+    d.empfehlung ? d.empfehlung : null,
+    d.kaufpreis ? `Preis: ${eur(d.kaufpreis)}${d.wohnflaeche_m2 ? ` · ${d.wohnflaeche_m2} m² · ${eur(d.kaufpreis / d.wohnflaeche_m2)}/m²` : ""}` : null,
+    real ? `Faktor ${dez(real.faktor)} · Cashflow ${eur(real.cashflowMonat)}/Monat` : null,
+    d.verhandlungsziel ? `Verhandlungsziel: ${eur(d.verhandlungsziel)}` : null,
+    "",
+    `Analyse: ${objektLink()}`,
+    aktuell.link ? `Inserat: ${aktuell.link}` : null,
+  ];
+  return zeilen.filter((z) => z !== null).join("\n");
+}
+function teilenVorbereiten() {
+  $("whatsapp").href = "https://wa.me/?text=" + encodeURIComponent(teilenText());
+  $("teilen").hidden = !navigator.share;
+}
+$("teilen").onclick = async () => {
+  try { await navigator.share({ title: aktuell.titel, text: teilenText(), url: objektLink() }); } catch { /* abgebrochen */ }
+};
+$("link-kopieren").onclick = async () => {
+  try { await navigator.clipboard.writeText(objektLink()); $("link-kopieren").textContent = "✓ Link kopiert"; }
+  catch { $("link-kopieren").textContent = objektLink(); }
+  setTimeout(() => ($("link-kopieren").textContent = "Link kopieren"), 2500);
+};
+
+// ---------- Funde des Scouts ----------
+let funde = [];
+let fundeFilter = "gut";
+async function ladeFunde() {
+  if (speicher.modus !== "gemeinsam") { $("funde-status").textContent = "Melde dich unter „Konto“ an, um die Funde des Scouts zu sehen."; $("funde").innerHTML = ""; return; }
+  try {
+    const d = await extras.funde();
+    funde = d.funde || [];
+    const st = d.status;
+    $("funde-status").textContent = st ? `Letzte Suche ${new Date(st.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}: ${st.neu} neu, davon ${st.gut} gut${st.fehler?.length ? ` · Probleme: ${st.fehler.join("; ")}` : ""}` : "Der Scout hat noch nicht gesucht. Er läuft stündlich zwischen 6 und 21 Uhr.";
+    zeigeFunde();
+    zeigeFundeZahl();
+  } catch (e) { $("funde-status").textContent = e.message; }
+}
+function zeigeFundeZahl() {
+  const seit = lese("immo-funde-gesehen", "");
+  const n = funde.filter((f) => f.gut && (!seit || f.gefunden > seit)).length;
+  $("funde-zahl").hidden = !n;
+  $("funde-zahl").textContent = n;
+}
+function zeigeFunde() {
+  const box = $("funde");
+  const liste = funde.filter((f) => fundeFilter === "alle" || f.gut);
+  if (!liste.length) { box.innerHTML = `<p class="hinweis">${fundeFilter === "gut" ? "Gerade keine guten neuen Funde. Unter „Alle“ siehst du jede neue Anzeige." : "Noch keine Funde."}</p>`; return; }
+  box.innerHTML = "";
+  for (const f of liste.slice(0, 120)) {
+    const z = document.createElement("div");
+    z.className = "zeile";
+    z.innerHTML = `<span class="streifen"></span><div style="min-width:0"><a class="titel" target="_blank" rel="noopener"></a><div class="meta"></div></div><div class="rechts"></div>`;
+    if (f.gut) z.firstChild.classList.add("gruen");
+    const t = z.querySelector(".titel");
+    t.textContent = f.titel || "(ohne Titel)";
+    t.href = f.url;
+    if (f.gut) { const g = document.createElement("span"); g.className = "marke-gut"; g.textContent = "gut"; t.after(g); }
+    const fak = f.faktor_inserat ?? f.faktor;
+    z.querySelector(".meta").innerHTML = "";
+    z.querySelector(".meta").append(
+      `${f.kategorie} · ${f.km ?? "?"} km ${f.ort} · `,
+      Object.assign(document.createElement("span"), { className: "zahl", textContent: `${f.preis_text}${f.preis_m2 ? ` · ${f.preis_m2.toLocaleString("de-DE")} €/m²` : ""}${fak ? ` · F ${String(fak).replace(".", ",")}` : ""}` }),
+      ` · ${f.eingestellt}`,
+    );
+    const analysieren = document.createElement("button");
+    analysieren.textContent = "Analysieren";
+    analysieren.onclick = () => {
+      $("text").value = `${f.url}\n\n${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}\n${f.beschreibung || ""}`;
+      $("modus").value = "schnell";
+      location.hash = "#neu";
+      starteAnalyse();
+    };
+    const wa = document.createElement("a");
+    wa.className = "knopf zweit";
+    wa.textContent = "WhatsApp";
+    wa.target = "_blank"; wa.rel = "noopener";
+    wa.href = "https://wa.me/?text=" + encodeURIComponent(`🏠 ${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}${fak ? ` · Faktor ~${fak}` : ""}\n${f.url}`);
+    wa.style.padding = "7px 10px"; wa.style.fontSize = ".82rem";
+    z.querySelector(".rechts").append(analysieren, wa);
+    box.appendChild(z);
+  }
+}
+document.querySelectorAll("#funde-filter [data-filter]").forEach((b) => {
+  b.onclick = () => {
+    fundeFilter = b.dataset.filter;
+    document.querySelectorAll("#funde-filter [data-filter]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    zeigeFunde();
+  };
+});
+
+// ---------- Push-Benachrichtigungen ----------
+const VAPID_PUBLIC = "BAHdvRSml9GULT2Qv1SpcV2-jOC_0J88L_cjOQiTmbpBJ5SJmrAVgNVDkEXlGCHm_U9luLOWQjnqpoJa-QkfofE";
+const pushMoeglich = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+function b64ZuBytes(b64) {
+  const s = atob((b64 + "=".repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+async function swRegistrierung() { return navigator.serviceWorker.register("sw.js"); }
+async function pushStatus() {
+  const st = $("push-status");
+  if (!pushMoeglich()) {
+    st.textContent = /iPhone|iPad/.test(navigator.userAgent) ? "Auf dem iPhone zuerst über Teilen → „Zum Home-Bildschirm“ installieren und die App von dort öffnen." : "Dieser Browser unterstützt keine Benachrichtigungen.";
+    $("push-an").disabled = true; return;
+  }
+  if (speicher.modus !== "gemeinsam") { st.textContent = "Erst anmelden, dann Benachrichtigungen einschalten."; $("push-an").disabled = true; return; }
+  $("push-an").disabled = false;
+  const reg = await swRegistrierung();
+  const abo = await reg.pushManager.getSubscription();
+  const an = !!abo && Notification.permission === "granted";
+  $("push-an").classList.toggle("versteckt", an);
+  $("push-test").classList.toggle("versteckt", !an);
+  $("push-aus").classList.toggle("versteckt", !an);
+  st.textContent = an ? `Benachrichtigungen sind auf diesem Gerät an (für ${geraet.name}).` : Notification.permission === "denied" ? "Benachrichtigungen sind in den Geräte-Einstellungen blockiert." : "";
+  if (an) extras.pushAbo(abo.toJSON(), geraet.name).catch(() => {}); // Abo aktuell halten
+}
+$("push-an").onclick = async () => {
+  try {
+    const erlaubt = await Notification.requestPermission();
+    if (erlaubt !== "granted") { $("push-status").textContent = "Ohne Erlaubnis keine Benachrichtigungen."; return; }
+    const reg = await swRegistrierung();
+    await navigator.serviceWorker.ready;
+    const abo = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ZuBytes(VAPID_PUBLIC) }));
+    await extras.pushAbo(abo.toJSON(), geraet.name);
+    await pushStatus();
+  } catch (e) { $("push-status").textContent = "Einschalten fehlgeschlagen: " + e.message; }
+};
+$("push-test").onclick = async () => {
+  try { const r = await extras.pushTest(); $("push-status").textContent = `Test an ${r.gesendet} Gerät(e) geschickt.`; } catch (e) { $("push-status").textContent = e.message; }
+};
+$("push-aus").onclick = async () => {
+  const reg = await swRegistrierung();
+  const abo = await reg.pushManager.getSubscription();
+  if (abo) { await extras.pushAbmelden(abo.endpoint).catch(() => {}); await abo.unsubscribe(); }
+  await pushStatus();
+};
+if ("serviceWorker" in navigator) swRegistrierung().catch(() => {});
