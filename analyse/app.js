@@ -1,4 +1,4 @@
-import Anthropic from "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.1.0/+esm";
+import Anthropic from "./vendor/anthropic-sdk-1.1.0.mjs";
 import { systemPrompt, userPrompt, chatSystemPrompt } from "./prompt.js";
 import { rechneSzenario, maxKaufpreisCashflowNull, num } from "./rechner.js";
 import { speicher, geraet, ZugangFalsch, extras, lese, schreibe } from "./speicher.js";
@@ -65,17 +65,33 @@ $("anmelden").onclick = async () => {
   geraet.name = name;
   $("zugang").value = "";
   await verbinden();
-  if (speicher.modus === "gemeinsam") { const ziel = offenerLink || "#objekte"; offenerLink = ""; location.hash = ziel; }
+  if (speicher.modus !== "gemeinsam") return;
+  if (!apiKey) {
+    // Ohne KI-Schlüssel auf "Konto" bleiben und klar sagen, was fehlt
+    location.hash = "#konto";
+    hinweis("Angemeldet. Jetzt noch einmalig den KI-Schlüssel eintragen – danach funktioniert die Analyse.");
+    $("apikey").focus();
+    return;
+  }
+  const ziel = offenerLink || "#neu";
+  offenerLink = "";
+  location.hash = ziel;
+  hinweis(`Angemeldet als ${geraet.name}.`);
 };
 $("abmelden").onclick = () => { geraet.zugang = ""; apiKey = ""; verbinden(); };
 $("key-speichern").onclick = async () => {
   const k = $("apikey").value.trim();
   if (!k) return;
   try {
+    if (!/^sk-ant-/.test(k)) { $("login-fehler").textContent = "Der Schlüssel beginnt mit „sk-ant-“. Bitte komplett kopieren."; return; }
     await speicher.schluesselSpeichern(k);
     apiKey = k;
     $("apikey").value = "";
     zeigeStatus();
+    hinweis("KI-Schlüssel gespeichert. Du kannst jetzt analysieren.");
+    const ziel = offenerLink || "#neu";
+    offenerLink = "";
+    location.hash = ziel;
   } catch (e) { $("login-fehler").textContent = e.message; }
 };
 // Wenn der Partner etwas Neues angelegt hat: beim Zurückkehren zur App neu laden
@@ -200,7 +216,9 @@ function log(text, ok = false) {
   $("log").appendChild(d);
   $("log").scrollTop = $("log").scrollHeight;
 }
+function hinweis(text, art = "info") { if (text && window.zeigeHinweis) window.zeigeHinweis(text, art); }
 function fehler(text) {
+  if (text) hinweis(text, "fehler");
   $("fehler").textContent = text;
   $("fehler").classList.toggle("versteckt", !text);
 }
@@ -225,7 +243,11 @@ function beschreibeBlock(block) {
 // ---------- Analyse ----------
 async function starteAnalyse() {
   fehler("");
-  if (!apiKey) { fehler("Bitte zuerst oben anmelden bzw. den KI-Schlüssel hinterlegen."); geheZu("konto"); return; }
+  if (!apiKey) {
+    fehler(speicher.modus === "gemeinsam" ? "Es ist noch kein KI-Schlüssel hinterlegt. Bitte unter „Konto“ eintragen." : "Bitte zuerst unter „Konto“ anmelden (Zugangscode und Name).");
+    geheZu("konto");
+    return;
+  }
 
   const text = $("text").value.trim();
   const links = findeLinks(text);
@@ -247,6 +269,8 @@ async function starteAnalyse() {
   const heute = new Date().toLocaleDateString("de-DE", { day: "2-digit", month: "long", year: "numeric" });
 
   setzeLaeuft(true);
+  hinweis("Analyse gestartet – das dauert jetzt etwas.");
+  $("fortschritt").scrollIntoView({ behavior: "smooth", block: "start" });
   $("log").innerHTML = "";
   $("denken").textContent = "";
   log(link ? `Starte Analyse für ${link}` : "Starte Analyse");
@@ -881,3 +905,4 @@ $("push-aus").onclick = async () => {
   await pushStatus();
 };
 if ("serviceWorker" in navigator) swRegistrierung().catch(() => {});
+window.__appBereit = true;

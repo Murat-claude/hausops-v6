@@ -175,13 +175,31 @@
     .filter { display: flex; gap: 6px; flex-wrap: wrap; }
     .filter button[aria-pressed="true"] { background: var(--akzent); color: var(--flaeche); }
 
+    .toast { position: fixed; z-index: 40; left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px));
+      top: calc(env(safe-area-inset-top, 0px) + 64px); max-width: 640px; margin: 0 auto; padding: 12px 14px; border-radius: 10px;
+      font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.18); cursor: pointer; }
+    .toast.fehler { background: var(--kritisch); color: #fff; }
+    .toast.info { background: var(--akzent); color: var(--flaeche); }
     @media print {
       body { background: #fff; color: #000; } body::before, .kopf, .kein-druck { display: none !important; }
       .karte { border: 0; padding: 0; } td input { border: 0; background: none; }
     }
   </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+  <script src="vendor/marked-12.0.2.min.js"></script>
+  <script src="vendor/purify-3.1.6.min.js"></script>
+  <script>
+    // Fehler immer sichtbar machen – auch wenn die App selbst nicht startet
+    function zeigeHinweis(text, art) {
+      var el = document.getElementById("hinweis-toast");
+      if (!el) return;
+      el.textContent = text; el.className = "toast " + (art || "fehler"); el.hidden = false; el.onclick = function () { el.hidden = true; };
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(function () { el.hidden = true; }, art === "info" ? 4000 : 12000);
+    }
+    window.addEventListener("error", function (e) { zeigeHinweis("Fehler in der App: " + (e.message || "unbekannt") + ". Bitte Seite neu laden."); });
+    window.addEventListener("unhandledrejection", function (e) { zeigeHinweis("Fehler: " + ((e.reason && e.reason.message) || e.reason || "unbekannt")); });
+    setTimeout(function () { if (!window.__appBereit) zeigeHinweis("Die App konnte nicht vollständig laden. Bitte Seite neu laden (in Safari: nach unten ziehen). Hilft das nicht, bitte Bescheid geben."); }, 10000);
+  </script>
 </head>
 <body>
   <header class="kopf">
@@ -198,6 +216,7 @@
     </div>
   </header>
 
+  <div id="hinweis-toast" class="toast" role="alert" hidden></div>
   <main>
     <!-- Analysieren -->
     <section class="ansicht" data-ansicht="neu">
