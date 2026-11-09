@@ -36,7 +36,7 @@ async function call({ system, messages, format, effort = "medium", maxTokens = 1
 
 export function friendlyError(e) {
   const s = e?.status;
-  if (s === 401) return "API-Schlüssel ungültig – bitte unter Einstellungen prüfen.";
+  if (s === 401) return "KI-Schlüssel ungültig – unter Einstellungen → KI neu eintragen (console.anthropic.com → API Keys, beginnt mit „sk-ant-“). Ohne Schlüssel: CSV-Datei nehmen.";
   if (s === 429) return "Zu viele Anfragen / Guthaben aufgebraucht – bitte später erneut versuchen.";
   if (s === 413) return "Datei zu groß für die KI (max. ca. 30 MB).";
   if (s === 400 && /web_search|web search/i.test(e?.message || "")) return "Die Web-Suche ist für deinen API-Schlüssel nicht freigeschaltet (Anthropic Console → Settings → Privacy/Web search).";

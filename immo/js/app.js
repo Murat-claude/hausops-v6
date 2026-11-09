@@ -1079,7 +1079,7 @@ function tableImportStart() {
         <label class="qtile"><span>📷</span>Foto / Screenshot der Tabelle<small class="muted">KI liest die Zahlen</small><input type="file" accept="image/*,application/pdf" data-change="tableImportPhoto" hidden></label>
         <label class="qtile"><span>📄</span>CSV-Datei<small class="muted">Numbers/Excel: Exportieren → CSV – 100 % genau</small><input type="file" accept=".csv,text/csv,text/plain" data-change="tableImportCsv" hidden></label>
       </div>
-      <p class="small muted">Vor dem Eintragen siehst du jede Zeile und kannst die Zuordnung ändern. Summenzeilen werden übersprungen, Monate, die schon erfasst sind, ebenfalls.${K.hasKey() ? "" : ' Für das Foto bitte unter <a href="#/einstellungen">Einstellungen → KI</a> den Schlüssel eintragen – die CSV-Datei geht ohne.'}</p>
+      <p class="small muted">Vor dem Eintragen siehst du jede Zeile und kannst die Zuordnung ändern. Summenzeilen werden übersprungen, ebenso Monate, die schon erfasst sind oder noch in der Zukunft liegen.${K.hasKey() ? "" : ' Für das Foto bitte unter <a href="#/einstellungen">Einstellungen → KI</a> den Schlüssel eintragen – die CSV-Datei geht ohne.'}</p>
       <div id="tiMsg" class="small"></div>`,
   });
 }
@@ -1132,7 +1132,7 @@ function tableImportReview() {
         r.target = v === "expense" ? { type: "expense", category: form[`c${i}`].value, objectId: form[`o${i}`].value } : v.startsWith("fewo:") ? { type: "fewo", unitId: v.slice(5) } : v.startsWith("miete:") ? { type: "miete", contractId: v.slice(6) } : v.startsWith("newfewo:") ? { type: "newfewo", objectId: v.slice(8) } : { type: "ignore" };
         $(`[data-tix="${i}"]`, form).style.display = v === "expense" ? "" : "none";
       });
-      const show = () => { read(); const e = C.monthTableEntries(state, Number(form.year.value), t.rows.map((r) => (r.target.type === "newfewo" ? { ...r, target: { type: "ignore" } } : r))); const nf = t.rows.filter((r) => r.target.type === "newfewo");
+      const show = () => { read(); const e = C.monthTableEntries(state, Number(form.year.value), t.rows.map((r) => (r.target.type === "newfewo" ? { ...r, target: { type: "ignore" } } : r)), { until: C.monthKey(today()) }); const nf = t.rows.filter((r) => r.target.type === "newfewo");
         $("#tiPreview", form).innerHTML = `Es werden <b>${e.payments.length} Einnahmen</b> (${eur(sum(e.payments, (p) => p.amount))})${nf.length ? ` plus ${nf.length} neue Ferienwohnung(en) mit ihren Umsätzen` : ""} und <b>${e.expenses.length} Ausgaben</b> (${eur(sum(e.expenses, (x) => x.amount))}) eingetragen.${e.skipped.length ? ` ${e.skipped.length} Monate sind schon erfasst und werden übersprungen.` : ""}`; };
       form.addEventListener("change", show); form.addEventListener("input", show); show();
     },
@@ -1143,7 +1143,7 @@ function tableImportReview() {
         const u = { id: C.uid("u_"), objectId: r.target.objectId, type: "ferienwohnung", name, vat: 7 };
         state.units.push(u); r.target = { type: "fewo", unitId: u.id };
       }
-      const e = C.monthTableEntries(state, year, t.rows, { batch });
+      const e = C.monthTableEntries(state, year, t.rows, { batch, until: C.monthKey(today()) });
       if (!e.payments.length && !e.expenses.length) { toast("Nichts Neues zu übernehmen."); return false; }
       state.payments.push(...e.payments); state.expenses.push(...e.expenses);
       const first = [...e.payments, ...e.expenses].map((x) => x.date.slice(0, 7)).sort()[0];

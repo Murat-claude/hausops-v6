@@ -1290,7 +1290,7 @@ export function guessTableTarget(state, row) {
 }
 
 // Einträge erzeugen (nur Monate, die noch nicht erfasst sind). Liefert { payments, expenses, skipped }
-export function monthTableEntries(state, year, rows, { batch = "" } = {}) {
+export function monthTableEntries(state, year, rows, { batch = "", until = "" } = {}) {
   const payments = [], expenses = [], skipped = [];
   const key = (m) => `${year}-${String(m + 1).padStart(2, "0")}`;
   const units = new Map((state.units || []).map((u) => [u.id, u]));
@@ -1300,6 +1300,7 @@ export function monthTableEntries(state, year, rows, { batch = "" } = {}) {
     r.months.forEach((amount, m) => {
       if (!amount || t.type === "ignore" || !t.type) return;
       const k = key(m);
+      if (until && k > until) return; // Zukunft: noch nicht eingegangen
       if (t.type === "miete") {
         const c = (state.contracts || []).find((x) => x.id === t.contractId); if (!c) return;
         if ((state.payments || []).some((p) => p.kind === "miete" && p.period === k && p.contractId === c.id)) return skipped.push(`${r.label} ${k}`);
