@@ -1,7 +1,7 @@
 // Immo-Scout alle 15 Minuten (ca. 6–22 Uhr): sucht neue Anzeigen um Hamm (30 km),
 // rechnet die vielversprechendsten sofort durch und meldet nur echte Kandidaten per Push.
 import { getStore } from "@netlify/blobs";
-import { SUCHEN, UA, parseListe, bewerte, istNeu, istGut } from "../../lib/scout-kern.mjs";
+import { SUCHEN, UA, parseListe, bewerte, istNeu, istGut, UMBAU_KATEGORIEN } from "../../lib/scout-kern.mjs";
 import { leseKleinanzeigenHtml } from "../../lib/inserat-parse.js";
 import { auswerten } from "../../lib/auswertung.js";
 import { sendePush } from "../../lib/push.mjs";
@@ -15,6 +15,7 @@ async function holenStandard(pfad, versuch = 1) {
   return r.text();
 }
 
+const rang = (s) => ({ gut: 3, bedingt: 2, nein: 1 }[s.eignung] || 0) - (s.name === "Service-Apartments" ? 0.5 : 0);
 const eur = (v) => Math.round(v).toLocaleString("de-DE") + " €";
 
 // Volle Regel-Bewertung aus der Detailseite
@@ -24,11 +25,15 @@ export function bewerteDetail(fund, html) {
   e.kaufpreis ||= fund.preis;
   if (fund.kategorie !== "Grundstück") e.wohnflaeche_m2 ||= fund.flaeche;
   if (fund.kategorie === "Grundstück") { e.objektart = "Grundstück"; delete e.wohnflaeche_m2; e.grundstueck_m2 ||= fund.flaeche; }
-  if (!e.objektart) e.objektart = { Mehrfamilienhaus: "Mehrfamilienhaus", Eigentumswohnung: "Eigentumswohnung" }[fund.kategorie] || "Einfamilienhaus";
+  // Gemischte Objekte (Mehrfamilienhaus, Wohn- und Geschäftshaus) bleiben Wohnobjekte – nur leere Angaben werden ergänzt
+  const unklar = !e.objektart || /einfamilien/i.test(e.objektart);
+  if (fund.kategorie === "Büro zum Umbau" && unklar) e.objektart = "Bürogebäude";
+  if (fund.kategorie === "Hotel/Pension" && unklar) e.objektart = "Hotel/Pension";
+  if (!e.objektart) e.objektart = { Mehrfamilienhaus: "Mehrfamilienhaus", Eigentumswohnung: "Eigentumswohnung", Ferienwohnung: "Eigentumswohnung", "Wohn- und Geschäftshaus": "Wohn- und Geschäftshaus" }[fund.kategorie] || "Einfamilienhaus";
   if (!e.kaufpreis || (!e.wohnflaeche_m2 && !/grundst/i.test(e.objektart))) return null;
   const { daten } = auswerten(e);
   const halten = daten.strategien.find((s) => s.name === "Halten & vermieten");
-  const beste = daten.strategien.filter((s) => !s.zusatz && s.name !== "Monteur- / Ferienwohnung").sort((a, b) => ({ gut: 3, bedingt: 2, nein: 1 }[b.eignung] - { gut: 3, bedingt: 2, nein: 1 }[a.eignung]))[0];
+  const beste = daten.strategien.filter((s) => !s.zusatz && s.name !== "Monteur- / Ferienwohnung").sort((a, b) => rang(b) - rang(a) || (b.max_kaufpreis || 0) - (a.max_kaufpreis || 0))[0];
   const real = daten.szenarien.realistisch;
   return {
     ampel: daten.ampel, score: daten.score, empfehlung: daten.empfehlung, verhandlungsziel: daten.verhandlungsziel,
@@ -42,16 +47,19 @@ export function bewerteDetail(fund, html) {
   };
 }
 
-export async function lauf(store, holen = holenStandard) {
+export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
   const gesehen = new Set((await store.get("scout/gesehen", { type: "json" })) || []);
   const funde = (await store.get("funde/liste", { type: "json" })) || [];
   const neu = [], fehler = [];
   // Ergebnisseiten parallel laden (eine Seite je Kategorie)
-  const seiten = await Promise.allSettled(SUCHEN.map(([, pfad]) => holen(pfad)));
+  // Umbau- und Ferien-Suchen (größerer Umkreis) nur im ersten Lauf jeder Stunde
+  const stundenLauf = jetzt.getUTCMinutes() < 15;
+  const suchen = SUCHEN.filter(([, , o = {}]) => !o.stuendlich || stundenLauf);
+  const seiten = await Promise.allSettled(suchen.map(([, pfad]) => holen(pfad)));
   seiten.forEach((s, i) => {
-    const kategorie = SUCHEN[i][0];
+    const [kategorie, , opts = {}] = suchen[i];
     if (s.status === "rejected") { fehler.push(`${kategorie}: ${s.reason?.message || s.reason}`); return; }
-    for (const o of parseListe(s.value, kategorie).map(bewerte)) {
+    for (const o of parseListe(s.value, kategorie).map((x) => bewerte(x, opts))) {
       if (gesehen.has(o.id)) continue;
       gesehen.add(o.id);
       if (istNeu(o) && !o.ausschluss) neu.push({ ...o, gefunden: new Date().toISOString(), gut: false });
@@ -60,7 +68,10 @@ export async function lauf(store, holen = holenStandard) {
   neu.sort((a, b) => b.punkte - a.punkte || (a.preis_m2 ?? 9e9) - (b.preis_m2 ?? 9e9));
 
   // Die vielversprechendsten sofort durchrechnen
-  const kandidaten = neu.filter((o) => o.punkte >= 1 && !["Garage", "Gewerbe"].includes(o.kategorie)).slice(0, MAX_DETAILS);
+  // Umbau-Objekte bekommen einen eigenen Platz, damit sie nicht hinter Wohnobjekten zurückfallen
+  const umbau = neu.filter((o) => UMBAU_KATEGORIEN.includes(o.kategorie) && o.punkte >= 1).slice(0, 2);
+  const wohnen = neu.filter((o) => o.punkte >= 1 && !["Garage", "Gewerbe", ...UMBAU_KATEGORIEN].includes(o.kategorie)).slice(0, MAX_DETAILS - umbau.length);
+  const kandidaten = [...umbau, ...wohnen];
   await Promise.allSettled(kandidaten.map(async (o) => {
     try {
       const html = await holen(o.url.replace("https://www.kleinanzeigen.de/", ""));

@@ -1,6 +1,7 @@
 // Regelbasierte Immobilien-Auswertung – ohne KI, ohne laufende Kosten.
 // Alle Annahmen sind sichtbar und änderbar; jede Zahl im Bericht ist entweder aus der Anzeige oder als Annahme gekennzeichnet.
 import { rechneSzenario, maxKaufpreisCashflowNull, num } from "../rechner.js";
+import { umbauStrategien, umbauRisiken, UMBAU_ANNAHMEN } from "./umbau.js";
 
 export const STANDARD_ANNAHMEN = {
   miete_m2: 7.5,          // €/m² kalt bei Neuvermietung, Raum Hamm/Unna/Soest (Angebotsmieten ca. 7–9 €)
@@ -15,6 +16,7 @@ export const STANDARD_ANNAHMEN = {
   notar: 2.0,             // Notar + Grundbuch
   makler: 3.57,           // falls in der Anzeige nichts steht
   monteur_preis: 13,      // € pro Bett und Nacht
+  ...UMBAU_ANNAHMEN,      // Umbau Büro/Hotel → Wohnen (siehe lib/umbau.js)
 };
 
 const r5 = (v) => Math.round(v / 5000) * 5000;
@@ -54,6 +56,8 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   const einheiten = einheitenGeschaetzt ? Math.max(3, Math.round(num(e.wohnflaeche_m2) / 70)) : Math.max(1, num(e.einheiten) || 1);
   const istEtw = /wohnung/i.test(e.objektart || "");
   const istGrundstueck = /grundst/i.test(e.objektart || "") && !fl;
+  // Büro, Gewerbe, Hotel/Pension: Umbau-Strategien statt Wohn-Strategien
+  const istGewerbe = /gewerbe|büro|buero|hotel|pension|praxis|boarding/i.test(e.objektart || "") && !/wohn- und geschäft/i.test(e.objektart || "");
   const makler = e.makler_prozent != null && e.makler_prozent !== "" ? num(e.makler_prozent) : a.makler;
   const nkProzent = num(a.grest) + num(a.notar) + makler;
   const annahmenListe = [];
@@ -63,7 +67,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   // ---- Plausibilität der Eckdaten
   if (kp && fl && !istGrundstueck) {
     const pm2 = kp / fl;
-    if (pm2 < 400) warnungen.push(`Preis pro m² nur ${eur(pm2)} – Kaufpreis oder Wohnfläche wahrscheinlich falsch erkannt. Bitte mit der Anzeige vergleichen.`);
+    if (pm2 < (istGewerbe ? 150 : 400)) warnungen.push(`Preis pro m² nur ${eur(pm2)} – Kaufpreis oder Wohnfläche wahrscheinlich falsch erkannt. Bitte mit der Anzeige vergleichen.`);
     if (pm2 > 7000) warnungen.push(`Preis pro m² ${eur(pm2)} ungewöhnlich hoch – Kaufpreis und Wohnfläche prüfen.`);
   }
   if (e.baujahr && (e.baujahr > jetzt + 2 || e.baujahr < 1500)) warnungen.push(`Baujahr ${e.baujahr} unplausibel – bitte prüfen.`);
@@ -136,7 +140,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   const strategien = [];
   const nk = (preis) => preis * nkProzent / 100;
 
-  if (real && !istGrundstueck) {
+  if (real && !istGrundstueck && (!istGewerbe || istMiete > 0)) {
     const maxKp = maxKaufpreisCashflowNull(basis, szenarien.realistisch, fin);
     const cf = real.cashflowMonat;
     // Bei nur geschätzter Miete braucht "gut" einen deutlichen Puffer
@@ -151,7 +155,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     });
   }
 
-  if (fl && kp && !istGrundstueck) {
+  if (fl && kp && !istGrundstueck && !istGewerbe) {
     // Fix & Flip: kaufen, sanieren, als saniert verkaufen (9 Monate Haltezeit)
     // Mehrfamilienhäuser werden nach Ertrag verkauft, kleinere Objekte nach Preis pro m²
     const mfh = einheiten >= 3;
@@ -172,7 +176,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     });
   }
 
-  if (einheiten >= 2 && fl && kp && !istEtw) {
+  if (einheiten >= 2 && fl && kp && !istEtw && !istGewerbe) {
     // Vermietete Wohnungen erzielen weniger als freie (Abschlag 15 %)
     const vermietetAbschlag = e.merkmale.vermietet && !e.merkmale.leer ? 0.85 : 1;
     const erloes = fl * num(a.etw_bestand_m2) * vermietetAbschlag;
@@ -208,7 +212,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     strategien.push({ name: "Grundstück / Bebauung", eignung, gewinn, max_kaufpreis: maxKp, begruendung: text, zusatz: !istGrundstueck });
   }
 
-  if (fl && kp && !istGrundstueck) {
+  if (fl && kp && !istGrundstueck && !istGewerbe) {
     const betten = Math.max(2, Math.round((num(e.zimmer) || fl / 25) * 1.3));
     const brutto = betten * num(a.monteur_preis) * 365 * 0.6;
     const netto = brutto * 0.6;
@@ -222,24 +226,35 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     });
   }
 
+  if (istGewerbe) {
+    // Wohnungs-Annahmen (Marktmiete, Renovierung …) gelten für leere Büros nicht
+    if (!(istMiete > 0)) for (let i = annahmenListe.length - 1; i >= 0; i--) if (/^(Kaltmiete|Renovierung|Nicht umlagefähige)/.test(annahmenListe[i])) annahmenListe.splice(i, 1);
+    strategien.push(...umbauStrategien(e, a, nkProzent, annahmenListe));
+  }
+
   // ---- Ampel, Punktzahl, Verhandlungsziel
   const rang = { gut: 3, bedingt: 2, nein: 1 };
   // Zusatzpotenziale (Teilfläche, Monteurzimmer) bestimmen die Ampel nicht
   const kern = strategien.filter((s) => s.name !== "Monteur- / Ferienwohnung" && !s.zusatz);
-  const beste = [...kern].sort((x, y) => rang[y.eignung] - rang[x.eignung] || (y.max_kaufpreis || 0) - (x.max_kaufpreis || 0))[0];
+  // Service-Apartments sind ein Betreibergeschäft – bei Gleichstand zählt die solidere Strategie
+  const r = (s) => rang[s.eignung] - (s.name === "Service-Apartments" ? 0.5 : 0);
+  const beste = [...kern].sort((x, y) => r(y) - r(x) || (y.max_kaufpreis || 0) - (x.max_kaufpreis || 0))[0];
   let ampel = !beste ? "gelb" : beste.eignung === "gut" ? "gruen" : beste.eignung === "bedingt" ? "gelb" : "rot";
   // Bei fraglichen Daten nie Grün – erst prüfen
   if (warnungen.length && ampel === "gruen") ampel = "gelb";
   let score = { gruen: 75, gelb: 50, rot: 25 }[ampel];
   if (real?.faktor) score += Math.max(-15, Math.min(15, Math.round((18 - real.faktor) * 2)));
   score = Math.max(5, Math.min(95, score));
-  const maxPreise = kern.map((s) => s.max_kaufpreis).filter((v) => v > 0);
+  const solide = kern.filter((s) => s.name !== "Service-Apartments");
+  const maxPreise = (solide.length ? solide : kern).map((s) => s.max_kaufpreis).filter((v) => v > 0);
   const besterMax = maxPreise.length ? Math.max(...maxPreise) : null;
   // Liegt der tragbare Preis weit unter dem Angebot, ist ein "Verhandlungsziel" nicht realistisch
   const verhandlungsziel = !besterMax ? r5(kp * 0.92) : besterMax < kp * 0.7 ? null : r5(Math.min(kp * 0.97, besterMax));
   const empfehlung = warnungen.length ? `Daten prüfen: ${warnungen[0].split(" – ")[0]}`
     : ampel === "gruen" ? `Interessant – ${beste.name} funktioniert zum Angebotspreis`
-    : ampel === "gelb" ? `Nur mit Verhandlung: ${beste?.max_kaufpreis ? beste.name + " lohnt sich bis ca. " + eur(beste.max_kaufpreis) : "Zahlen prüfen"}`
+    : ampel === "gelb" ? (beste?.max_kaufpreis >= kp
+      ? `Prüfenswert: ${beste.name} trägt sich bis ca. ${eur(beste.max_kaufpreis)} – Annahmen vor Ort prüfen`
+      : `Nur mit Verhandlung: ${beste?.max_kaufpreis ? beste.name + " lohnt sich bis ca. " + eur(beste.max_kaufpreis) : "Zahlen prüfen"}`)
     : `Zum Angebotspreis nicht wirtschaftlich${besterMax ? " – interessant erst ab ca. " + eur(besterMax) : ""}`;
 
   const daten = {
@@ -257,6 +272,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
 
 function risiken(e, d) {
   const r = [];
+  if (/gewerbe|büro|buero|hotel|pension|praxis|boarding/i.test(e.objektart || "") && !/wohn- und geschäft/i.test(e.objektart || "")) r.push(...umbauRisiken(e));
   const m = e.merkmale || {};
   if (e.sanierungsjahr >= 2000) r.push(`Komplett saniert ${e.sanierungsjahr}: Umfang der Sanierung (Dach, Leitungen, Elektrik, Heizung, Dämmung) und Rechnungen vorlegen lassen.`);
   else if (e.baujahr && e.baujahr < 1978) r.push("Baujahr vor 1978: Elektrik, Leitungen, Dämmung und mögliche Schadstoffe (Asbest) prüfen lassen.");
@@ -304,7 +320,7 @@ ${st}
 ## Annahmen (im Rechner änderbar)
 ${annahmen.map((x) => "- " + x).join("\n")}
 - Finanzierung: ${dz(a.zins)} % Zins, ${dz(a.tilgung)} % Tilgung, Kaufnebenkosten ${dz(num(a.grest) + num(a.notar) + makler)} % (Grunderwerbsteuer NRW ${dz(a.grest)} %, Notar ${dz(a.notar)} %, Makler ${dz(makler)} %)
-- Marktwerte: Verkauf saniert ${dz(a.etw_saniert_m2, 0)} €/m², Eigentumswohnung im Bestand ${dz(a.etw_bestand_m2, 0)} €/m², Mehrfamilienhaus Faktor ${dz(a.verkaufsfaktor_mfh, 1)}, Bauland ${dz(a.bodenrichtwert_m2, 0)} €/m² (alles Annahmen für den Raum Hamm)
+${/gewerbe|büro|buero|hotel|pension|praxis|boarding/i.test(e.objektart || "") && !/wohn- und geschäft/i.test(e.objektart || "") ? "" : `- Marktwerte: Verkauf saniert ${dz(a.etw_saniert_m2, 0)} €/m², Eigentumswohnung im Bestand ${dz(a.etw_bestand_m2, 0)} €/m², Mehrfamilienhaus Faktor ${dz(a.verkaufsfaktor_mfh, 1)}, Bauland ${dz(a.bodenrichtwert_m2, 0)} €/m² (alles Annahmen für den Raum Hamm)`}
 
 ## Risiken
 ${risiken(e, d).map((x) => "- " + x).join("\n")}

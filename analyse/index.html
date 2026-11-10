@@ -257,7 +257,7 @@
           <button class="zweit" data-filter="geprueft" aria-pressed="false">Durchgerechnet</button>
           <button class="zweit" data-filter="alle" aria-pressed="false">Alle neuen</button>
           <select id="funde-art" aria-label="Objektart">
-            <option value="">Alle Arten</option><option>Mehrfamilienhaus</option><option>Haus</option><option>Sanierungsobjekt</option><option>Eigentumswohnung</option><option>Grundstück</option><option>Gewerbe</option><option>Garage</option>
+            <option value="">Alle Arten</option><option>Mehrfamilienhaus</option><option>Haus</option><option>Sanierungsobjekt</option><option>Eigentumswohnung</option><option>Grundstück</option><option>Gewerbe</option><option>Garage</option><option>Büro zum Umbau</option><option>Hotel/Pension</option><option>Wohn- und Geschäftshaus</option><option>Ferienwohnung</option><option>Ferienhaus</option>
           </select>
         </div>
         <div id="funde" class="liste"></div>
@@ -282,7 +282,7 @@
         <div class="raster3">
           <div class="breit"><label for="e-titel">Bezeichnung</label><input id="e-titel" placeholder="z. B. MFH Bergkamen-Weddinghofen" /></div>
           <div><label for="e-objektart">Objektart</label>
-            <select id="e-objektart"><option value="">bitte wählen</option><option>Mehrfamilienhaus</option><option>Zweifamilienhaus</option><option>Dreifamilienhaus</option><option>Einfamilienhaus</option><option>Doppelhaushälfte</option><option>Reihenhaus</option><option>Eigentumswohnung</option><option>Wohn- und Geschäftshaus</option><option>Grundstück</option><option>Gewerbeimmobilie</option></select></div>
+            <select id="e-objektart"><option value="">bitte wählen</option><option>Mehrfamilienhaus</option><option>Zweifamilienhaus</option><option>Dreifamilienhaus</option><option>Einfamilienhaus</option><option>Doppelhaushälfte</option><option>Reihenhaus</option><option>Eigentumswohnung</option><option>Wohn- und Geschäftshaus</option><option>Grundstück</option><option>Bürogebäude</option><option>Hotel/Pension</option><option>Gewerbeimmobilie</option></select></div>
           <div><label for="e-ort">Ort</label><input id="e-ort" placeholder="59065 Hamm" /></div>
           <div><label for="e-kaufpreis">Kaufpreis (€) *</label><input id="e-kaufpreis" type="number" inputmode="numeric" /></div>
           <div><label for="e-wohnflaeche_m2">Wohnfläche (m²) *</label><input id="e-wohnflaeche_m2" type="number" inputmode="decimal" /></div>
@@ -325,6 +325,15 @@
             <div><label for="a-grest">Grunderwerbsteuer (%)</label><input id="a-grest" type="number" step="0.1" /></div>
             <div><label for="a-notar">Notar & Grundbuch (%)</label><input id="a-notar" type="number" step="0.1" /></div>
             <div><label for="a-monteur_preis">Monteurzimmer (€/Bett/Nacht)</label><input id="a-monteur_preis" type="number" /></div>
+          </div>
+          <p class="hinweis"><strong>Umbau Büro/Hotel → Wohnen</strong> (Förderung KfW 266 wird automatisch eingerechnet)</p>
+          <div class="raster3">
+            <div><label for="a-umbau_m2">Umbaukosten (€/m² Nutzfläche)</label><input id="a-umbau_m2" type="number" step="50" /></div>
+            <div><label for="a-flaecheneffizienz">Davon Wohnfläche (%)</label><input id="a-flaecheneffizienz" type="number" /></div>
+            <div><label for="a-miete_neu_m2">Miete nach Umbau (€/m²)</label><input id="a-miete_neu_m2" type="number" step="0.1" /></div>
+            <div><label for="a-etw_neu_m2">Verkauf nach Umbau (€/m²)</label><input id="a-etw_neu_m2" type="number" step="50" /></div>
+            <div><label for="a-apartment_preis">Service-Apartment (€/Nacht)</label><input id="a-apartment_preis" type="number" /></div>
+            <div><label for="a-apartment_auslastung">Auslastung (%)</label><input id="a-apartment_auslastung" type="number" /></div>
           </div>
           <p class="hinweis">Gilt für dieses Gerät. Werte gelten für den Raum Hamm – für andere Orte (z. B. Münster, Soest) anpassen. <button class="leise" id="annahmen-zurueck" type="button">Standardwerte</button></p>
         </details>

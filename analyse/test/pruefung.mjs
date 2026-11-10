@@ -33,5 +33,23 @@ const falsch = auswerten({ objektart: "Eigentumswohnung", kaufpreis: 9900, wohnf
 const sicher = falsch.ampel !== "gruen" && falsch.warnungen.length > 0;
 console.log(sicher ? "ok    " : "FEHLER", "Unplausible Daten werden nicht grün", sicher ? "" : JSON.stringify(falsch.warnungen));
 fehler += sicher ? 0 : 1;
+// Gewerbe: Umbau-Strategien statt Wohn-Rechnung, Service-Apartments nie "gut"
+const buero = auswerten({ objektart: "Bürogebäude", kaufpreis: 600000, wohnflaeche_m2: 1200, ort: "44135 Dortmund", merkmale: { leer: true } }).daten;
+const namen = buero.strategien.map((s) => s.name);
+const gewerbeOk = namen.includes("Umbau zu Wohnungen & vermieten") && !namen.includes("Halten & vermieten") && !namen.includes("Fix & Flip")
+  && buero.strategien.find((s) => s.name === "Service-Apartments").eignung !== "gut" && buero.ampel !== "rot";
+console.log(gewerbeOk ? "ok    " : "FEHLER", "Leeres Büro (1.200 m², 500 €/m²) → Umbau-Rechnung", gewerbeOk ? "" : JSON.stringify(buero.strategien.map((s) => [s.name, s.eignung])));
+fehler += gewerbeOk ? 0 : 1;
+const teuer = auswerten({ objektart: "Bürogebäude", kaufpreis: 3000000, wohnflaeche_m2: 1000, ort: "59065 Hamm", merkmale: {} }).daten;
+const teuerOk = teuer.ampel === "rot";
+console.log(teuerOk ? "ok    " : "FEHLER", "Teures Büro (3.000 €/m²) lohnt keinen Umbau", teuerOk ? "" : teuer.empfehlung);
+fehler += teuerOk ? 0 : 1;
+// Scout: Gewerbe mit Preis je m² und Mindestfläche
+const { bewerte } = await import("../lib/scout-kern.mjs");
+const g = bewerte({ kategorie: "Büro zum Umbau", titel: "Bürogebäude leerstehend", beschreibung: "", preis_text: "", groesse_text: "5.466 m² · 824 €/m²", km: 48 }, { maxKm: 52, minFlaeche: 250, preisProM2: true });
+const klein = bewerte({ kategorie: "Büro zum Umbau", titel: "Praxis", beschreibung: "", preis_text: "120.000 €", groesse_text: "90 m²", km: 10 }, { maxKm: 52, minFlaeche: 250, preisProM2: true });
+const scoutOk = g.preis === 4503984 && !g.ausschluss && g.punkte >= 3 && klein.ausschluss;
+console.log(scoutOk ? "ok    " : "FEHLER", "Scout: Preis je m² und Mindestfläche bei Büros", scoutOk ? "" : JSON.stringify([g.preis, g.ausschluss, g.punkte, klein.ausschluss]));
+fehler += scoutOk ? 0 : 1;
 console.log(fehler ? `\n${fehler} Fehler` : "\nAlle Prüfungen bestanden");
 process.exit(fehler ? 1 : 0);

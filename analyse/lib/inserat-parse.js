@@ -208,6 +208,11 @@ export function leseKleinanzeigenHtml(html) {
   if (dz("Zimmer")) vorgaben.zimmer = dz("Zimmer");
   if (dz("Baujahr")) vorgaben.baujahr = dz("Baujahr");
   if (dz("Hausgeld")) vorgaben.hausgeld_monat = dz("Hausgeld");
+  // Gewerbe: Fläche und Objektart aus den Datenfeldern
+  if (!vorgaben.wohnflaeche_m2 && dz("Fläche")) vorgaben.wohnflaeche_m2 = dz("Fläche");
+  if (details.Objektart && /büro|praxis/i.test(details.Objektart)) vorgaben.objektart = "Bürogebäude";
+  else if (details.Objektart && /hotel|gastronomie/i.test(details.Objektart)) vorgaben.objektart = "Hotel/Pension";
+  else if (details.Objektart && /halle|lager|produktion|gewerbe|einzelhandel/i.test(details.Objektart)) vorgaben.objektart = "Gewerbeimmobilie";
   if (details.Provision && /keine|ohne|provisionsfrei/i.test(details.Provision)) vorgaben.makler_prozent = 0;
   // Kategorie aus dem Anzeigen-Link: -196- Eigentumswohnung, -208- Haus, -207- Grundstück, -277- Gewerbe
   // Eigener Link der Anzeige (canonical), nicht der erste beliebige Link auf der Seite
@@ -215,7 +220,7 @@ export function leseKleinanzeigenHtml(html) {
   const kat = (/\/\d+-(\d{3})-\d+\/?$/.exec(eigenerLink) || [])[1];
   if (kat === "196") vorgaben.objektart = "Eigentumswohnung";
   if (kat === "207" && !vorgaben.wohnflaeche_m2) vorgaben.objektart = "Grundstück";
-  if (kat === "277") vorgaben.objektart = "Gewerbeimmobilie";
+  if (kat === "277" && !vorgaben.objektart) vorgaben.objektart = "Gewerbeimmobilie";
   if (details.Haustyp) vorgaben.objektart = /mehrfamilien/i.test(details.Haustyp) ? "Mehrfamilienhaus" : /zweifamilien/i.test(details.Haustyp) ? "Zweifamilienhaus" : /doppel/i.test(details.Haustyp) ? "Doppelhaushälfte" : /reihen/i.test(details.Haustyp) ? "Reihenhaus" : /bungalow/i.test(details.Haustyp) ? "Bungalow" : "Einfamilienhaus";
   if (details.Wohnungstyp) vorgaben.objektart = "Eigentumswohnung";
   if (details["Grundstücksart"] && !vorgaben.wohnflaeche_m2) vorgaben.objektart = "Grundstück";
