@@ -33,6 +33,31 @@ function blockedWrite() {
   return true;
 }
 
+// ---------------------------------------------------------------- Ruhiges, modernes Erscheinungsbild: bunte Emojis werden zentral entfernt
+// Erhalten bleiben schlichte Zeichen (✎ ✕ ✓ ‹ › ↶ ⧉ →). Knöpfe, die nur aus einem Emoji bestanden, bekommen einen Text.
+const EMOJI_RE = /(?:\p{Extended_Pictographic}|\p{Regional_Indicator})(?:\uFE0F|\uFE0E|\u200D\p{Extended_Pictographic}\uFE0F?|[\u{1F3FB}-\u{1F3FF}])*[ \u00A0]?/gu;
+const EMOJI_KEEP = /^[✎✕✓✔‹›↶⧉→←↑↓©®™]/;
+const EMOJI_LABEL = { "📋": "Kopieren", "🗑": "Löschen", "📷": "Foto", "📄": "Datei", "🖨": "Drucken", "✉": "Brief", "📧": "E-Mail", "🔎": "Suchen", "🔄": "Aktualisieren", "⬇": "Herunterladen", "📤": "Exportieren", "👁": "Ansehen", "📎": "Anhang", "🔗": "Link", "📁": "Akte", "🔑": "Portal" };
+const stripEmoji = (t) => t.replace(EMOJI_RE, (m) => (EMOJI_KEEP.test(m) ? m : "")).replace(/^(\s*)[✎⧉]\s+(?=\S)/, "$1");
+function cleanEmojis(root) {
+  if (!root || root.nodeType !== 1 || root.closest?.("[data-keep-emoji]")) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes = []; for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n);
+  if (root.childNodes.length === 1 && root.firstChild?.nodeType === 3) {} // nichts
+  for (const n of nodes) {
+    const v = n.nodeValue; if (!v || !/[\u2190-\u2BFF\u29C9\u{1F000}-\u{1FAFF}]/u.test(v)) continue;
+    const nv = stripEmoji(v);
+    if (nv === v) continue;
+    const el = n.parentElement;
+    const btnEl = el?.closest("button, a.btn, label.btn, .att");
+    n.nodeValue = nv;
+    if (btnEl && !btnEl.textContent.trim() && !btnEl.querySelector("img")) btnEl.textContent = btnEl.title || btnEl.getAttribute("aria-label") || EMOJI_LABEL[[...v.trim()][0]] || "Öffnen";
+  }
+  for (const el of [root, ...(root.querySelectorAll?.("[placeholder]") || [])].filter((x) => x.hasAttribute?.("placeholder"))) { const p0 = el.getAttribute("placeholder"); const p1 = stripEmoji(p0).trim(); if (p1 !== p0) el.setAttribute("placeholder", p1); }
+}
+new MutationObserver((muts) => { for (const m of muts) { if (m.type === "characterData") cleanEmojis(m.target.parentElement); else for (const n of m.addedNodes) cleanEmojis(n.nodeType === 3 ? n.parentElement : n); } })
+  .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+
 function commit(msg) {
   if (blockedWrite()) return;
   if (!S.save(state) && !isCloud()) toast("⚠️ Speichern fehlgeschlagen (Speicher voll?) – bitte Datensicherung exportieren.");
@@ -2904,7 +2929,7 @@ function tenantsOverviewHtml(all, vacant, shown) {
   const byObj = new Map();
   for (const u of vacant) { if (!byObj.has(u.objectId)) byObj.set(u.objectId, []); byObj.get(u.objectId).push(u); }
   const tile = (u) => `<button class="unit-tile" data-act="moveWizard" data-id="${u.id}" title="Mieter für ${esc(u.name)} eintragen">
-      <span class="ut-ic">${UNIT_ICON[u.type] || "🔑"}</span><span class="ut-tx"><b>${esc(u.name)}</b><small>${esc(C.UNIT_TYPES[u.type] || "")}${u.area ? ` · ${String(u.area).replace(".", ",")} m²` : ""}</small></span><span class="ut-go">+ Mieter</span></button>`;
+      <span class="ut-ic">${UNIT_ICON[u.type] || "🔑"}</span><span class="ut-tx"><b>${esc(u.name)}</b><small>${esc(C.UNIT_TYPES[u.type] || "")}${u.area ? ` · ${String(u.area).replace(".", ",")} m²` : ""}</small></span><span class="ut-go">Mieter eintragen</span></button>`;
   const groups = [...byObj.entries()].map(([oid, us]) => `<div class="ut-group"><div class="ut-obj">🏘️ ${esc(byId("objects", oid)?.name || "Objekt")} <span class="muted small">· ${us.length} frei</span></div><div class="unit-tiles">${us.map(tile).join("")}</div></div>`).join("");
   const open = !all.length || vacant.length <= 6 || ui.vacantOpen;
   return stats + start + `<details class="card vacant" ${open ? "open" : ""} data-vacant><summary><h2 style="display:inline">🔓 Freie Einheiten <span class="badge warn">${vacant.length}</span></h2> <span class="small muted">– antippen, um einen Mieter einzutragen</span></summary>${groups}</details>`;
@@ -3468,7 +3493,7 @@ function navKeyFor(route) {
 
 function navHtml(route) {
   const active = navKeyFor(route);
-  return navGroups().map(([title, items]) => `${title ? `<div class="navgroup">${title}</div>` : ""}${items.map(([r, ic, l]) => `<a href="#/${r}" class="${active === r ? "active" : ""}"><span class="ic">${ic}</span>${l}</a>`).join("")}`).join("");
+  return navGroups().map(([title, items]) => `${title ? `<div class="navgroup">${title}</div>` : ""}${items.map(([r, , l]) => `<a href="#/${r}" class="${active === r ? "active" : ""}">${l}</a>`).join("")}`).join("");
 }
 
 // Untere Leiste am Handy
