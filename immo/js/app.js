@@ -9,6 +9,7 @@ import * as R from "./recht.js";
 import * as T from "./steuer.js";
 import * as I from "./instand.js";
 import * as M from "./monat.js";
+import * as E from "./euer.js";
 
 let state = S.load();
 const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
@@ -67,6 +68,7 @@ const activeContract = (unitId, key = ui.month) => state.contracts.find((c) => c
 function linkLabel(tx) {
   if (!tx.link) return "";
   if (tx.link.type === "ignore") return `<span class="badge grey">ignoriert</span>`;
+  if (tx.link.type === "biz") { const be = (state.bizEntries || []).find((x) => x.id === tx.link.id); return be ? `<span class="badge ok">💼 ${esc(E.EUER_CATS[be.category]?.label.split(" (")[0] || "")}</span> <span class="small">${esc((state.businesses || []).find((b) => b.id === be.businessId)?.name || "")}</span>` : ""; }
   if (tx.link.type === "payment") {
     const p = byId("payments", tx.link.id);
     if (!p) return "";
@@ -87,6 +89,7 @@ function suggestionLabel(s) {
   if (s.kind === "fewo") return `Rechnung ${byId("invoices", s.invoiceId)?.number || ""}`;
   if (s.kind === "ausgabe") return `${C.EXPENSE_CATEGORIES[s.category]?.label}${s.objectId ? " · " + (byId("objects", s.objectId)?.name || "") : ""}`;
   if (s.kind === "ignorieren") return "Ignorieren";
+  if (s.kind === "selbst") return `💼 ${(state.businesses || []).find((x) => x.id === s.businessId)?.name || "Selbstständigkeit"} · ${E.EUER_CATS[s.category]?.label.split(" (")[0] || ""}`;
   return C.INCOME_KINDS[s.kind] || s.kind;
 }
 
@@ -416,6 +419,12 @@ function addStep(id) {
 function applyAssignment(tx, a, learn) {
   unlink(tx, true);
   if (a.kind === "ignorieren") tx.link = { type: "ignore" };
+  else if (a.kind === "selbst") {
+    const b = (state.businesses || []).find((x) => x.id === a.businessId) || (state.businesses || [])[0];
+    const be = { id: C.uid("be_"), businessId: b?.id, date: tx.date, amount: Math.abs(tx.amount), category: a.category || (tx.amount > 0 ? "umsatz" : "sonst_aus"), vat: b?.kleinunternehmer || E.EUER_CATS[a.category]?.noVat ? 0 : 19, note: [tx.name, tx.purpose].filter(Boolean).join(" · ").slice(0, 120), txId: tx.id };
+    (state.bizEntries ||= []).push(be);
+    tx.link = { type: "biz", id: be.id };
+  }
   else if (a.kind === "ausgabe") {
     const e = { id: C.uid("e_"), date: tx.date, amount: -tx.amount, category: a.category || "sonstiges", objectId: a.objectId || null, vendor: tx.name, note: tx.purpose, belegNr: "", txId: tx.id };
     state.expenses.push(e);
@@ -437,6 +446,7 @@ function applyAssignment(tx, a, learn) {
     else if (a.contractId) r.contractId = a.contractId;
     if (a.category) r.category = a.category;
     if (a.objectId) r.objectId = a.objectId;
+    if (a.kind === "selbst") { r.businessId = a.businessId; r.category = a.category; }
     state.rules[C.ruleKey(tx)] = r;
   }
 }
@@ -449,6 +459,7 @@ function unlink(tx, silent) {
     if (p?.invoiceId) refreshInvoiceStatus(p.invoiceId);
   }
   if (tx.link.type === "expense") state.expenses = state.expenses.filter((x) => x.id !== tx.link.id);
+  if (tx.link.type === "biz") state.bizEntries = (state.bizEntries || []).filter((x) => x.id !== tx.link.id);
   tx.link = null;
   if (!silent) commit("Zuordnung gelöst");
 }
@@ -476,8 +487,8 @@ function assignDialog(txId) {
   const sug = C.suggestAssignment(tx, state) || {};
   const credit = tx.amount > 0;
   const kinds = credit
-    ? [["miete", "Miete"], ["fewo", "Ferienwohnung-Rechnung"], ["nk_nachzahlung", "Nebenkosten-Nachzahlung"], ["kaution", "Kaution"], ["sonstige", "Sonstige Einnahme"], ["ignorieren", "Ignorieren (privat / Umbuchung)"]]
-    : [["ausgabe", "Ausgabe / Werbungskosten"], ["ignorieren", "Ignorieren (privat / Umbuchung)"], ["miete", "Mietrückzahlung (negativ)"]];
+    ? [["miete", "Miete"], ["fewo", "Ferienwohnung-Rechnung"], ["nk_nachzahlung", "Nebenkosten-Nachzahlung"], ["kaution", "Kaution"], ["sonstige", "Sonstige Einnahme"], ...(bizList().length ? [["selbst", "💼 Selbstständigkeit: Einnahme"]] : []), ["ignorieren", "Ignorieren (privat / Umbuchung)"]]
+    : [["ausgabe", "Ausgabe / Werbungskosten (Immobilien)"], ...(bizList().length ? [["selbst", "💼 Selbstständigkeit: Ausgabe"]] : []), ["ignorieren", "Ignorieren (privat / Umbuchung)"], ["miete", "Mietrückzahlung (negativ)"]];
   const kind = sug.kind || kinds[0][0];
   const invOpts = state.invoices.filter((i) => i.type !== "storno" && !["storniert", "entwurf"].includes(i.status)).map((i) => [i.id, `${i.number} · ${C.recipientName(i.recipient)} · ${eur(C.invoiceTotals(i).gross)} (${i.status})`]);
   const body = `
@@ -490,9 +501,11 @@ function assignDialog(txId) {
         <p class="small muted">Ab 2 Häkchen wird der Betrag nach den Warmmieten auf die Verträge verteilt. Das Feld „Mietvertrag“ oben wird dann nicht verwendet.</p></details></div>
       <label class="f" data-for="miete"><span>Für Monat (Soll)</span><input type="month" name="period" value="${esc(sug.period || C.periodForPayment(tx.date, tx.purpose))}"></label>
       <label class="f full" data-for="fewo"><span>Rechnung</span><select name="invoiceId">${opt([["", "–"], ...invOpts], sug.invoiceId)}</select></label>
+      <label class="f full" data-for="selbst"><span>Tätigkeit</span><select name="businessId">${opt(bizList().map((b) => [b.id, b.name]), sug.businessId)}</select></label>
+      <label class="f full" data-for="selbst"><span>Art</span><select name="bizCategory">${opt(Object.entries(E.EUER_CATS).filter(([, v]) => v.side === (credit ? "ein" : "aus")).map(([k, v]) => [k, v.label]), sug.kind === "selbst" ? sug.category : credit ? "umsatz" : "buero")}</select></label>
       <label class="f" data-for="ausgabe"><span>Kategorie</span><select name="category">${opt(Object.entries(C.EXPENSE_CATEGORIES).map(([k, v]) => [k, v.label]), sug.category || "sonstiges")}</select></label>
       <label class="f" data-for="ausgabe sonstige"><span>Objekt</span><select name="objectId">${opt(objectOpts(), sug.objectId)}</select></label>
-      <label class="f inline full" data-for="miete nk_nachzahlung kaution sonstige ausgabe ignorieren"><input type="checkbox" name="learn" checked> Regel merken: künftige Umsätze von „${esc(tx.name || tx.iban)}“ automatisch so zuordnen</label>
+      <label class="f inline full" data-for="miete nk_nachzahlung kaution sonstige ausgabe ignorieren selbst"><input type="checkbox" name="learn" checked> Regel merken: künftige Umsätze von „${esc(tx.name || tx.iban)}“ automatisch so zuordnen</label>
     </div>`;
   dialog({
     title: "Bankumsatz zuordnen", body, submit: "Zuordnen",
@@ -501,7 +514,7 @@ function assignDialog(txId) {
       form.kind.addEventListener("change", sync); sync();
     },
     onSubmit: (form) => {
-      const a = { kind: form.kind.value, contractId: form.contractId.value, period: form.period.value, invoiceId: form.invoiceId.value, category: form.category.value, objectId: form.objectId.value };
+      const a = { kind: form.kind.value, contractId: form.contractId.value, period: form.period.value, invoiceId: form.invoiceId.value, category: form.kind.value === "selbst" ? form.bizCategory.value : form.category.value, objectId: form.objectId.value, businessId: form.businessId?.value };
       const split = [...form.querySelectorAll("input[name=split]:checked")].map((el) => el.value);
       if (a.kind === "miete" && split.length > 1) {
         const parts = C.splitAmount(tx.amount, split.map((id) => C.rentForMonth(byId("contracts", id), a.period).total));
@@ -1068,6 +1081,167 @@ function viewRents() {
         return `<td class="m"><span class="dot ${cls}" title="Soll ${eur(r.soll)} · Ist ${eur(r.ist)}">${cls === "ok" ? "✓" : cls === "no" ? "✗" : cls === "part" ? "½" : cls === "over" ? "+" : "·"}</span></td>`; }).join("")}
         <td class="num ${sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff) < 0 ? "neg" : ""}">${eur(sum(year.filter((r) => r.contractId === c.id && r.key <= C.monthKey(today())), (r) => r.diff))}</td></tr>`).join("")}
       </tbody></table></div><p class="small muted" style="margin-top:6px">✓ bezahlt · ½ teilweise · ✗ offen · + Überzahlung · Saldo bis heute</p></div>`;
+}
+
+// ---------------------------------------------------------------- Selbstständigkeit (EÜR, Anlage S / G)
+const bizList = () => (state.businesses ||= []);
+const bizEntries = () => (state.bizEntries ||= []);
+const catOpts = () => Object.entries(E.EUER_CATS).map(([k, v]) => [k, `${v.side === "ein" ? "➕ Einnahme" : "➖ Ausgabe"}: ${v.label}`]);
+
+function editBusiness(id) {
+  const b = bizList().find((x) => x.id === id) || { id: C.uid("bz_"), kind: "", kleinunternehmer: false, yearData: {} };
+  formDialog({
+    title: id ? "Tätigkeit bearbeiten" : "Selbstständige Tätigkeit anlegen", data: b,
+    intro: `<div class="note small"><b>Freiberuflich oder Gewerbe?</b><br>📘 <b>Freiberuflich:</b> ${E.BIZ_KINDS.freiberuflich.examples}.<br>📗 <b>Gewerbe:</b> ${E.BIZ_KINDS.gewerblich.examples}.<br>Faustregel: Verkauf, Handel, Vermittlung, Handwerk = Gewerbe. Persönliche, qualifizierte geistige Arbeit = freiberuflich. Unsicher? Der Steuer-Assistent fragt nach.</div>`,
+    spec: [
+      { k: "name", l: "Bezeichnung", req: 1, ph: "z. B. IT-Beratung, Fotografie, Online-Shop" },
+      { k: "kind", l: "Art", t: "select", opts: [["", "– bitte wählen –"], ...Object.entries(E.BIZ_KINDS).map(([k, v]) => [k, v.label])] },
+      { k: "kleinunternehmer", l: "Kleinunternehmer (§ 19 UStG) – keine Umsatzsteuer auf Rechnungen", t: "checkbox" },
+      { k: "gewerbeAngemeldet", l: "Gewerbe ist angemeldet (nur bei Gewerbe)", t: "checkbox" },
+      { k: "start", l: "Beginn der Tätigkeit", t: "date" },
+      { k: "taxNo", l: "Steuernummer (falls eigene)" },
+      { k: "notes", l: "Notizen", t: "textarea" },
+    ],
+    onSave: (v) => { const i = bizList().findIndex((x) => x.id === b.id); const nb = { ...b, ...v }; if (i > -1) bizList()[i] = nb; else bizList().push(nb); commit("Tätigkeit gespeichert"); },
+    onDelete: id && (() => { if (bizEntries().some((e) => e.businessId === id)) return alert("Zu dieser Tätigkeit gibt es Buchungen. Bitte zuerst die Buchungen löschen."); state.businesses = bizList().filter((x) => x.id !== id); commit("Tätigkeit gelöscht"); }),
+  });
+}
+
+function editBizEntry(id, preset = {}) {
+  const e = bizEntries().find((x) => x.id === id) || { id: C.uid("be_"), date: today(), category: "umsatz", vat: 19, businessId: bizList()[0]?.id, ...preset };
+  const b = bizList().find((x) => x.id === e.businessId);
+  formDialog({
+    title: id ? "Buchung bearbeiten" : e.category === "umsatz" ? "Einnahme erfassen" : "Ausgabe erfassen", data: { ...e, vat: String(e.vat ?? 19) },
+    intro: `<div class="scanbar"><label class="btn sm primary">📷 Beleg fotografieren – KI füllt aus<input type="file" accept="image/*,application/pdf" data-change="bizScan" hidden></label><span class="small muted">Betrag immer <b>brutto</b> eingeben (wie auf dem Beleg).${b?.kleinunternehmer ? " Kleinunternehmer: Umsatzsteuer wird nicht ausgewiesen." : ""}</span><div class="small" id="bizScanMsg"></div></div>`,
+    spec: [
+      ...(bizList().length > 1 ? [{ k: "businessId", l: "Tätigkeit", t: "select", opts: () => bizList().map((x) => [x.id, x.name]), full: 1 }] : []),
+      { k: "date", l: "Datum der Zahlung", t: "date", req: 1 }, { k: "amount", l: "Betrag brutto (€)", t: "money", req: 1 },
+      { k: "category", l: "Art", t: "select", opts: catOpts, full: 1 },
+      { k: "vat", l: "Umsatzsteuer im Betrag", t: "select", opts: [["19", "19 %"], ["7", "7 %"], ["0", "0 % / ohne"]] },
+      { k: "note", l: "Kunde / Lieferant / Notiz" },
+    ],
+    onSave: (v) => {
+      const ne = { ...e, ...v, vat: Number(v.vat) || 0, businessId: v.businessId || e.businessId };
+      const i = bizEntries().findIndex((x) => x.id === ne.id); if (i > -1) bizEntries()[i] = ne; else bizEntries().push(ne);
+      commit("Gespeichert");
+    },
+    onDelete: id && (() => { const tx = state.transactions.find((t) => t.link?.type === "biz" && t.link.id === id); if (tx) tx.link = null; state.bizEntries = bizEntries().filter((x) => x.id !== id); commit("Gelöscht"); }),
+  });
+}
+
+async function bizScan(form, file) {
+  const msg = $("#bizScanMsg", form);
+  if (!K.hasKey()) { msg.innerHTML = '<span class="neg">Für das Auslesen bitte unter Einstellungen → KI den Schlüssel eintragen.</span>'; return; }
+  msg.textContent = "✨ Lese Beleg …";
+  try {
+    const blob = file.type === "application/pdf" ? file : (await F.prepareImage(file, true)).blob;
+    const r = await K.readReceipt({ base64: await F.blobToBase64(blob), mediaType: file.type === "application/pdf" ? "application/pdf" : "image/jpeg", objects: [] });
+    if (r.date) form.date.value = r.date;
+    if (r.amount) form.amount.value = C.fmtNum(Math.round(Math.abs(r.amount) * 100));
+    if (r.vendor) form.note.value = [r.vendor, r.invoice_number].filter(Boolean).join(" · ");
+    const g = C.normalize(`${r.vendor} ${r.summary}`);
+    const cat = /telekom|vodafone|o2|1und1|internet|mobilfunk/.test(g) ? "telefon" : /tank|aral|shell|esso|kfz|werkstatt|auto/.test(g) ? "kfz" : /hotel|bahn|flug|reise/.test(g) ? "reise" : /restaurant|bewirtung|gaststaette|cafe/.test(g) ? "bewirtung" : /steuerberat|buchhalt|rechtsanw/.test(g) ? "beratung" : /software|adobe|microsoft|google|porto|buero|amazon/.test(g) ? "buero" : "";
+    if (cat && form.category.value === "umsatz") form.category.value = cat;
+    msg.textContent = `✓ ${r.vendor || "Beleg"} · ${eur(Math.round(Math.abs(r.amount || 0) * 100))} – bitte Art prüfen.`;
+  } catch (e) { msg.innerHTML = `<span class="neg">${esc(K.friendlyError(e))}</span>`; }
+}
+
+function viewSelbst() {
+  const y = ui.year;
+  const list = bizList();
+  const yearBtns = btn("year", "‹ " + (y - 1), "", y - 1) + `<b style="padding:0 6px">${y}</b>` + btn("year", (y + 1) + " ›", "", y + 1);
+  if (!list.length) return head("Selbstständigkeit", "Einnahmen-Überschuss-Rechnung (EÜR) mit Anlage S oder G", yearBtns) + `<div class="card empty-start"><div class="big">💼</div><b>Selbstständig oder nebenberuflich tätig?</b>
+    <p class="muted">Lege deine Tätigkeit an – egal ob Freiberufler, Gewerbe, Kleinunternehmer oder nebenberuflich. Danach erfasst du Einnahmen und Ausgaben (auch per Foto oder aus dem Kontoauszug), und die App erstellt die Ausfüllhilfe für die Anlage EÜR und Anlage S bzw. G.</p><br>${btn("editBusiness", "+ Tätigkeit anlegen", "primary big")}</div>`;
+  return head("Selbstständigkeit", "Einnahmen-Überschuss-Rechnung (EÜR) mit Anlage S oder G", yearBtns + btn("editBusiness", "+ Tätigkeit")) + list.map((b) => {
+    const r = E.euer(state, b.id, y), checks = E.bizChecks(state, b.id, y);
+    const yd = (b.yearData || {})[y] || {};
+    const entries = bizEntries().filter((e) => e.businessId === b.id && String(e.date).startsWith(String(y))).sort((a, c) => (a.date < c.date ? 1 : -1));
+    const lineRows = Object.entries(r.lines).filter(([, v]) => v).map(([k, v]) => { const li = E.lineInfo(k); return `<tr><td>${esc(li.label)}<div class="small muted">Feld in der Anlage EÜR: „${esc(li.euer)}“</div></td><td class="num"><b>${T.euroDown(v).toLocaleString("de-DE")}</b> €</td><td>${btn("copyVal", "📋", "sm", String(T.euroDown(v)))}</td></tr>`; }).join("");
+    return `<div class="card"><div class="head" style="margin-bottom:10px"><div><h2 style="margin:0">💼 ${esc(b.name)}</h2>
+        <div class="small">${b.kind ? `<span class="badge">${esc(E.BIZ_KINDS[b.kind].label)}</span>` : '<span class="badge bad">Art fehlt</span>'} ${b.kleinunternehmer ? '<span class="badge grey">Kleinunternehmer</span>' : '<span class="badge grey">mit Umsatzsteuer</span>'}</div></div>
+        <div class="toolbar">${btn("bizEntryNew", "+ Einnahme", "sm primary", `${b.id}|umsatz`)}${btn("bizEntryNew", "+ Ausgabe", "sm", `${b.id}|buero`)}${btn("editBusiness", "✎", "sm", b.id)}</div></div>
+      <div class="bigstats four"><div><span>Einnahmen ${y}</span><b>${eur(r.income)}</b></div><div><span>Ausgaben ${y}</span><b>${eur(r.costs)}</b></div><div><span>${r.profit < 0 ? "Verlust" : "Gewinn"} ${y}</span><b class="${r.profit < 0 ? "neg" : ""}">${eur(r.profit)}</b></div><div><span>Buchungen</span><b>${entries.length}</b></div></div>
+      <div class="fgrid" style="margin-bottom:6px">
+        <label class="f"><span>Homeoffice-Tage ${y} <small class="muted">(6 € je Tag, max. 210 Tage)</small></span><input type="number" min="0" max="366" value="${esc(yd.homeofficeDays || "")}" data-change="bizYear" data-id="${b.id}|homeofficeDays"></label>
+        <label class="f"><span>Betriebliche km mit dem Privat-Pkw ${y} <small class="muted">(0,30 €/km)</small></span><input type="number" min="0" value="${esc(yd.km || "")}" data-change="bizYear" data-id="${b.id}|km"></label>
+      </div>
+      ${checks.map((c) => `<div class="note small ${c.level === "bad" ? "warn" : ""}">${c.level === "bad" ? "⛔" : c.level === "warn" ? "⚠️" : "ℹ️"} ${esc(c.text)}</div>`).join("")}
+      <details ${entries.length ? "" : "open"}><summary class="small" style="cursor:pointer;margin:8px 0">Buchungen ${y} (${entries.length})</summary>
+        ${entries.length ? `<div class="table-wrap"><table><thead><tr><th>Datum</th><th>Art</th><th>Notiz</th><th class="num">Brutto</th><th></th></tr></thead><tbody>${entries.map((e) => `<tr class="click" data-act="editBizEntry" data-id="${e.id}"><td>${d(e.date)}</td><td>${E.EUER_CATS[e.category]?.side === "ein" ? "➕" : "➖"} ${esc(E.EUER_CATS[e.category]?.label || e.category)}</td><td class="small">${esc(e.note || "")}${e.txId ? " 🏦" : ""}</td><td class="num">${eur(e.amount)}</td><td>✎</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted small">Noch nichts erfasst. Tipp: Kontoauszug unter „Konto & Bank“ importieren und Umsätze als „Selbstständigkeit“ zuordnen – oder hier einzeln erfassen.</p>`}
+      </details>
+      <h3>Ausfüllhilfe Anlage EÜR ${y}</h3>
+      <table class="taxform"><tbody>${lineRows || '<tr><td class="muted">–</td><td></td><td></td></tr>'}
+        <tr class="sum"><td><b>${r.profit < 0 ? "Verlust" : "Gewinn"}</b> – übertragen in <b>Anlage ${b.kind ? E.BIZ_KINDS[b.kind].anlage : "S/G"}</b> („${b.kind === "gewerblich" ? "Gewinn als Einzelunternehmer" : "Gewinn aus freiberuflicher Tätigkeit"}“)</td><td class="num"><b>${T.euroDown(r.profit).toLocaleString("de-DE")}</b> €</td><td>${btn("copyVal", "📋", "sm", String(T.euroDown(r.profit)))}</td></tr>
+      </tbody></table>
+      <p class="small muted" style="margin-top:6px">In Mein ELSTER: Formulare → Einkommensteuer ${y} → „Anlage EÜR“ und „Anlage ${b.kind ? E.BIZ_KINDS[b.kind].anlage : "S/G"}“ hinzufügen. Feldbezeichnung suchen und Betrag mit 📋 kopieren (volle Euro).</p>
+    </div>`;
+  }).join("");
+}
+
+// ---------------------------------------------------------------- Steuer-Assistent (Frage für Frage, wie ein Steuerprogramm)
+const taxProf = (y) => ((state.taxProfile ||= {})[y] ||= { step: 0, areas: {} });
+
+function viewAssistent(yearArg) {
+  const y = Number(yearArg) || ui.assistYear || Number(today().slice(0, 4)) - 1;
+  ui.assistYear = y;
+  const p = taxProf(y);
+  const own = state.objects.filter((o) => state.units.some((u) => u.objectId === o.id && u.type !== "ferienwohnung"));
+  const fw = fewoUnits();
+  const auto = { vv: own.length > 0, fewo: fw.length > 0, selbst: bizList().length > 0 };
+  const areas = { ...auto, ...p.areas };
+  const AREAS = [["vv", "🏢", "Vermietung", "Wohnungen, Häuser, Garagen, Gewerbe"], ["fewo", "🏖️", "Ferienwohnung", "Airbnb, Booking, Smoobu …"], ["selbst", "💼", "Selbstständigkeit", "Freiberuflich, Gewerbe, nebenberuflich"], ["lohn", "👔", "Angestellt", "Lohn / Gehalt"], ["sonst", "📄", "Rente, Kapitalerträge, Kinder …", "wird in ELSTER vorausgefüllt"]];
+  const steps = ["Start", "Was gab es?", ...(areas.vv ? ["Vermietung"] : []), ...(areas.fewo ? ["Ferienwohnung"] : []), ...(areas.selbst ? ["Selbstständigkeit"] : []), ...(areas.lohn || areas.sonst ? ["Weitere Einkünfte"] : []), "Ergebnis"];
+  const step = Math.min(p.step || 0, steps.length - 1), name = steps[step];
+  const nav = `<div class="toolbar" style="margin-top:16px;justify-content:space-between">${step ? btn("assistStep", "‹ Zurück", "", step - 1) : "<span></span>"}${step < steps.length - 1 ? btn("assistStep", "Weiter ›", "primary big", step + 1) : ""}</div>`;
+  const yesNo = (key, val, label) => `<div class="q"><div>${label}</div><div class="checks"><label><input type="radio" name="${key}" data-change="assistAns" data-id="${key}|ja" ${val === "ja" ? "checked" : ""}> Ja</label><label><input type="radio" name="${key}" data-change="assistAns" data-id="${key}|nein" ${val === "nein" ? "checked" : ""}> Nein</label></div></div>`;
+  const ans = p.ans || {};
+  let body = "";
+  if (name === "Start") body = `<h1>Steuererklärung ${y} – Schritt für Schritt</h1><p class="muted">Ich stelle dir ein paar einfache Fragen. Was die App schon weiß (Mieten, Buchungen, Ausgaben, Belege), musst du nicht noch einmal eingeben. Am Ende bekommst du für jedes Formular eine Ausfüllhilfe zum Kopieren in Mein ELSTER.</p>
+    <label class="f" style="max-width:240px;margin-top:14px"><span>Für welches Jahr?</span><select data-change="assistYear">${opt([0, 1, 2, 3].map((i) => { const yy = Number(today().slice(0, 4)) - 1 - i + 1; return [yy, String(yy)]; }), y)}</select></label>
+    ${yesNo("verheiratet", ans.verheiratet, "Bist du verheiratet und gebt ihr die Erklärung gemeinsam ab (Zusammenveranlagung)?")}
+    <p class="small muted">Abgabefrist ohne Steuerberater: <b>31.07.${y + 1}</b>. Keine Steuerberatung – die App rechnet mit deinen Daten und zeigt typische Fehler.</p>`;
+  else if (name === "Was gab es?") body = `<h1>Was hattest du ${y}?</h1><p class="muted">Tippe alles an, was zutrifft.</p>
+    <div class="qgrid">${AREAS.map(([k, ic, l, sub]) => `<button class="qtile ${areas[k] ? "on" : ""}" data-act="assistArea" data-id="${k}"><span>${ic}</span>${l}<small class="muted">${sub}</small>${areas[k] ? "<small>✓ ausgewählt</small>" : ""}</button>`).join("")}</div>`;
+  else if (name === "Vermietung") body = `<h1>🏢 Vermietung</h1><p class="muted">Für jedes Objekt gibt es eine eigene Anlage V. Die Zahlen kommen aus der App – hier nur noch die Angaben, die das Finanzamt zusätzlich will.</p>
+    ${own.map((o) => `<div class="card"><h2>${esc(o.name)}${o.ownership === "angemietet" ? ' <span class="badge warn">angemietet</span>' : ""}</h2>
+      ${(() => { const r = C.anlageV(state, y).find((x) => x.objectId === o.id) || { incomeTotal: 0, costTotal: 0, result: 0 }; return `<div class="kv"><span>Einnahmen / Werbungskosten ${y}</span><b>${eur(r.incomeTotal)} / ${eur(r.costTotal)}</b></div><div class="kv"><span>Überschuss</span><b class="${r.result < 0 ? "neg" : ""}">${eur(r.result)}</b></div>`; })()}
+      ${o.ownership !== "angemietet" ? `<div class="q"><div>Wem gehört das Objekt?</div><select data-change="objOwners" data-id="${o.id}">${opt([["allein", "mir allein"], ["ehe", "mir und meinem Ehepartner (je 50 %)"], ["anteile", "mehreren mit Anteilen (unter „Bearbeiten“ eintragen)"]], o.ehegatten ? "ehe" : o.owners ? "anteile" : "allein")}</select></div>
+      <div class="q"><div>Aktenzeichen aus dem Grundsteuer-/Einheitswertbescheid</div><input value="${esc(o.aktenzeichen || "")}" data-change="objField" data-id="${o.id}|aktenzeichen" placeholder="z. B. 123/456/7890-1"></div>
+      <div class="q"><div>Kaufpreis und Gebäudeanteil für die Abschreibung (AfA)</div>${o.buildingShare ? `<span class="badge ok">✓ AfA ${eur(C.afaForYear(o, y))} im Jahr ${y}</span>` : `<span class="badge warn">fehlt – bares Geld!</span> ${btn("editObject", "Kaufdaten eintragen", "sm primary", o.id)}`}</div>` : `<div class="note small">Angemietet: keine AfA. Untervermietung – Formular (Anlage V oder Gewerbe) mit dem Finanzamt bzw. Steuerberater klären.</div>`}
+    </div>`).join("")}
+    ${T.taxChecks(state, y, today()).filter((c) => c.level !== "info").slice(0, 8).map((c) => `<div class="note small ${c.level === "bad" ? "warn" : ""}">${c.level === "bad" ? "⛔" : "⚠️"} <b>${esc(c.area)}:</b> ${esc(c.text)}</div>`).join("")}`;
+  else if (name === "Ferienwohnung") body = `<h1>🏖️ Ferienwohnung</h1><p class="muted">Wichtig für das Finanzamt: Wie viele Tage wurde vermietet, selbst genutzt und stand die Wohnung leer? Die Tage kommen aus deinen Buchungen.</p>
+    ${fw.map((u) => { const us = T.fewoUsage(state, u.id, y); return `<div class="card"><h2>${esc(unitLabel(u))}</h2><div class="bigstats four"><div><span>vermietet</span><b>${us.rented}</b><small>Tage</small></div><div><span>selbst genutzt</span><b>${us.own}</b><small>Tage</small></div><div><span>Leerstand</span><b>${us.empty}</b><small>Tage</small></div><div><span>Kosten abziehbar</span><b>${Math.round(us.costQuote * 100)} %</b></div></div>
+      ${yesNo(`fw_own_${u.id}`, ans[`fw_own_${u.id}`] ?? (us.own ? "ja" : ""), "Hast du (oder Familie/Freunde kostenlos) die Wohnung selbst genutzt?")}
+      ${ans[`fw_own_${u.id}`] === "ja" && !us.own ? `<div class="note warn small">Bitte die Tage als Buchung „Eigennutzung“ im Belegungskalender eintragen – sonst stimmt die Kostenaufteilung nicht. <a href="#/ferien">Zum Kalender →</a></div>` : ""}
+      ${yesNo(`fw_ausschl_${u.id}`, ans[`fw_ausschl_${u.id}`], "Wird die Wohnung ausschließlich an wechselnde Gäste vermietet und in der übrigen Zeit dafür bereitgehalten?")}
+    </div>`; }).join("")}
+    <p class="small muted">Formular: Anlage V-FeWo (nur bei Ferienwohnungen ohne Gewerbe). Bei hotelähnlichen Leistungen (Frühstück, Reinigung während des Aufenthalts) kann es gewerblich sein – dann Selbstständigkeit „Gewerbe“.</p>`;
+  else if (name === "Selbstständigkeit") body = `<h1>💼 Selbstständigkeit</h1>
+    ${bizList().length ? bizList().map((b) => { const r = E.euer(state, b.id, y); return `<div class="card"><h2>${esc(b.name)}</h2>
+      <div class="q"><div>Was trifft eher zu?</div><select data-change="bizField" data-id="${b.id}|kind">${opt([["", "– bitte wählen –"], ["freiberuflich", "Ich biete persönliche, qualifizierte Arbeit an (Beratung, IT, Unterricht, Kreatives) → freiberuflich"], ["gewerblich", "Ich verkaufe Waren, vermittle, arbeite handwerklich oder biete Dienstleistungen ohne besondere Qualifikation an → Gewerbe"]], b.kind || "")}</select></div>
+      ${yesNo(`ku_${b.id}`, b.kleinunternehmer ? "ja" : b.kind ? "nein" : "", "Kleinunternehmer – stellst du Rechnungen ohne Umsatzsteuer? (Umsatz Vorjahr ≤ 25.000 €)")}
+      <div class="kv"><span>Einnahmen / Ausgaben ${y}</span><b>${eur(r.income)} / ${eur(r.costs)}</b></div><div class="kv"><span>${r.profit < 0 ? "Verlust" : "Gewinn"}</span><b>${eur(r.profit)}</b></div>
+      <a class="btn sm" href="#/selbst">Einnahmen & Ausgaben erfassen →</a></div>`; }).join("") : `<div class="card empty-start"><div class="big">💼</div><p>Noch keine Tätigkeit angelegt.</p><br>${btn("editBusiness", "+ Tätigkeit anlegen", "primary")}</div>`}`;
+  else if (name === "Weitere Einkünfte") body = `<h1>👔 Weitere Einkünfte</h1><div class="card"><p><b>Gute Nachricht:</b> Lohnsteuerbescheinigung, Renten, Kranken- und Pflegeversicherung, Riester und vieles mehr meldet das Finanzamt selbst. In Mein ELSTER beim Erstellen der Erklärung <b>„Belegabruf“</b> aktivieren – dann sind diese Werte schon ausgefüllt, du prüfst sie nur.</p>
+    <ul class="small" style="margin:8px 0 0 18px"><li>Angestellt: Fahrten zur Arbeit (Entfernungspauschale), Homeoffice-Tage, Arbeitsmittel, Fortbildung in die <b>Anlage N</b>.</li><li>Kapitalerträge: Meist durch die Abgeltungsteuer erledigt – Anlage KAP nur bei Verlusten, ausländischen Konten oder wenn der Sparerpauschbetrag nicht ausgeschöpft wurde.</li><li>Kinder: Anlage Kind (Kinderbetreuung, Schulgeld).</li></ul>
+    <p class="small muted" style="margin-top:8px">Diese Bereiche kommen in einer späteren Ausbaustufe direkt in die App.</p></div>`;
+  else if (name === "Ergebnis") {
+    const checks = T.taxChecks(state, y, today()).filter((c) => c.level === "bad");
+    const forms = [
+      ...(areas.vv ? own.map((o) => ["Anlage V", o.name, `#/erklaerung/${y}`, !o.buildingShare && o.ownership !== "angemietet" ? "AfA-Daten fehlen" : ""]) : []),
+      ...(areas.fewo ? fw.map((u) => ["Anlage V-FeWo", u.name, `#/erklaerung/${y}`, ""]) : []),
+      ...(areas.selbst ? bizList().flatMap((b) => { const bad = E.bizChecks(state, b.id, y).filter((c) => c.level === "bad"); return [["Anlage EÜR", b.name, "#/selbst", bad[0]?.text || ""], [`Anlage ${b.kind ? E.BIZ_KINDS[b.kind].anlage : "S/G"}`, b.name, "#/selbst", b.kind ? "" : "Art fehlt"]]; }) : []),
+      ...(areas.lohn ? [["Anlage N", "Gehalt", "", "über Belegabruf in ELSTER"]] : []),
+    ];
+    const profit = sum(bizList(), (b) => E.euer(state, b.id, y).profit), vv = sum(own, (o) => C.anlageV(state, y).find((r) => r.objectId === o.id)?.result || 0) + sum(state.objects.filter((o) => !own.includes(o)), (o) => C.anlageV(state, y).find((r) => r.objectId === o.id)?.result || 0);
+    body = `<h1>✅ Ergebnis ${y}</h1>
+      <div class="bigstats">${areas.vv || areas.fewo ? `<div><span>Vermietung & Ferienwohnung</span><b class="${vv < 0 ? "neg" : ""}">${eur(vv)}</b><small>Überschuss</small></div>` : ""}${areas.selbst ? `<div><span>Selbstständigkeit</span><b class="${profit < 0 ? "neg" : ""}">${eur(profit)}</b><small>Gewinn</small></div>` : ""}</div>
+      <div class="card"><h2>Deine Formulare</h2>${forms.map(([f, what, href, warn]) => `<div class="todoitem"><span class="ic">${warn ? "⚠️" : "✅"}</span><span class="tx"><b>${esc(f)}</b> – ${esc(what)}${warn ? `<div class="small neg">${esc(warn)}</div>` : ""}</span>${href ? `<a class="btn sm primary" href="${href}">Ausfüllhilfe</a>` : ""}</div>`).join("") || '<p class="muted">Bitte im Schritt „Was gab es?“ etwas auswählen.</p>'}</div>
+      ${checks.length ? `<div class="card"><h2>Vor der Abgabe klären</h2>${checks.map((c) => `<div class="note small warn">⛔ <b>${esc(c.area)}:</b> ${esc(c.text)}</div>`).join("")}</div>` : ""}
+      <div class="note"><b>Abgeben:</b> In Mein ELSTER die Formulare anlegen, Werte mit 📋 kopieren, prüfen lassen und absenden. <a href="#/erklaerung/${y}" data-act="erklTab" data-id="abgabe">Anleitung zur Abgabe →</a></div>`;
+  }
+  return `<div class="setupwrap" style="max-width:860px"><div class="stepper">${steps.map((sname, i) => `<span class="${i === step ? "on" : i < step ? "done" : ""}">${i < step ? "✓ " : ""}${esc(sname)}</span>`).join("")}</div><div class="setup">${body}</div>${nav}</div>`;
 }
 
 // ---------------------------------------------------------------- Eigene Monatstabelle übernehmen (Foto mit KI oder CSV-Export)
@@ -3282,14 +3456,14 @@ function navGroups() {
     ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["instand", "🔧", "Reparaturen"], ...(isCloud() ? [["portal", "🔑", `Mieterportal${portalUnread() ? ` (${portalUnread()})` : ""}`]] : []), ["briefe", "✉️", "Briefe"]]],
     ...(hasFewo ? [["Ferienwohnung", [["ferien", "🏖️", "Belegung & Buchungen"], ["rechnungen", "🧾", "Gäste-Rechnungen"]]]] : []),
     ["Geld & Belege", [["bank", "🏦", "Konto & Bank"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📂", "Dokumente & Ablage"]]],
-    ["Steuer", [["steuer", "📬", "Für den Steuerberater"], ["erklaerung", "🧮", "Steuererklärung"]]],
+    ["Steuer", [["assistent", "🧭", "Steuererklärung (Assistent)"], ["selbst", "💼", "Selbstständigkeit"], ["steuer", "📬", "Für den Steuerberater"]]],
     ["Mehr", [["ki", "✨", "KI-Assistent"], ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡️", "Admin"]] : []), ["einstellungen", "⚙️", "Einstellungen"]]],
   ];
 }
 
 // Welcher Menüpunkt gehört zur aktuellen Seite?
 function navKeyFor(route) {
-  return { rechnung: "rechnungen", bericht: "steuer", paket: "steuer", monat: "steuer", ablage: "dokumente", suche: "", nkbrief: "nebenkosten", nkassistent: "nebenkosten", brief: "briefe", protokoll: "mieter", auskunft: "mieter" }[route] ?? route;
+  return { rechnung: "rechnungen", bericht: "steuer", paket: "steuer", monat: "steuer", ablage: "dokumente", suche: "", erklaerung: "assistent", nkbrief: "nebenkosten", nkassistent: "nebenkosten", brief: "briefe", protokoll: "mieter", auskunft: "mieter" }[route] ?? route;
 }
 
 function navHtml(route) {
@@ -4958,7 +5132,7 @@ function render() {
   $("#nav").innerHTML = navHtml(route);
   if (!$("#tabbar")) document.body.insertAdjacentHTML("beforeend", '<nav id="tabbar" class="noprint"></nav>');
   $("#tabbar").innerHTML = tabbarHtml(route);
-  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, monat: () => viewMonthReport(arg), portal: viewPortalInbox, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, ablage: () => viewAblage(arg), konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
+  const views = { "": () => (ui.setup?.step === 4 ? viewSetup() : viewStart()), objekte: viewObjects, mieter: () => (arg ? viewTenant(arg) : viewTenants()), protokoll: () => viewProtocol(arg, hash.split("/")[2]), auskunft: () => viewDataReport(arg), erklaerung: () => viewTaxReturn(arg), kuendigen: viewCancelForm, suche: viewSearch, nkassistent: viewNkWizard, instand: viewInstand, monat: () => viewMonthReport(arg), portal: viewPortalInbox, mieten: viewRents, bank: viewBank, ausgaben: viewExpenses, ferien: viewFewo, rechnungen: viewInvoices, rechnung: () => viewInvoice(arg), steuer: viewTax, bericht: () => viewReport(arg), einstellungen: viewSettings, nebenkosten: viewNk, nkbrief: () => viewNkLetter(arg, hash.split("/")[2]), paket: () => viewPackage(arg), dokumente: viewDocs, briefe: viewLetters, brief: () => viewLetter(arg), ki: viewKi, ablage: () => viewAblage(arg), selbst: viewSelbst, assistent: () => viewAssistent(arg), konto: () => (isCloud() ? viewKonto() : viewSettings()), admin: viewAdmin };
   try {
     $("#view").innerHTML = banners() + (views[route] || viewDashboard)();
     if (document.querySelector("img[data-doc]")) hydrateDocImages();
@@ -5115,7 +5289,11 @@ const actions = {
     const nk = nkDraft();
     await kiAsk(`Prüfe die aktuelle Nebenkostenabrechnung für ${byId("objects", nk.objectId)?.name} (${d(nk.from)}–${d(nk.to)}) auf Fehler und Risiken: Sind alle Positionen nach BetrKV umlagefähig, passen die Umlageschlüssel, fehlen typische Kostenarten, ist die Frist eingehalten? Positionen: ${nk.items.map((i) => `${i.label} ${eur(i.amount)} nach ${C.NK_KEYS[i.key]}`).join("; ")}.`);
   }, newUnit: (id) => editUnit(null, id), editUnit,
-  newTenant: () => editTenant(), editTenant, mergeTenants, deleteTenant: (id) => deleteTenantAll(id), newContract: (unitId) => editContract(null, unitId), editContract, addStep,
+  newTenant: () => editTenant(), editTenant, mergeTenants,
+  editBusiness: (id) => editBusiness(id), editBizEntry: (id) => editBizEntry(id),
+  bizEntryNew: (arg) => { const [bid, cat] = String(arg).split("|"); editBizEntry(null, { businessId: bid, category: cat, vat: bizList().find((b) => b.id === bid)?.kleinunternehmer ? 0 : 19 }); },
+  assistStep: (i) => { taxProf(ui.assistYear).step = Number(i); persist(); render(); scrollTo(0, 0); },
+  assistArea: (k) => { const p = taxProf(ui.assistYear); const cur = p.areas[k] ?? ({ vv: state.objects.length > 0, fewo: fewoUnits().length > 0, selbst: bizList().length > 0 })[k] ?? false; p.areas[k] = !cur; persist(); render(); }, deleteTenant: (id) => deleteTenantAll(id), newContract: (unitId) => editContract(null, unitId), editContract, addStep,
   moveWizardFromContract: (unitId) => { $("#modal").close(); moveWizard(unitId || undefined); },
   deleteContract: (id) => {
     const c = byId("contracts", id); if (!c) return;
@@ -5236,6 +5414,13 @@ document.addEventListener("change", async (e) => {
   if (!k) return;
   if (k === "docUpload" || k === "docScan") { await addFiles(e.target.files, { scan: k === "docScan" }); e.target.value = ""; return; }
   if (k === "autoKi") { ui.autoKi = e.target.checked; return; }
+  if (k === "bizScan") { const f = e.target.files[0]; e.target.value = ""; if (f) await bizScan(e.target.closest("form"), f); return; }
+  if (k === "bizYear") { const [bid, f] = e.target.dataset.id.split("|"); const b = bizList().find((x) => x.id === bid); ((b.yearData ||= {})[ui.year] ||= {})[f] = Number(e.target.value) || 0; commit("Gespeichert"); return; }
+  if (k === "bizField") { const [bid, f] = e.target.dataset.id.split("|"); bizList().find((x) => x.id === bid)[f] = e.target.value; commit("Gespeichert"); return; }
+  if (k === "assistYear") { ui.assistYear = Number(e.target.value); render(); return; }
+  if (k === "assistAns") { const [key, v] = e.target.dataset.id.split("|"); const p = taxProf(ui.assistYear); (p.ans ||= {})[key] = v; if (key.startsWith("ku_")) { const b = bizList().find((x) => x.id === key.slice(3)); if (b) b.kleinunternehmer = v === "ja"; } commit(); return; }
+  if (k === "objOwners") { const o = byId("objects", e.target.dataset.id); o.ehegatten = e.target.value === "ehe"; if (e.target.value === "ehe" && !o.owners) o.owners = ""; if (e.target.value === "anteile") return editObject(o.id); commit("Gespeichert"); return; }
+  if (k === "objField") { const [oid, f] = e.target.dataset.id.split("|"); byId("objects", oid)[f] = e.target.value.trim(); commit("Gespeichert"); return; }
   if (k === "tableImportCsv" || k === "tableImportPhoto") { const f = e.target.files[0]; e.target.value = ""; if (f) await tableImportRead(f, k === "tableImportCsv" ? "csv" : "photo"); return; }
   if (k === "addrScanText") return;
   if (k === "addrScan") { const f = e.target.files[0]; e.target.value = ""; if (f) await addrScanFill(e.target.closest("form"), { blob: f }); return; }

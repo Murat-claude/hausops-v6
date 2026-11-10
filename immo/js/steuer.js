@@ -17,6 +17,7 @@ export function expenseShareForYear(e, year) {
 // Objekt, zu dem eine Zahlung gehört
 function unitOfPayment(state, p) {
   if (p.contractId) return (state.units || []).find((u) => u.id === (state.contracts || []).find((c) => c.id === p.contractId)?.unitId);
+  if (p.unitId) return (state.units || []).find((u) => u.id === p.unitId);
   if (p.invoiceId) { const inv = (state.invoices || []).find((i) => i.id === p.invoiceId); const uid = inv?.unitId || (state.bookings || []).find((b) => b.id === inv?.bookingId)?.unitId; return (state.units || []).find((u) => u.id === uid); }
   return null;
 }

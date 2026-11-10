@@ -373,6 +373,7 @@ export function suggestAssignment(tx, state) {
     if (ns >= 0.8 || (amt && (ns || /miete|pacht/.test(normalize(text))))) return { kind: "ausgabe", category: "anmietung", objectId: o.id, score: ns && amt ? 90 : 70, why: [ns ? "Name des Vermieters" : "", amt ? "Betrag = Miete" : ""].filter(Boolean) };
   }
   if (rule && rule.kind === "ignorieren") return { kind: "ignorieren", score: 90, why: ["gelernte Regel"] };
+  if (rule && rule.kind === "selbst") return { ...rule, score: 90, why: ["gelernte Regel"] };
   const n = normalize(text);
   for (const [re, cat] of DEBIT_KEYWORDS) {
     if (re.test(n)) return { kind: "ausgabe", category: cat, objectId: null, score: 45, why: ["Stichwort im Text"] };
@@ -461,6 +462,7 @@ export function afaForYear(obj, year) {
 
 function objectIdOfPayment(state, p) {
   if (p.objectId) return p.objectId;
+  if (p.unitId) return (state.units || []).find((u) => u.id === p.unitId)?.objectId || null;
   const units = state.units || [];
   if (p.contractId) {
     const c = (state.contracts || []).find((x) => x.id === p.contractId);
@@ -488,7 +490,7 @@ export function splitPayment(state, p) {
   } else if (p.kind === "nk_nachzahlung") {
     const c = (state.contracts || []).find((x) => x.id === p.contractId);
     parts.push({ type: "umlage", amount: p.amount, vat: c ? unitVat(state, c) : 0 });
-  } else if (p.kind === "fewo" && p.invoiceId) {
+  } else if (p.kind === "fewo") {
     const inv = (state.invoices || []).find((x) => x.id === p.invoiceId);
     const t = inv ? invoiceTotals(inv) : null;
     if (t && t.gross) {
