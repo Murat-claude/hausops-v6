@@ -151,6 +151,26 @@ export function erstelleHandler(store, zugang, benachrichtige = (n) => sendePush
       return json(200, { daten: { ...daten, link: `https://www.kleinanzeigen.de${u.pathname}` } });
     }
 
+    // Als "gut" markierte Funde mit den aktuellen Regeln neu bewerten (nach Regeländerungen)
+    if (teile[0] === "funde" && teile[1] === "neubewerten" && methode === "POST") {
+      const { bewerteDetail } = await import("./scout.mjs");
+      const funde = (await store.get("funde/liste", { type: "json" })) || [];
+      const ziele = funde.filter((f) => f.gut).slice(0, 12);
+      const ergebnis = [];
+      for (const f of ziele) {
+        try {
+          const r = await fetch(f.url, { headers: { "User-Agent": "immo-scout/1.0 (private Objektsuche, wenige Abrufe)", "Accept-Language": "de-DE" } });
+          if (!r.ok) { ergebnis.push({ titel: f.titel, fehler: r.status }); continue; }
+          f.bewertung = bewerteDetail(f, await r.text());
+          f.gut = Boolean(f.bewertung && !f.bewertung.warnungen?.length && (f.bewertung.ampel === "gruen" || (f.bewertung.cashflow_monat ?? -1) >= 0));
+          ergebnis.push({ titel: f.titel, gut: f.gut, ampel: f.bewertung?.ampel });
+        } catch (e) { ergebnis.push({ titel: f.titel, fehler: e.message }); }
+        await new Promise((ok) => setTimeout(ok, 500));
+      }
+      await store.setJSON("funde/liste", funde);
+      return json(200, { ergebnis });
+    }
+
     if (teile[0] === "funde" && methode === "GET") {
       const funde = (await store.get("funde/liste", { type: "json" })) || [];
       const status = await store.get("scout/status", { type: "json" });

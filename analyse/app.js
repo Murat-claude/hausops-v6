@@ -74,9 +74,10 @@ document.addEventListener("visibilitychange", async () => {
 // ---------- Eingabe: Link/Text auslesen, Formular, Annahmen ----------
 const FELDER = ["titel", "objektart", "ort", "kaufpreis", "wohnflaeche_m2", "grundstueck_m2", "einheiten", "zimmer", "baujahr", "energieklasse", "ist_miete_monat", "hausgeld_monat", "makler_prozent", "sanierung", "eigenkapital"];
 const ZAHLFELDER = new Set(["kaufpreis", "wohnflaeche_m2", "grundstueck_m2", "einheiten", "zimmer", "baujahr", "ist_miete_monat", "hausgeld_monat", "makler_prozent", "sanierung", "eigenkapital"]);
-const MERKMALE = ["sanierungsbeduerftig", "vermietet", "leer", "denkmal", "erbpacht", "zweites_grundstueck", "baurecht", "oelheizung"];
+const MERKMALE = ["sanierungsbeduerftig", "renovierungsbeduerftig", "vermietet", "leer", "denkmal", "erbpacht", "zweites_grundstueck", "baurecht", "oelheizung"];
 const ANNAHMEN_SPEICHER = "immo-annahmen";
 let eingabeLink = "";
+let zusatzAngaben = {};
 
 function findeLinks(text) {
   return [...new Set((text.match(/https?:\/\/[^\s<>"')]+/g) || []).map((u) => u.replace(/[.,;]+$/, "")))];
@@ -94,7 +95,34 @@ function formularFuellen(f, nurLeere = false) {
   }
   if (f.merkmale) for (const m of MERKMALE) if (f.merkmale[m]) $("m-" + m).checked = true;
   if (f.link) eingabeLink = f.link;
+  // Zusatzangaben, die kein eigenes Feld haben, für die Auswertung merken
+  zusatzAngaben = { ...zusatzAngaben, ...Object.fromEntries(["sanierungsjahr", "faktor_angabe", "einheiten_im_haus", "grundstueck_gemeinschaft", "ist_miete_jahr"].filter((k) => f[k] != null).map((k) => [k, f[k]])) };
+  kontrolleZeigen();
 }
+
+// Live-Kontrolle beim Ausfüllen: Preis/m², Monatsmiete und Faktor – macht Lesefehler sofort sichtbar
+function kontrolleZeigen() {
+  const kp = num($("e-kaufpreis").value), fl = num($("e-wohnflaeche_m2").value), miete = num($("e-ist_miete_monat").value);
+  const teile = [], warn = [];
+  if (kp && fl) {
+    const pm2 = kp / fl;
+    teile.push(`${Math.round(pm2).toLocaleString("de-DE")} €/m²`);
+    if (pm2 < 400 || pm2 > 7000) warn.push("Preis/m² unplausibel");
+  }
+  if (miete) {
+    teile.push(`Miete ${Math.round(miete).toLocaleString("de-DE")} €/Monat`);
+    if (kp) {
+      const f = kp / (miete * 12);
+      teile.push(`Faktor ${f.toLocaleString("de-DE", { maximumFractionDigits: 1 })}`);
+      // Nur echte Verwechslungen melden (Jahresmiete als Monatsmiete ergibt Faktor < 5, umgekehrt > 70)
+      if (f < 5 || f > 70) warn.push("Faktor unplausibel – Monats- oder Jahresmiete?");
+      else if (f > 35) teile.push("sehr teuer");
+    }
+  }
+  $("kontrolle").textContent = teile.length ? "Kontrolle: " + teile.join(" · ") + (warn.length ? " – ⚠️ " + warn.join(", ") : "") : "";
+  $("kontrolle").classList.toggle("warn", warn.length > 0);
+}
+["e-kaufpreis", "e-wohnflaeche_m2", "e-ist_miete_monat"].forEach((id) => $(id).addEventListener("input", kontrolleZeigen));
 
 function formularLesen() {
   const e = { merkmale: {} };
@@ -104,6 +132,7 @@ function formularLesen() {
     e[k] = ZAHLFELDER.has(k) ? num(v) : v;
   }
   for (const m of MERKMALE) e.merkmale[m] = $("m-" + m).checked;
+  for (const k of ["sanierungsjahr", "faktor_angabe", "einheiten_im_haus", "grundstueck_gemeinschaft"]) if (zusatzAngaben[k] != null) e[k] = zusatzAngaben[k];
   return e;
 }
 
@@ -112,6 +141,8 @@ function formularLeeren() {
   for (const m of MERKMALE) $("m-" + m).checked = false;
   $("text").value = "";
   eingabeLink = "";
+  zusatzAngaben = {};
+  $("kontrolle").textContent = "";
 }
 
 function annahmenLesen() {
@@ -333,6 +364,7 @@ function zeigeUeberblick(r) {
         <div class="hinweis">${aktuell.autor ? "Analysiert von " + esc(aktuell.autor) + " · " : ""}${aktuell.datum ? new Date(aktuell.datum).toLocaleDateString("de-DE") : ""}${aktuell.link ? ` · <a href="${esc(aktuell.link)}" target="_blank" rel="noopener">Zum Inserat</a>` : ""}</div>
       </div>
     </div>
+    ${d.warnungen?.length ? `<div class="warnbox"><b>Bitte zuerst prüfen – die Daten wirken nicht plausibel:</b><ul>${d.warnungen.map((w) => `<li>${esc(w)}</li>`).join("")}</ul><span class="hinweis">Mit „Eingaben ändern“ korrigieren und neu auswerten.</span></div>` : ""}
     ${r ? `<div class="kpis">
       <div class="kpi messing"><b>${eur(d.verhandlungsziel)}</b><span>Verhandlungsziel</span></div>
       <div class="kpi"><b>${eur(r.preisM2)}</b><span>Preis/m² (Markt ${marktText})</span></div>
@@ -604,7 +636,7 @@ function zeigeFunde() {
         bw.faktor ? `Faktor ${String(bw.faktor).replace(".", ",")}` : null,
         bw.beste?.max_kaufpreis ? `${bw.beste.name} lohnt bis ${bw.beste.max_kaufpreis.toLocaleString("de-DE")} €` : null,
         bw.ist_miete ? "(Ist-Miete)" : "(Marktmiete geschätzt)",
-      ].filter(Boolean).join(" · ");
+      ].filter(Boolean).join(" · ") + (bw.warnungen?.length ? " · ⚠️ Daten prüfen" : "");
       z.querySelector(".meta").after(zeile);
     }
     const analysieren = document.createElement("button");

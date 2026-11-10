@@ -7,8 +7,13 @@ import { auswerten } from "../../lib/auswertung.js";
 import { sendePush } from "../../lib/push.mjs";
 
 const MAX_DETAILS = 4; // Detailseiten pro Lauf (zurückhaltend)
-const holenStandard = (pfad) => fetch(`https://www.kleinanzeigen.de/${pfad}`, { headers: { "User-Agent": UA, "Accept-Language": "de-DE" } })
-  .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); });
+// Bei kurzzeitiger Drosselung (403/429/503) einmal nach 4 Sekunden erneut versuchen
+async function holenStandard(pfad, versuch = 1) {
+  const r = await fetch(`https://www.kleinanzeigen.de/${pfad}`, { headers: { "User-Agent": UA, "Accept-Language": "de-DE" } });
+  if ([403, 429, 503].includes(r.status) && versuch === 1) { await new Promise((ok) => setTimeout(ok, 4000)); return holenStandard(pfad, 2); }
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.text();
+}
 
 const eur = (v) => Math.round(v).toLocaleString("de-DE") + " €";
 
@@ -31,6 +36,8 @@ export function bewerteDetail(fund, html) {
     faktor: real?.kaltmiete_monat ? Math.round((daten.kaufpreis / (real.kaltmiete_monat * 12)) * 10) / 10 : null,
     beste: beste ? { name: beste.name, eignung: beste.eignung, max_kaufpreis: beste.max_kaufpreis } : null,
     ist_miete: Boolean(e.ist_miete_jahr || e.ist_miete_monat),
+    warnungen: daten.warnungen || [],
+    kaufpreis: daten.kaufpreis, wohnflaeche: daten.wohnflaeche_m2,
     baujahr: e.baujahr || null, einheiten: e.einheiten || null,
   };
 }
@@ -61,7 +68,8 @@ export async function lauf(store, holen = holenStandard) {
     } catch (e) { o.bewertung = null; }
   }));
   for (const o of neu) {
-    o.gut = o.bewertung ? o.bewertung.ampel === "gruen" || (o.bewertung.cashflow_monat ?? -1) >= 0 : istGut(o) && (o.faktor_inserat ?? 99) <= 12;
+    // Gut nur ohne Datenwarnung; ohne Detailprüfung nur bei sehr starkem Faktor laut Anzeige
+    o.gut = o.bewertung ? !o.bewertung.warnungen?.length && (o.bewertung.ampel === "gruen" || (o.bewertung.cashflow_monat ?? -1) >= 0) : istGut(o) && (o.faktor_inserat ?? 99) <= 12;
   }
 
   await store.setJSON("funde/liste", [...neu, ...funde].slice(0, 300));

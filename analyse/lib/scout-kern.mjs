@@ -11,7 +11,8 @@ export const SUCHEN = [
   ["Garage", `s-garage-lagerraum/${ORT}/sortierung:neuste/garage-kaufen/k0c197${ORT_ID}`],
 ];
 const MIETE = 7.5; // €/m² Schätzung für den Schnell-Faktor
-const AUSSCHLUSS = ["neubau", "bauen sie", "hausbau", "massa", "town & country", "fertighaus", "wir suchen", "gesucht", "ankauf", "kostenlose vermarktung", "zu verkaufen?", "bauträger", "zu vermieten"];
+const AUSSCHLUSS = ["neubau", "bauen sie", "hausbau", "massa", "town & country", "fertighaus", "wir suchen", "gesucht", "ankauf", "kostenlose vermarktung", "zu verkaufen?", "bauträger", "zu vermieten",
+  "planbar", "ausbauhaus", "als ausbauhaus", "schlüsselfertig", "bauvorhaben", "neubauprojekt", "projektiert", "inkl. grundstück und", "mit förderung bauen", "haus bauen", "traumhaus bauen"];
 
 const ent = (s) => s.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
 
