@@ -756,3 +756,67 @@ a { color: #111827; }
   #tabbar a span svg.i, #tabbar button span svg.i { width: 22px; height: 22px; }
   #tabbar .ico { margin: 0; }
 }
+
+/* =====================================================================
+   Ruhige Farbe: Salbei-Petrol in der Leiste, Icons einheitlich
+   ===================================================================== */
+:root {
+  --calm: #2e4f4b; --calm-2: #24403d; --calm-ink: #e8f0ee; --calm-muted: #a8c2bd;
+  --brand: #2f5d58; --brand-2: #264d49; --brand-soft: #eaf1ef; --ok: #2f5d58; --ok-bg: #eaf1ef; --ring: 0 0 0 3px rgba(47,93,88,.18);
+  --bg: #f5f7f6;
+}
+/* Seitenleiste */
+.side { background: linear-gradient(180deg, var(--calm) 0%, var(--calm-2) 100%); border-right: 0; color: var(--calm-ink); }
+.logo-icon { filter: none; box-shadow: 0 2px 8px rgba(0,0,0,.18); }
+.logo .wm, .logo span { color: #fff; }
+.logo .wm em { color: var(--calm-muted); }
+#gsearch { background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.14); color: #fff; }
+#gsearch::placeholder { color: rgba(232,240,238,.6); }
+#gsearch:focus { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.35); box-shadow: none; }
+.side nav .navgroup { color: rgba(232,240,238,.5); }
+.side nav a { color: rgba(232,240,238,.86); }
+.side nav a svg.nav-i { color: var(--calm-muted); }
+.side nav a:hover { background: rgba(255,255,255,.07); color: #fff; }
+.side nav a:hover svg.nav-i { color: #fff; }
+.side nav a.active { background: rgba(255,255,255,.14); color: #fff; }
+.side nav a.active svg.nav-i { color: #fff; }
+.side .foot { border-top-color: rgba(255,255,255,.12); color: var(--calm-muted); }
+.side .foot .me-tx b { color: #fff; }
+.side .foot .avatar { background: rgba(255,255,255,.16); color: #fff; }
+.side .foot .small, #livesync { color: var(--calm-muted); }
+.side .foot select { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.18); }
+.logout-btn { background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.2); }
+.logout-btn:hover { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.35); }
+/* Inhalt: Akzent im gleichen ruhigen Ton */
+.btn.primary { background: var(--brand); border-color: var(--brand); box-shadow: 0 1px 2px rgba(47,93,88,.25); }
+.btn.primary:hover { background: var(--brand-2); border-color: var(--brand-2); }
+.btn.link, a { color: var(--brand); }
+.btn.link { text-decoration: none; }
+.ico svg.i, h1 .ico svg.i, h2 .ico svg.i { color: var(--brand); opacity: 1; }
+.btn .ico svg.i { color: currentColor; }
+.qtile > span, .todoitem .ic, .ut-ic { background: var(--brand-soft); }
+.qtile > span svg.i, .todoitem .ic svg.i, .ut-ic svg.i { color: var(--brand); }
+.qtile.on { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand); }
+.qtile.on > span { background: var(--brand); }
+.badge.ok { background: var(--brand-soft); color: var(--brand); }
+.dot.ok, .dot.over { background: var(--brand); color: #fff; }
+.cal td.d.b { background: var(--brand); }
+.cal td.d.b.req { background: #8fb0aa; }
+.stepper span.on { background: var(--brand); border-color: var(--brand); }
+.stepper span.done { color: var(--brand); border-color: #c9dad6; }
+.tabs button.active, .tabs a.tabbtn.active { color: var(--brand); border-color: var(--brand); }
+.note { border-left-color: var(--brand); }
+.bar i { background: var(--brand); }
+.chat .msg.q { background: var(--brand); }
+.auth-hero { background: linear-gradient(160deg, var(--calm) 0%, var(--calm-2) 100%); }
+.auth-hero li::before { color: var(--calm-muted); }
+/* Handy: Kopfzeile in der ruhigen Farbe, Leiste unten hell mit gleichfarbigen Icons */
+@media (max-width: 900px) {
+  .side { background: var(--calm); border-bottom: 0; }
+  .mlogout { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.25); }
+  #tabbar a, #tabbar button { color: #7c8f8b; }
+  #tabbar a.on { color: var(--brand); }
+  #tabbar .plus { background: var(--brand); box-shadow: 0 6px 16px rgba(47,93,88,.35); }
+  #tabbar a span svg.i, #tabbar button span svg.i { color: currentColor; }
+}
+.toast { background: var(--calm-2); color: #fff; }
