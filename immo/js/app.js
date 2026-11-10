@@ -10,6 +10,7 @@ import * as T from "./steuer.js";
 import * as I from "./instand.js";
 import * as M from "./monat.js";
 import * as E from "./euer.js";
+import * as Ic from "./icons.js";
 
 let state = S.load();
 const ui = { bankFilter: "offen", bankSearch: "", month: C.monthKey(today()), year: Number(today().slice(0, 4)), csv: null };
@@ -49,9 +50,20 @@ function cleanEmojis(root) {
     const nv = stripEmoji(v);
     if (nv === v) continue;
     const el = n.parentElement;
+    if (el && /^(OPTION|TITLE|TEXTAREA)$/.test(el.tagName)) { n.nodeValue = nv; continue; }
+    // Emoji durch einfarbiges Linien-Icon ersetzen
+    const frag = document.createDocumentFragment(); let last = 0, any = false;
+    v.replace(EMOJI_RE, (m, off) => {
+      if (EMOJI_KEEP.test(m)) return m;
+      frag.append(v.slice(last, off)); last = off + m.length;
+      const name = Ic.EMOJI_ICON[[...m.replace(/[\uFE0F\uFE0E\s\u00A0]/g, "")][0]];
+      if (name) { const sp = document.createElement("span"); sp.className = "ico"; sp.innerHTML = Ic.svg(name); frag.append(sp); if (/\s$/.test(m)) frag.append(" "); any = true; }
+      return m;
+    });
+    frag.append(v.slice(last));
+    if (any) n.replaceWith(frag); else n.nodeValue = nv;
     const btnEl = el?.closest("button, a.btn, label.btn, .att");
-    n.nodeValue = nv;
-    if (btnEl && !btnEl.textContent.trim() && !btnEl.querySelector("img")) btnEl.textContent = btnEl.title || btnEl.getAttribute("aria-label") || EMOJI_LABEL[[...v.trim()][0]] || "Öffnen";
+    if (btnEl && !btnEl.textContent.trim() && !btnEl.querySelector("img, svg")) btnEl.textContent = btnEl.title || btnEl.getAttribute("aria-label") || EMOJI_LABEL[[...v.trim()][0]] || "Öffnen";
   }
   for (const el of [root, ...(root.querySelectorAll?.("[placeholder]") || [])].filter((x) => x.hasAttribute?.("placeholder"))) { const p0 = el.getAttribute("placeholder"); const p1 = stripEmoji(p0).trim(); if (p1 !== p0) el.setAttribute("placeholder", p1); }
 }
@@ -3481,7 +3493,7 @@ function navGroups() {
     ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["instand", "🔧", "Reparaturen"], ...(isCloud() ? [["portal", "🔑", `Mieterportal${portalUnread() ? ` (${portalUnread()})` : ""}`]] : []), ["briefe", "✉️", "Briefe"]]],
     ...(hasFewo ? [["Ferienwohnung", [["ferien", "🏖️", "Belegung & Buchungen"], ["rechnungen", "🧾", "Gäste-Rechnungen"]]]] : []),
     ["Geld & Belege", [["bank", "🏦", "Konto & Bank"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📂", "Dokumente & Ablage"]]],
-    ["Steuer", [["assistent", "🧭", "Steuererklärung (Assistent)"], ["selbst", "💼", "Selbstständigkeit"], ["steuer", "📬", "Für den Steuerberater"]]],
+    ["Steuer", [["assistent", "🧭", "Steuererklärung"], ["selbst", "💼", "Selbstständigkeit"], ["steuer", "📬", "Für den Steuerberater"]]],
     ["Mehr", [["ki", "✨", "KI-Assistent"], ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡️", "Admin"]] : []), ["einstellungen", "⚙️", "Einstellungen"]]],
   ];
 }
@@ -3493,7 +3505,7 @@ function navKeyFor(route) {
 
 function navHtml(route) {
   const active = navKeyFor(route);
-  return navGroups().map(([title, items]) => `${title ? `<div class="navgroup">${title}</div>` : ""}${items.map(([r, , l]) => `<a href="#/${r}" class="${active === r ? "active" : ""}">${l}</a>`).join("")}`).join("");
+  return navGroups().map(([title, items]) => `${title ? `<div class="navgroup">${title}</div>` : ""}${items.map(([r, ic, l]) => `<a href="#/${r}" class="${active === r ? "active" : ""}">${Ic.svg(Ic.EMOJI_ICON[[...ic.replace(/\uFE0F/g, "")][0]] || "", "i nav-i")}${l}</a>`).join("")}`).join("");
 }
 
 // Untere Leiste am Handy

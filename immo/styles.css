@@ -695,3 +695,64 @@ input.filled { background: #f8fafb; border-color: #9fb9c0; }
 .pitem.unread { border-left-color: var(--brand); }
 .tp .timeline.from-owner { border-left-color: var(--brand); background: #f8f9fa; }
 @media (max-width: 900px) { .side { width: 100%; } }
+
+/* =====================================================================
+   Schwarz-Weiß mit Linien-Icons (Lucide) – einfarbig, ohne Bunt
+   ===================================================================== */
+:root { --brand: #111827; --brand-2: #000; --brand-soft: #f1f2f4; --ok: #111827; --ok-bg: #f1f2f4; --ring: 0 0 0 3px rgba(17,24,39,.12); }
+svg.i { width: 1.05em; height: 1.05em; vertical-align: -0.16em; flex: none; }
+.ico { display: inline-flex; margin-right: .35em; color: inherit; }
+.ico svg.i { opacity: .9; }
+h1 .ico svg.i, h2 .ico svg.i { width: .9em; height: .9em; color: #6b7280; }
+.side nav a { gap: 10px; }
+.side nav a svg.nav-i { width: 17px; height: 17px; color: #9ca3af; stroke-width: 1.75; }
+.side nav a:hover svg.nav-i { color: #4b5563; }
+.side nav a.active { background: #f1f2f4; color: #111827; }
+.side nav a.active svg.nav-i { color: #111827; }
+.logo-icon { filter: grayscale(1) contrast(1.15) brightness(.55); }
+.logo .wm, .logo .wm em, .logo span { color: #111827; }
+.logo .wm em { color: #6b7280; }
+.btn .ico, .btn svg.i { margin-right: 0; }
+.btn { gap: 7px; }
+.btn.primary { background: #111827; border-color: #111827; box-shadow: 0 1px 2px rgba(0,0,0,.18); }
+.btn.primary:hover { background: #000; border-color: #000; }
+.btn.link { color: #111827; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: #d1d5db; }
+a { color: #111827; }
+/* Kacheln: Icon oben links in einem neutralen Kästchen */
+.qtile { justify-content: space-between; }
+.qtile > span { display: inline-flex; width: 38px; height: 38px; border-radius: 10px; background: #f3f4f6; align-items: center; justify-content: center; font-size: 0; }
+.qtile > span .ico { margin: 0; }
+.qtile > span svg.i { width: 20px; height: 20px; color: #111827; }
+.qtile.on > span { background: #111827; }
+.qtile.on > span svg.i { color: #fff; }
+.qtile.on { background: #fff; border-color: #111827; box-shadow: 0 0 0 1px #111827; }
+.todoitem .ic { display: inline-flex; width: 34px; height: 34px; border-radius: 9px; background: #f3f4f6; align-items: center; justify-content: center; font-size: 0; flex: none; }
+.todoitem .ic .ico { margin: 0; }
+.todoitem .ic svg.i { width: 18px; height: 18px; color: #374151; }
+.ut-ic { display: inline-flex !important; width: 34px; height: 34px; border-radius: 9px; background: #f3f4f6; font-size: 0; }
+.ut-ic svg.i { width: 18px; height: 18px; color: #374151; }
+.ut-ic .ico { margin: 0; }
+.result .ic { font-size: 0; display: inline-flex; align-items: center; }
+.result .ic svg.i { width: 18px; height: 18px; color: #6b7280; }
+/* Status */
+.badge.ok { background: #f1f2f4; color: #111827; }
+.dot.ok, .dot.over { background: #111827; color: #fff; }
+.cal td.d.b { background: #111827; }
+.cal td.d.b.req { background: #6b7280; opacity: 1; }
+.stepper span.on { background: #111827; border-color: #111827; }
+.stepper span.done { color: #111827; border-color: #d1d5db; }
+.note, .note.warn { border-left-color: #111827; }
+.note.warn { border-left-color: var(--bad); }
+.bar i { background: #111827; }
+.side .foot .avatar { background: #111827; }
+#tabbar .plus { background: #111827; box-shadow: 0 6px 16px rgba(0,0,0,.25); }
+#tabbar a.on { color: #111827; }
+.chat .msg.q { background: #111827; }
+.tabs button.active, .tabs a.tabbtn.active { color: #111827; border-color: #111827; }
+.auth-hero { background: #0b0f17; }
+.auth-hero li::before { color: #9ca3af; }
+@media (max-width: 900px) {
+  #tabbar a span, #tabbar button span:not(.plus) { display: inline-flex !important; font-size: 0; }
+  #tabbar a span svg.i, #tabbar button span svg.i { width: 22px; height: 22px; }
+  #tabbar .ico { margin: 0; }
+}
