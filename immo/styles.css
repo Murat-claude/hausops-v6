@@ -518,3 +518,6 @@ dialog[open] { animation: pop .22s var(--ease); }
 .scanbar #addrScanMsg { flex-basis: 100%; }
 .scanbar #addrScanMsg:empty { display: none; }
 input.filled { background: #f3faf6; border-color: #9fd0b2; }
+.tabs a.tabbtn { padding: 10px 14px; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; }
+.tabs a.tabbtn:hover { color: var(--ink); }
+.tabs a.tabbtn.active { color: var(--brand); border-color: var(--brand); font-weight: 650; }

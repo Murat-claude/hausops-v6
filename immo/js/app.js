@@ -343,9 +343,9 @@ function deleteTenantAll(id, confirmed) {
   const txs = state.transactions.filter((tx) => tx.link?.type === "payment" && (tx.link.ids || [tx.link.id]).some((x) => payIds.has(x)));
   const msg = `„${t.name}“ wirklich löschen?\n\n` + [
     own.length ? `• ${own.length} Mietvertrag/-verträge (${own.map((c) => unitLabel(byId("units", c.unitId))).join(", ")}) werden gelöscht.` : "",
-    pays.length ? `• ${pays.length} Zahlung(en) werden gelöscht${txs.length ? `; ${txs.length} Bank-Buchung(en) erscheinen wieder unter „Konto & Zahlungen → Offen“` : ""}.` : "",
+    pays.length ? `• ${pays.length} Zahlung(en) werden gelöscht${txs.length ? `; ${txs.length} Bank-Buchung(en) erscheinen wieder unter „Konto & Bank → Offen“` : ""}.` : "",
     shared.length ? `• Aus ${shared.length} gemeinsamen Vertrag/Verträgen wird nur dieser Mieter entfernt.` : "",
-    "• Dokumente bleiben unter „Belege & Dokumente“ erhalten.",
+    "• Dokumente bleiben unter „Dokumente & Ablage“ erhalten.",
   ].filter(Boolean).join("\n") + "\n\nDas lässt sich nicht rückgängig machen.";
   if (!confirmed && !confirm(msg)) return false;
   if (confirmed && (own.length || pays.length) && !confirm(msg)) return false;
@@ -1511,7 +1511,7 @@ async function archiveInvoicePdf(id, { quiet = false } = {}) {
       kind: "ausgangsrechnung", objectId: unit?.objectId || "", contractId: "", invoiceId: inv.id, bookingId: inv.bookingId || "", status: "verarbeitet",
       note: `${inv.type === "storno" ? "Stornorechnung" : "Rechnung"} an ${C.recipientName(inv.recipient)}`, ki: null });
     inv.pdfDocId = docId;
-    commit(quiet ? undefined : `📁 PDF abgelegt unter Belege & Dokumente → Ausgangsrechnungen`);
+    commit(quiet ? undefined : `📁 PDF abgelegt unter Dokumente & Ablage → Ausgangsrechnungen`);
     return blob;
   } catch (e) {
     if (!quiet) alert("PDF konnte nicht erstellt werden: " + e.message);
@@ -1657,7 +1657,7 @@ function viewTax() {
   const openTx = state.transactions.filter((t) => !t.link && t.date >= from && t.date <= to).length;
   const incomeRows = [["kalt", "Mieteinnahmen (Kaltmiete, Zuschläge)"], ["umlage", "Umlagen / Nebenkosten-Vorauszahlungen und -Nachzahlungen"], ["fewo", "Einnahmen Ferienwohnung (netto)"], ["sonstige", "Sonstige Einnahmen"]];
   const col = (r, fn) => av.map((x) => `<td class="num">${eur(fn(x))}</td>`).join("") + (av.length > 1 ? `<td class="num"><b>${eur(sum(av, fn))}</b></td>` : "");
-  return head("Steuer & DATEV", "Anlage V, DATEV-Export und Monatspaket für den Steuerberater", btn("year", "‹ " + (y - 1), "", y - 1) + `<b style="padding:0 6px">${y}</b>` + btn("year", (y + 1) + " ›", "", y + 1)) + `
+  return head("Für den Steuerberater", "Monatsbericht, DATEV-Export, Anlage V und Jahrespaket", btn("year", "‹ " + (y - 1), "", y - 1) + `<b style="padding:0 6px">${y}</b>` + btn("year", (y + 1) + " ›", "", y + 1)) + `
     <div class="card noprint"><h2>📬 Monatsbericht für den Steuerberater</h2><p class="small muted" style="margin-bottom:8px">Alle Mieteinnahmen und alle Ferienwohnungs-Einnahmen eines Monats als PDF, Excel-Tabelle und DATEV-Datei – mit einem Klick an deinen Steuerberater.</p><a class="btn primary" href="#/monat/${C.addMonths(C.monthKey(today()), -1)}">Monatsbericht öffnen</a> ${btn("tableImport", "📊 Eigene Monatstabelle übernehmen")}</div>
     <div class="card noprint"><h2>DATEV-Export & Steuerberater-Paket</h2>
       <div class="inline" style="margin-bottom:10px">
@@ -1697,7 +1697,7 @@ function viewReport(range) {
   const kFrom = C.monthKey(from), kTo = C.monthKey(to);
   const si = C.sollIst(state, kFrom, kTo);
   const payLabel = (p) => p.kind === "miete" ? `Miete ${C.fmtMonth(p.period)} · ${contractLabel(byId("contracts", p.contractId))}` : p.kind === "fewo" ? `Rechnung ${byId("invoices", p.invoiceId)?.number || ""} · ${C.recipientName(byId("invoices", p.invoiceId)?.recipient)}` : `${C.INCOME_KINDS[p.kind]} ${p.note || ""}`;
-  return `<div class="head noprint"><a href="#/steuer">← Steuer & DATEV</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
+  return `<div class="head noprint"><a href="#/steuer">← Für den Steuerberater</a><button class="btn primary" onclick="window.print()">Drucken / PDF</button></div>
     <div class="card"><h1>Immobilien-Bericht ${d(from)} – ${d(to)}</h1><p class="muted">${esc(s.ownerName)} · erstellt am ${d(today())}${s.datevMandant ? ` · Mandant ${esc(s.datevMandant)}` : ""}</p>
       <div class="kpis" style="margin-top:12px"><div class="kpi"><div class="l">Einnahmen</div><div class="v">${eur(sum(pays.filter((p) => p.kind !== "kaution"), (p) => p.amount))}</div></div>
         <div class="kpi"><div class="l">Ausgaben</div><div class="v">${eur(sum(exps, (e) => e.amount))}</div></div>
@@ -1849,7 +1849,7 @@ function viewPackage(yearArg) {
   const page = (html) => `<section class="card pkg">${html}</section>`;
   return `<style>@media print { @page { size: A4 landscape; margin: 12mm; } .pkg { page-break-after: always; } }
     .pkg th { background: #1f4e5f; color: #fff; } .pkg tbody tr:nth-child(even) td { background: #f5f8f8; }</style>
-  <div class="head noprint"><a href="#/steuer">← Steuer & DATEV</a><div class="toolbar">${btn("pkgYear", "‹", "", y - 1)}<b>${y}</b>${btn("pkgYear", "›", "", y + 1)}<button class="btn primary" onclick="window.print()">Drucken / PDF</button></div></div>
+  <div class="head noprint"><a href="#/steuer">← Für den Steuerberater</a><div class="toolbar">${btn("pkgYear", "‹", "", y - 1)}<b>${y}</b>${btn("pkgYear", "›", "", y + 1)}<button class="btn primary" onclick="window.print()">Drucken / PDF</button></div></div>
   ${page(`<h1>Unterlagen Vermietung & Verpachtung ${y}</h1><p class="muted">${esc(s.ownerName)}${s.taxNumber ? ` · St.-Nr. ${esc(s.taxNumber)}` : ""} · erstellt am ${d(today())}</p>
     <h3>Inhalt</h3><ol style="margin-left:20px"><li>Übersicht aller Objekte</li><li>Monatstabellen je Objekt und Einheit</li><li>Werbungskosten je Objekt</li><li>Anschaffungs-/Herstellungskosten (Einordnung StB)</li><li>Nebenkostenabrechnungen</li><li>Beleg-Checkliste</li><li>Offene Fragen</li></ol>
     <p class="small muted" style="margin-top:12px">Zusammenstellung aus ${productName()}. Einordnungen sind Vorschläge – die Entscheidung trifft der Steuerberater. DATEV-Buchungsstapel liegt separat bei.</p>`)}
@@ -1881,7 +1881,7 @@ function viewSettings() {
   const accLabels = { bank: "Bank", kasse: "Kasse", steuerfrei: "Mieterlöse steuerfrei (§ 4 Nr. 12)", kleinunternehmer: "Erlöse Kleinunternehmer (§ 19)", erl7: "Erlöse 7 % (Ferienwohnung)", erl19: "Erlöse 19 %", durchlaufend: "Durchlaufende Posten (Kurtaxe)", sonstErtrag: "Sonstige Erträge" };
   const rules = Object.entries(state.rules || {});
   return head("Einstellungen") + `
-    ${isCloud() ? `<div class="card"><h2>🔗 Verbindungen</h2>${smoobuBox()}<p class="small muted" style="margin-top:6px">Bank verbinden: unter „Konto & Zahlungen“.</p></div>` : ""}
+    ${isCloud() ? `<div class="card"><h2>🔗 Verbindungen</h2>${smoobuBox()}<p class="small muted" style="margin-top:6px">Bank verbinden: unter „Konto & Bank“.</p></div>` : ""}
     <form class="card" data-form="owner"><h2>Vermieter / Rechnungssteller</h2><div class="fgrid">
       ${[["ownerName", "Name / Firma"], ["ownerStreet", "Straße"], ["ownerZip", "PLZ"], ["ownerCity", "Ort"], ["ownerEmail", "E-Mail"], ["ownerPhone", "Telefon"], ["taxNumber", "Steuernummer"], ["vatId", "USt-IdNr. (falls vorhanden)"], ["invoiceBank", "Bank (für Rechnungen)"], ["invoiceIban", "IBAN (für Rechnungen)"], ["invoiceBic", "BIC"]].map(([k, l]) => `<label class="f"><span>${l}</span><input name="${k}" value="${esc(s[k] || "")}"></label>`).join("")}
     </div><button class="btn primary">Speichern</button></form>
@@ -2160,8 +2160,8 @@ function viewAblage(objectId) {
       ${Object.keys(byYear).sort().reverse().map((y) => `<h3>${esc(y)}</h3><div class="docs">${byYear[y].sort((a, c) => ((a.ki?.date || a.created) < (c.ki?.date || c.created) ? 1 : -1)).map(docCard).join("")}</div>`).join("")}
       <p class="small muted" style="margin-top:8px">Falsch einsortiert? Bei der Datei auf ✎ tippen und den Ordner ändern.</p></div>`;
   }
-  return head(`📂 Ablage`, "Ganzen Ordner reinwerfen – die App sortiert nach Schornsteinfeger, Gas, Strom, Versicherung …",
-    `<select data-change="ablageObj" style="width:auto">${opt(state.objects.map((x) => [x.id, x.name]), oid)}</select>`) + `
+  return head("Dokumente & Ablage", "Ganzen Ordner reinwerfen – die App sortiert nach Schornsteinfeger, Gas, Strom, Versicherung …",
+    `<select data-change="ablageObj" style="width:auto">${opt(state.objects.map((x) => [x.id, x.name]), oid)}</select>`) + docsSwitch("ablage") + `
     <div class="card noprint drop" data-drop="ablage">
       <div class="toolbar">
         <label class="btn primary">📂 Ganzen Ordner wählen<input type="file" webkitdirectory directory multiple data-change="ablageUpload" hidden></label>
@@ -2174,8 +2174,10 @@ function viewAblage(objectId) {
     </div>
     ${docs.length ? `<div class="qgrid">${tiles}</div>` : `<div class="card empty-start"><div class="big">📂</div><b>Noch keine Dateien für ${esc(o.name)}</b><p class="muted">Wirf z. B. den Ordner „Haus Unterlagen“ von deinem Computer hier hinein.</p></div>`}
     ${list}
-    ${unassigned ? `<p class="small muted">${unassigned} Datei(en) ohne Objekt findest du unter <a href="#/dokumente">Belege & Dokumente</a>.</p>` : ""}`;
+    ${unassigned ? `<p class="small muted">${unassigned} Datei(en) ohne Objekt findest du unter <a href="#/dokumente">Eingang & alle Belege</a>.</p>` : ""}`;
 }
+
+const docsSwitch = (on) => `<div class="tabs noprint" style="margin-bottom:14px"><a class="tabbtn ${on === "eingang" ? "active" : ""}" href="#/dokumente">📥 Eingang & alle Belege</a><a class="tabbtn ${on === "ablage" ? "active" : ""}" href="#/ablage">📂 Ablage nach Objekt</a></div>`;
 
 function viewDocs() {
   const f = ui.docFilter || "neu";
@@ -2183,7 +2185,7 @@ function viewDocs() {
   if (f === "neu") docs = docs.filter((x) => x.status === "neu");
   else if (f !== "alle") docs = docs.filter((x) => x.kind === f);
   const counts = { neu: state.documents.filter((x) => x.status === "neu").length };
-  return head("Belege & Dokumente", "Fotografieren, scannen oder PDFs hochladen – die KI liest Belege aus und bucht sie", "") + `
+  return head("Dokumente & Ablage", "Fotografieren, scannen oder PDFs hochladen – die KI liest Belege aus, bucht sie und sortiert sie ein", "") + docsSwitch("eingang") + `
     <div class="card noprint drop" data-drop="1">
       <div class="toolbar">
         <label class="btn primary">📷 Foto aufnehmen<input type="file" accept="image/*" capture="environment" data-change="docUpload" hidden></label>
@@ -2506,10 +2508,15 @@ function moveWizard(unitId) {
       const unit = byId("units", unitId), obj = byId("objects", unit?.objectId);
       const legal = [...R.depositCheck(unit, { kalt: C.parseAmount(v.kalt), kaution: C.parseAmount(v.kaution) }), ...R.rentBrakeCheck(obj, unit, C.parseAmount(v.kalt), old ? C.rentForMonth(old, C.monthKey(old.end || v.outDate || today())).kalt : 0, obj?.vergleichsmiete)];
       if (!confirmLegal(legal)) return false;
-      const t = { id: C.uid("t_"), name: v.name.trim(), members: v.members, email: v.email, phone: v.phone, ibans: v.iban ? [C.normIban(v.iban)] : [], prevAddress: v.prevAddress, notes: "" };
+      // Gibt es die Person schon (z. B. mietet zusätzlich eine Garage)? Dann denselben Mieter verwenden – keine Doppelten
+      const same = state.tenants.find((x) => C.normalize(x.name) === C.normalize(v.name));
+      const reuse = same && confirm(`„${same.name}“ ist schon als Mieter angelegt (${state.contracts.filter((c) => c.tenantIds.includes(same.id)).map((c) => unitLabel(byId("units", c.unitId))).join(", ") || "ohne Vertrag"}).\n\nDenselben Mieter verwenden? (Empfohlen – z. B. bei einer zusätzlichen Garage. Alles steht dann in einer Mieterakte.)`);
+      const t = reuse ? same : { id: C.uid("t_"), name: v.name.trim(), members: v.members, email: v.email, phone: v.phone, ibans: v.iban ? [C.normIban(v.iban)] : [], prevAddress: v.prevAddress, notes: "" };
+      if (reuse) { for (const k of ["members", "email", "phone", "prevAddress"]) if (v[k] && !t[k]) t[k] = v[k]; if (v.iban && !(t.ibans || []).includes(C.normIban(v.iban))) t.ibans = [...(t.ibans || []), C.normIban(v.iban)]; }
       const c = { id: C.uid("c_"), unitId, tenantIds: [t.id], start: v.inDate, end: v.inEnd || "", kalt: C.parseAmount(v.kalt), nk: C.parseAmount(v.nk), extra: C.parseAmount(v.extra), kaution: C.parseAmount(v.kaution), persons: Number(v.persons) || 1, mietart: v.mietart || "standard", ustRate: v.ustRate || "", steps: [], notes: "",
         moveIn: { date: v.inDate, handover: v.inHandover || v.inDate, keys: v.inKeys, note: v.inNote } };
-      state.tenants.push(t); state.contracts.push(c);
+      if (!reuse) state.tenants.push(t);
+      state.contracts.push(c);
       state.meterReadings.push(...readings("in", v.inHandover || v.inDate, c.id, "einzug"));
       commit(doOut ? "Mieterwechsel gespeichert" : "Neuer Mieter eingetragen");
       setTimeout(() => moveDoneDialog(c.id, doOut ? old.id : null), 50);
@@ -2529,7 +2536,7 @@ function moveDoneDialog(newId, oldId) {
         <button class="btn" data-act="letterFor" data-id="kuendigungsbestaetigung|${oldId}">✉ Bestätigung Auszug / Kaution</button>` : ""}
         <a class="btn" href="#/mieter/${nc.tenantIds[0]}" data-close>👤 Mieterakte öffnen</a>
       </div>
-      <p class="small muted" style="margin-top:10px">Tipp: Mietvertrag und Übergabeprotokoll unter „Belege & Dokumente“ scannen und dem Mieter zuordnen.</p>`,
+      <p class="small muted" style="margin-top:10px">Tipp: Mietvertrag und Übergabeprotokoll unter „Dokumente & Ablage“ scannen und dem Mieter zuordnen.</p>`,
   });
 }
 
@@ -2670,10 +2677,13 @@ function viewTenants() {
     const cs = state.contracts.filter((c) => c.tenantIds.includes(t.id)).sort((a, b) => (a.start < b.start ? 1 : -1));
     const c = cs.find((x) => x.start <= today() && (!x.end || x.end >= today())) || cs.find((x) => x.start > today()) || cs[0];
     const status = !c ? "ohne" : c.start > today() ? "einzug" : c.end && c.end < today() ? "ehemalig" : c.end ? "gekuendigt" : "aktiv";
-    const back = c ? -sum(C.sollIst(state, C.addMonths(C.monthKey(today()), -11), C.monthKey(today())).filter((r) => r.contractId === c.id && r.diff < 0), (r) => r.diff) : 0;
+    const running = cs.filter((x) => x.start <= today() && (!x.end || x.end >= today()));
+    const live = running.length ? running : c ? [c] : [];
+    const liveIds = new Set(live.map((x) => x.id));
+    const back = -sum(C.sollIst(state, C.addMonths(C.monthKey(today()), -11), C.monthKey(today())).filter((r) => liveIds.has(r.contractId) && r.diff < 0), (r) => r.diff);
     const miss = c ? folderChecklist(c).missing.length : 0;
     const defects = (state.notes || []).filter((n) => n.tenantId === t.id && n.type === "mangel" && !n.done).length;
-    return { t, c, status, back, miss, defects };
+    return { t, c, live, status, back, miss, defects };
   };
   const all = state.tenants.map(info);
   const list = all.filter((x) => (filter === "alle" || (filter === "aktiv" ? ["aktiv", "gekuendigt", "einzug"].includes(x.status) : x.status === filter)))
@@ -2681,7 +2691,7 @@ function viewTenants() {
     .sort((a, b) => (a.c ? unitLabel(byId("units", a.c.unitId)) : "z").localeCompare(b.c ? unitLabel(byId("units", b.c.unitId)) : "z"));
   const badge = { aktiv: '<span class="badge ok">aktiv</span>', gekuendigt: '<span class="badge warn">gekündigt</span>', einzug: '<span class="badge">zieht ein</span>', ehemalig: '<span class="badge grey">ehemalig</span>', ohne: '<span class="badge grey">ohne Vertrag</span>' };
   const vacant = units.filter((u) => !currentContract(u.id) && !nextContract(u.id));
-  return head("Mieter & Verträge", `${all.filter((x) => ["aktiv", "gekuendigt"].includes(x.status)).length} aktive Mietverhältnisse · ${vacant.length} frei`, btn("moveWizard", "+ Neuer Mieter / Einzug", "primary", "") + btn("newContract", "Vertrag manuell")) + `
+  return head("Mieter & Verträge", `${all.filter((x) => ["aktiv", "gekuendigt"].includes(x.status)).length} aktive Mietverhältnisse · ${vacant.length} frei`, btn("moveWizard", "+ Neuer Mieter / Einzug", "primary", "") + btn("newContract", "+ Weiterer Vertrag für vorhandenen Mieter")) + `
     <div class="inline" style="margin-bottom:12px"><input placeholder="🔎 Mieter, Wohnung, Telefon suchen …" value="${esc(ui.tenantSearch || "")}" data-change="tenantSearch" style="max-width:320px">
       <div class="tabs" style="border:0;margin:0">${[["aktiv", "Aktuelle"], ["gekuendigt", "Gekündigt"], ["ehemalig", "Ehemalige"], ["alle", "Alle"], ["belegung", "Belegung je Einheit"]].map(([k, l]) => `<button data-act="tenantFilter" data-id="${k}" class="${filter === k ? "active" : ""}">${l}</button>`).join("")}</div></div>
     ${filter === "belegung" ? `<div class="card"><div class="table-wrap"><table><thead><tr><th>Einheit</th><th>Aktueller Mieter</th><th>seit</th><th class="num">Warmmiete</th><th>Danach</th><th></th></tr></thead><tbody>
@@ -2693,9 +2703,9 @@ function viewTenants() {
         <td class="nowrap">${c && !c.end ? btn("moveWizard", "Mieterwechsel / Auszug", "sm", u.id) : !c && !n ? btn("moveWizard", "Neuen Mieter eintragen", "sm primary", u.id) : ""}</td></tr>`; }).join("") || '<tr><td colspan="6" class="muted">Noch keine Einheiten.</td></tr>'}
     </tbody></table></div></div>` : ""}
     ${filter !== "belegung" ? tenantsOverviewHtml(all, vacant, list.length) : ""}
-    <div class="folders" ${filter === "belegung" || !all.length ? 'style="display:none"' : ""}>${list.map(({ t, c, status, back, miss, defects }) => { const u = c && byId("units", c.unitId); const r = c ? C.rentForMonth(c, C.monthKey(today())) : null;
+    <div class="folders" ${filter === "belegung" || !all.length ? 'style="display:none"' : ""}>${list.map(({ t, c, live, status, back, miss, defects }) => { const u = c && byId("units", c.unitId); const r = c ? { total: sum(live, (x) => C.rentForMonth(x, C.monthKey(today())).total) } : null;
       return `<a class="folder" href="#/mieter/${t.id}">
-        <div class="tab">${esc(u ? `${C.UNIT_TYPES[u.type]} · ${u.name}` : "–")}</div>
+        <div class="tab">${esc(live.length > 1 ? live.map((x) => byId("units", x.unitId)?.name || "").join(" + ") : u ? `${C.UNIT_TYPES[u.type]} · ${u.name}` : "–")}</div>
         <div class="fhead"><b>${esc(t.name)}</b> ${badge[status]}</div>
         <div class="small muted">${esc(u ? addrOf(u) : "")}</div>
         <div class="small">${c ? `seit ${d(c.start)}${c.end ? ` · bis ${d(c.end)}` : ""}` : ""}${r ? ` · ${eur(r.total)} warm` : ""}</div>
@@ -2804,8 +2814,9 @@ function viewTenant(id) {
       <div class="card"><h2>Zählerstände</h2>${readings.length ? `<table>${readings.map((x) => `<tr><td class="small">${d(x.date)}</td><td class="small">${esc(C.METER_TYPES[x.type])}</td><td class="num">${String(x.value).replace(".", ",")}</td><td class="small muted">${esc(x.reason || "")}</td></tr>`).join("")}</table>` : '<p class="muted small">Keine Zählerstände.</p>'}
         ${active ? btn("newReading", "+ Zählerstand", "sm", active.id) : ""}</div></div>`,
   }[tab];
-  return head(`📁 ${t.name}`, [u && esc(unitLabel(u)), t.phone && `<a href="tel:${esc(t.phone)}">${esc(t.phone)}</a>`, t.email && `<a href="mailto:${esc(t.email)}">${esc(t.email)}</a>`].filter(Boolean).join(" · "),
-    btn("editTenant", "✎ Name & Kontakt", "", id) + (active ? btn("editContract", "✎ Miete & Vertrag", "", active.id) : "") + (active && !active.end && active.start <= today() ? btn("moveWizard", "Auszug / Mieterwechsel", "", active.unitId) : "") + btn("newNote", "+ Vorgang", "", `notiz|${id}|${active?.id || ""}`) + btn("letterFor", "✉ Brief", "", `zahlungserinnerung|${active?.id || ""}`) + `<a class="btn" href="#/auskunft/${id}">🛡 Datenauskunft</a>` + btn("deleteTenant", "🗑 Löschen", "danger", id)) + `
+  const runningCs = cs.filter((x) => x.start <= today() && (!x.end || x.end >= today()));
+  return head(`📁 ${t.name}`, [runningCs.length > 1 ? esc(runningCs.map((x) => unitLabel(byId("units", x.unitId))).join(" + ")) : u && esc(unitLabel(u)), t.phone && `<a href="tel:${esc(t.phone)}">${esc(t.phone)}</a>`, t.email && `<a href="mailto:${esc(t.email)}">${esc(t.email)}</a>`].filter(Boolean).join(" · "),
+    btn("editTenant", "✎ Name & Kontakt", "", id) + (runningCs.length > 1 ? btn("folderTab", `✎ Miete & Verträge (${runningCs.length})`, "", "vertrag") : active ? btn("editContract", "✎ Miete & Vertrag", "", active.id) : "") + (active && !active.end && active.start <= today() ? btn("moveWizard", "Auszug / Mieterwechsel", "", active.unitId) : "") + btn("newNote", "+ Vorgang", "", `notiz|${id}|${active?.id || ""}`) + btn("letterFor", "✉ Brief", "", `zahlungserinnerung|${active?.id || ""}`) + `<a class="btn" href="#/auskunft/${id}">🛡 Datenauskunft</a>` + btn("deleteTenant", "🗑 Löschen", "danger", id)) + `
     <div class="tabs">${tabs.map(([k, l]) => `<button data-act="folderTab" data-id="${k}" class="${tab === k ? "active" : ""}">${l}</button>`).join("")}</div>
     ${body}`;
 }
@@ -3269,16 +3280,16 @@ function navGroups() {
   return [
     [null, [["", "🏠", "Start"]]],
     ["Vermietung", [["objekte", "🏢", "Häuser & Wohnungen"], ["mieter", "👥", "Mieter"], ["mieten", "💶", "Mieteingänge"], ["nebenkosten", "🧾", "Nebenkosten"], ["instand", "🔧", "Reparaturen"], ...(isCloud() ? [["portal", "🔑", `Mieterportal${portalUnread() ? ` (${portalUnread()})` : ""}`]] : []), ["briefe", "✉️", "Briefe"]]],
-    ["Geld & Belege", [["bank", "🏦", "Konto & Zahlungen"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📷", "Belege & Dokumente"], ["ablage", "📂", "Ablage je Objekt"]]],
     ...(hasFewo ? [["Ferienwohnung", [["ferien", "🏖️", "Belegung & Buchungen"], ["rechnungen", "🧾", "Gäste-Rechnungen"]]]] : []),
-    ["Steuer", [["erklaerung", "🧮", "Steuererklärung"], ["monat", "📬", "Monatsbericht StB"], ["steuer", "📊", "Anlage V & DATEV"]]],
+    ["Geld & Belege", [["bank", "🏦", "Konto & Bank"], ["ausgaben", "📉", "Ausgaben"], ["dokumente", "📂", "Dokumente & Ablage"]]],
+    ["Steuer", [["steuer", "📬", "Für den Steuerberater"], ["erklaerung", "🧮", "Steuererklärung"]]],
     ["Mehr", [["ki", "✨", "KI-Assistent"], ...(isCloud() ? [["konto", "👤", "Mein Konto"]] : []), ...(isAdmin() ? [["admin", "🛡️", "Admin"]] : []), ["einstellungen", "⚙️", "Einstellungen"]]],
   ];
 }
 
 // Welcher Menüpunkt gehört zur aktuellen Seite?
 function navKeyFor(route) {
-  return { rechnung: "rechnungen", bericht: "steuer", paket: "steuer", nkbrief: "nebenkosten", nkassistent: "nebenkosten", brief: "briefe", protokoll: "mieter", auskunft: "mieter" }[route] ?? route;
+  return { rechnung: "rechnungen", bericht: "steuer", paket: "steuer", monat: "steuer", ablage: "dokumente", suche: "", nkbrief: "nebenkosten", nkassistent: "nebenkosten", brief: "briefe", protokoll: "mieter", auskunft: "mieter" }[route] ?? route;
 }
 
 function navHtml(route) {
@@ -3334,6 +3345,30 @@ function quickNote() {
 }
 
 // Alles, was gerade zu tun ist – mit einem Knopf zum Erledigen
+// Gleichnamige Mieter (versehentlich doppelt angelegt) finden und zusammenführen
+function duplicateTenants() {
+  const by = {};
+  for (const t of state.tenants) (by[C.normalize(t.name)] ||= []).push(t);
+  return Object.values(by).filter((g) => g.length > 1 && C.normalize(g[0].name));
+}
+function mergeTenants(name) {
+  const g = duplicateTenants().find((x) => C.normalize(x[0].name) === name); if (!g) return;
+  const count = (t) => state.contracts.filter((c) => c.tenantIds.includes(t.id)).length;
+  const [keep, ...drop] = [...g].sort((a, b) => count(b) - count(a));
+  if (!confirm(`„${keep.name}“ ist ${g.length}× angelegt. Zu einer Mieterakte zusammenführen?\n\nAlle Verträge, Zahlungen, Vorgänge und Dokumente bleiben erhalten und stehen danach zusammen bei einem Mieter.`)) return;
+  const ids = new Set(drop.map((t) => t.id));
+  for (const c of state.contracts) if (c.tenantIds.some((x) => ids.has(x))) c.tenantIds = [...new Set(c.tenantIds.map((x) => (ids.has(x) ? keep.id : x)))];
+  for (const n of state.notes || []) if (ids.has(n.tenantId)) n.tenantId = keep.id;
+  for (const d0 of state.documents || []) if ((d0.sharedWith || []).some((x) => ids.has(x))) d0.sharedWith = [...new Set(d0.sharedWith.map((x) => (ids.has(x) ? keep.id : x)))];
+  for (const t of drop) {
+    for (const k of ["members", "email", "phone", "prevAddress", "birthday"]) if (t[k] && !keep[k]) keep[k] = t[k];
+    keep.ibans = [...new Set([...(keep.ibans || []), ...(t.ibans || [])])];
+    if (t.notes) keep.notes = [keep.notes, t.notes].filter(Boolean).join("\n");
+  }
+  state.tenants = state.tenants.filter((t) => !ids.has(t.id));
+  commit(`${keep.name}: zu einer Mieterakte zusammengeführt`);
+}
+
 function buildTodos() {
   const t = [], y = Number(today().slice(0, 4)), key = C.monthKey(today());
   const open = state.transactions.filter((x) => !x.link);
@@ -3341,6 +3376,7 @@ function buildTodos() {
     const good = open.filter((x) => (C.suggestAssignment(x, state)?.score || 0) >= 60).length;
     t.push({ ic: "🏦", text: `${open.length} Kontobewegung${open.length > 1 ? "en" : ""} zuordnen${good ? ` – ${good} kann die App sofort erledigen` : ""}`, btn: good ? btnRaw("acceptAll", `✓ ${good} übernehmen`) : `<a class="btn sm primary" href="#/bank">Ansehen</a>` });
   }
+  for (const g of duplicateTenants().slice(0, 3)) t.push({ ic: "👥", text: `${esc(g[0].name)} ist ${g.length}× als Mieter angelegt – zu einer Mieterakte zusammenführen`, btn: btnRaw("mergeTenants", "Zusammenführen", C.normalize(g[0].name)) });
   const back = C.sollIst(state, C.addMonths(key, -11), key).filter((r) => r.diff < 0);
   const byC = {};
   for (const r of back) byC[r.contractId] = (byC[r.contractId] || 0) - r.diff;
@@ -5079,7 +5115,7 @@ const actions = {
     const nk = nkDraft();
     await kiAsk(`Prüfe die aktuelle Nebenkostenabrechnung für ${byId("objects", nk.objectId)?.name} (${d(nk.from)}–${d(nk.to)}) auf Fehler und Risiken: Sind alle Positionen nach BetrKV umlagefähig, passen die Umlageschlüssel, fehlen typische Kostenarten, ist die Frist eingehalten? Positionen: ${nk.items.map((i) => `${i.label} ${eur(i.amount)} nach ${C.NK_KEYS[i.key]}`).join("; ")}.`);
   }, newUnit: (id) => editUnit(null, id), editUnit,
-  newTenant: () => editTenant(), editTenant, deleteTenant: (id) => deleteTenantAll(id), newContract: (unitId) => editContract(null, unitId), editContract, addStep,
+  newTenant: () => editTenant(), editTenant, mergeTenants, deleteTenant: (id) => deleteTenantAll(id), newContract: (unitId) => editContract(null, unitId), editContract, addStep,
   moveWizardFromContract: (unitId) => { $("#modal").close(); moveWizard(unitId || undefined); },
   deleteContract: (id) => {
     const c = byId("contracts", id); if (!c) return;
@@ -5098,7 +5134,7 @@ const actions = {
   unlinkPayment: (pid) => {
     const tx = state.transactions.find((t) => t.link?.type === "payment" && (t.link.ids || [t.link.id]).includes(pid));
     if (!tx) return editPayment(pid);
-    if (!confirm("Zuordnung lösen? Die Bank-Buchung bleibt erhalten und erscheint wieder unter „Konto & Zahlungen → Offen“, wo du sie neu zuordnen kannst.")) return;
+    if (!confirm("Zuordnung lösen? Die Bank-Buchung bleibt erhalten und erscheint wieder unter „Konto & Bank → Offen“, wo du sie neu zuordnen kannst.")) return;
     unlink(tx);
   },
   bankFilter: (f) => { ui.bankFilter = f; render(); },
