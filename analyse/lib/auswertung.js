@@ -2,16 +2,19 @@
 // Alle Annahmen sind sichtbar und änderbar; jede Zahl im Bericht ist entweder aus der Anzeige oder als Annahme gekennzeichnet.
 import { rechneSzenario, maxKaufpreisCashflowNull, num } from "../rechner.js";
 import { umbauStrategien, umbauRisiken, UMBAU_ANNAHMEN } from "./umbau.js";
+import { marktFuer, MARKT_QUELLE } from "./markt.js";
 
 export const STANDARD_ANNAHMEN = {
-  miete_m2: 7.5,          // €/m² kalt bei Neuvermietung, Raum Hamm/Unna/Soest (Angebotsmieten ca. 7–9 €)
-  etw_saniert_m2: 2200,   // €/m² Verkaufspreis saniert (Fix & Flip)
-  etw_bestand_m2: 2000,   // €/m² Verkaufspreis Eigentumswohnung im Bestand (Aufteilung)
+  // Miete, Wohnungspreise und Bauland werden automatisch aus den Ortsdaten (lib/markt.js) genommen,
+  // solange hier der Standardwert steht. Ein eigener Wert im Formular hat immer Vorrang.
+  miete_m2: 7.9,          // €/m² kalt, Hamm Ø Angebotsmiete Nov. 2026
+  etw_saniert_m2: 2350,   // €/m² Verkaufspreis saniert (Fix & Flip), Hamm
+  etw_bestand_m2: 2090,   // €/m² Verkaufspreis Eigentumswohnung im Bestand (Aufteilung), Hamm
   verkaufsfaktor_mfh: 18, // Verkaufspreis eines Mehrfamilienhauses = Jahreskaltmiete × Faktor
-  bodenrichtwert_m2: 200, // €/m² Bauland
+  bodenrichtwert_m2: 250, // €/m² Bauland, Hamm Ø Bodenrichtwert 2026
   zins: 4.0,              // % Sollzins 10 Jahre
   tilgung: 2.0,           // % anfängliche Tilgung
-  ek_prozent: 25,         // Eigenkapital in % vom Kaufpreis, wenn kein Betrag angegeben
+  ek_betrag: 10000,       // € Eigenkapital (höchstens), Nebenkosten werden mitfinanziert
   grest: 6.5,             // Grunderwerbsteuer NRW
   notar: 2.0,             // Notar + Grundbuch
   makler: 3.57,           // falls in der Anzeige nichts steht
@@ -32,23 +35,48 @@ function instandhaltung(baujahr, sanierungsjahr) {
   return 9;
 }
 
+// Sanierungskosten je m² Wohnfläche, Spannen aus Ratgebern Stand 2026 (Teilsanierung ca. 200–700 €/m²,
+// Kernsanierung ca. 1.000–1.800 €/m², Altbau mit Überraschungen auch über 2.000 €/m²).
+export const SANIERUNG_STUFEN = {
+  kleinigkeiten: { m2: 30, spanne: "0–80", text: "nur Kleinigkeiten" },
+  auffrischen: { m2: 150, spanne: "100–250", text: "Auffrischung (Malern, Böden teilweise)" },
+  altbau: { m2: 350, spanne: "250–700", text: "Altbau ohne bekannte Komplettsanierung (Teilsanierung 1–2 Gewerke)" },
+  renovieren: { m2: 400, spanne: "200–700", text: "renovierungsbedürftig – Böden, Bad, Malern, Elektrik teilweise" },
+  sanieren: { m2: 1100, spanne: "800–1.800", text: "sanierungsbedürftig – Teil- bis Kernsanierung" },
+  standard: { m2: 60, spanne: "30–150", text: "kleine Renovierung" },
+};
+export const SANIERUNG_QUELLE = "Ratgeber-Spannen 2026 (z. B. reduco.ai, handwerk.cloud, justhome.com) – vor dem Kauf Angebot vom Fachbetrieb einholen";
+
 function sanierungSchaetzung(e) {
   if (num(e.sanierung) > 0) return { wert: num(e.sanierung), quelle: "eigene Angabe" };
   const fl = num(e.wohnflaeche_m2);
   const m = e.merkmale || {};
-  let proM2 = 50, grund = "Annahme: kleine Renovierung";
-  if (m.sanierungsbeduerftig) { proM2 = 600; grund = "Annahme: laut Anzeige sanierungsbedürftig (ca. 600 €/m²)"; }
-  else if (m.renovierungsbeduerftig) { proM2 = 300; grund = "Annahme: laut Anzeige renovierungsbedürftig – Böden, Bad, Malern (ca. 300 €/m²)"; }
-  else if (e.sanierungsjahr && e.sanierungsjahr >= 2005) { proM2 = 30; grund = `Annahme: ${e.sanierungsjahr} komplett saniert, nur Kleinigkeiten (ca. 30 €/m²)`; }
-  else if (e.baujahr && e.baujahr < 1950) { proM2 = 250; grund = "Annahme: Altbau ohne bekannte Komplettsanierung (ca. 250 €/m²)"; }
-  else if (e.baujahr && e.baujahr < 1980) { proM2 = 150; grund = "Annahme: älteres Baujahr, Auffrischung (ca. 150 €/m²)"; }
-  if (["E", "F", "G", "H"].includes(e.energieklasse)) { proM2 += 100; grund += ", plus Energie (Klasse " + e.energieklasse + ")"; }
+  let st = SANIERUNG_STUFEN.standard;
+  if (m.sanierungsbeduerftig) st = SANIERUNG_STUFEN.sanieren;
+  else if (m.renovierungsbeduerftig) st = SANIERUNG_STUFEN.renovieren;
+  else if (e.sanierungsjahr && e.sanierungsjahr >= 2005) st = SANIERUNG_STUFEN.kleinigkeiten;
+  else if (e.baujahr && e.baujahr < 1950) st = SANIERUNG_STUFEN.altbau;
+  else if (e.baujahr && e.baujahr < 1980) st = SANIERUNG_STUFEN.auffrischen;
+  let proM2 = st.m2;
+  let grund = `Annahme: ${st.text}, ca. ${proM2} €/m² (Spanne ${st.spanne} €/m²)`;
+  // Schlechte Energieklasse: Dämmung, Fenster oder Heizung anteilig
+  if (["E", "F", "G", "H"].includes(e.energieklasse) && st !== SANIERUNG_STUFEN.sanieren) { proM2 += 150; grund += `, plus ca. 150 €/m² Energie (Klasse ${e.energieklasse})`; }
   return { wert: Math.round(fl * proM2 / 1000) * 1000, quelle: grund };
 }
 
 export function auswerten(eingabe, annahmenTeil = {}) {
   const a = { ...STANDARD_ANNAHMEN, ...Object.fromEntries(Object.entries(annahmenTeil).filter(([, v]) => v !== "" && v != null)) };
   const e = { ...eingabe, merkmale: eingabe.merkmale || {} };
+  // Marktwerte des Ortes einsetzen, solange im Formular der Standardwert steht
+  const markt = marktFuer(e.ort);
+  const ortsWerte = [];
+  if (markt) {
+    const setze = (k, v, text) => { if (v && num(a[k]) === STANDARD_ANNAHMEN[k]) { a[k] = v; ortsWerte.push(text); } };
+    setze("miete_m2", markt.miete, `Miete ${dz(markt.miete)} €/m²`);
+    setze("etw_bestand_m2", markt.kauf, `Wohnungen ${dz(markt.kauf, 0)} €/m²`);
+    setze("etw_saniert_m2", Math.round(markt.kauf * 1.12 / 50) * 50, `saniert ca. ${dz(Math.round(markt.kauf * 1.12 / 50) * 50, 0)} €/m²`);
+    setze("bodenrichtwert_m2", markt.boden, `Bauland ${dz(markt.boden, 0)} €/m²`);
+  }
   const kp = num(e.kaufpreis);
   const fl = num(e.wohnflaeche_m2);
   // Mehrfamilienhaus ohne Angabe der Einheiten: grob eine Wohnung je 70 m² annehmen
@@ -130,11 +158,13 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   };
 
   const basis = { kaufpreis: kp, wohnflaeche_m2: fl, grunderwerbsteuer_prozent: a.grest, notar_grundbuch_prozent: a.notar, makler_prozent: makler };
-  const ek = num(e.eigenkapital) || Math.round(kp * num(a.ek_prozent) / 100);
+  const ek = num(e.eigenkapital) || num(a.ek_betrag);
   const fin = { eigenkapital: ek, zins_prozent: num(a.zins), tilgung_prozent: num(a.tilgung) };
-  annahmenListe.push(`Eigenkapital: ${eur(ek)}${num(e.eigenkapital) ? "" : ` (Annahme ${a.ek_prozent} % vom Kaufpreis)`}`);
+  annahmenListe.push(`Eigenkapital: ${eur(ek)}${num(e.eigenkapital) ? "" : " (Standard: höchstens 10.000 €, Kaufnebenkosten werden mitfinanziert – Banken verlangen dafür oft Zinsaufschläge)"}`);
   const real = fl && kp ? rechneSzenario(basis, szenarien.realistisch, fin) : null;
   const vors = fl && kp ? rechneSzenario(basis, szenarien.vorsichtig, fin) : null;
+  // Stresstest immer: Zins +1 %-Punkt im realistischen Szenario
+  const stress = fl && kp ? rechneSzenario(basis, szenarien.realistisch, { ...fin, zins_aufschlag: 1 }) : null;
 
   // ---- Strategien
   const strategien = [];
@@ -147,7 +177,9 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     const mieteBelegt = istMiete > 0 && !e.merkmale.leer;
     const gutGrenze = mieteBelegt ? 100 : 300;
     strategien.push({
+      buchstabe: "A",
       name: "Halten & vermieten",
+      max_kaufpreis_vorsichtig: r5(maxKaufpreisCashflowNull(basis, szenarien.vorsichtig, fin)),
       eignung: cf >= gutGrenze && vors.cashflowMonat >= -100 ? "gut" : cf >= -150 ? "bedingt" : "nein",
       cashflow_monat: Math.round(cf),
       max_kaufpreis: r5(maxKp),
@@ -166,8 +198,11 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     const gewinn = erloes - kosten;
     const marge = gewinn / kosten * 100;
     const maxKp = ((erloes * 0.96) / 1.15 - sanFlip * (1 + num(a.zins) / 100 * 0.75)) / ((1 + nkProzent / 100) * (1 + num(a.zins) / 100 * 0.75));
+    const maxKpVors = ((erloes * 0.92 * 0.96) / 1.15 - sanFlip * 1.3 * (1 + num(a.zins) / 100 * 0.75)) / ((1 + nkProzent / 100) * (1 + num(a.zins) / 100 * 0.75));
     strategien.push({
+      buchstabe: "C",
       name: "Fix & Flip",
+      max_kaufpreis_vorsichtig: r5(Math.max(maxKpVors, 0)),
       // Vermietet: saniert verkaufen geht erst nach Auszug der Mieter – höchstens "bedingt"
       eignung: marge >= 15 ? (e.merkmale.vermietet && !e.merkmale.leer ? "bedingt" : "gut") : marge >= 5 ? "bedingt" : "nein",
       gewinn: Math.round(gewinn),
@@ -186,8 +221,11 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     const gewinn = erloes - kosten;
     const marge = gewinn / kosten * 100;
     const maxKp = ((erloes * 0.96) / 1.15 - san.wert - kostenAuf) / ((1 + nkProzent / 100) * (1 + num(a.zins) / 100));
+    const maxKpVors = ((erloes * 0.92 * 0.96) / 1.15 - san.wert * 1.5 - kostenAuf) / ((1 + nkProzent / 100) * (1 + num(a.zins) / 100));
     strategien.push({
+      buchstabe: "C",
       name: "Aufteilung in Eigentumswohnungen",
+      max_kaufpreis_vorsichtig: r5(Math.max(maxKpVors, 0)),
       eignung: marge >= 15 ? "gut" : marge >= 5 ? "bedingt" : "nein",
       gewinn: Math.round(gewinn),
       max_kaufpreis: r5(Math.max(maxKp, 0)),
@@ -209,7 +247,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
       gewinn = Math.round(ueberschuss * brw * 0.8);
       text = `Grundstück ${gfl ? gfl + " m²" : "groß"}${e.merkmale.zweites_grundstueck ? ", laut Anzeige mit separatem Flurstück" : ""}. Möglicher Wert einer Teilfläche grob ${eur(gewinn)} (Annahme ${brw} €/m², 80 %). Nur mit Bauvorbescheid einplanen.`;
     }
-    strategien.push({ name: "Grundstück / Bebauung", eignung, gewinn, max_kaufpreis: maxKp, begruendung: text, zusatz: !istGrundstueck });
+    strategien.push({ buchstabe: "D", name: "Grundstück / Bebauung", eignung, gewinn, max_kaufpreis: maxKp, begruendung: text, zusatz: !istGrundstueck });
   }
 
   if (fl && kp && !istGrundstueck && !istGewerbe) {
@@ -218,6 +256,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     const netto = brutto * 0.6;
     const lang = szenarien.realistisch.kaltmiete_monat * 12;
     strategien.push({
+      buchstabe: "E",
       name: "Monteur- / Ferienwohnung",
       eignung: netto > lang * 1.25 ? "bedingt" : "nein",
       cashflow_monat: Math.round((netto - lang) / 12),
@@ -257,16 +296,51 @@ export function auswerten(eingabe, annahmenTeil = {}) {
       : `Nur mit Verhandlung: ${beste?.max_kaufpreis ? beste.name + " lohnt sich bis ca. " + eur(beste.max_kaufpreis) : "Zahlen prüfen"}`)
     : `Zum Angebotspreis nicht wirtschaftlich${besterMax ? " – interessant erst ab ca. " + eur(besterMax) : ""}`;
 
+  // ---- Urteil (erste Zeile laut Analyse-Skill): maßgeblich ist das realistische Szenario
+  const lohnt = !warnungen.length && beste && beste.eignung === "gut" && (beste.max_kaufpreis || 0) >= kp * 0.98;
+  const weg = beste && (solide.length ? [...solide] : kern).sort((x, y) => (y.max_kaufpreis || 0) - (x.max_kaufpreis || 0))[0];
+  const urteil = warnungen.length ? `Daten prüfen, bevor gerechnet wird: ${warnungen[0].split(" – ")[0]}`
+    : lohnt ? `Lohnt sich zum Angebotspreis – ${beste.name} trägt sich bis ca. ${eur(beste.max_kaufpreis)}`
+    : besterMax ? `Lohnt sich nicht zum Angebotspreis von ${eur(kp)} – lohnt sich ab ca. ${eur(besterMax)} (${weg?.name || "beste Strategie"})`
+    : `Lohnt sich nicht zum Angebotspreis – kein Weg trägt sich mit den Annahmen`;
+
+  // ---- Verhandlung: Einstieg / Ziel / Schmerzgrenze aus realistischem und vorsichtigem Höchstpreis
+  let verhandlung = null;
+  if (besterMax && besterMax >= kp * 0.7) {
+    const schmerz = r5(Math.min(kp, besterMax));
+    const vorsMax = Math.max(0, ...kern.filter((s) => s.name === weg?.name).map((s) => s.max_kaufpreis_vorsichtig || 0));
+    const einstieg = r5(Math.min(schmerz * 0.88, vorsMax || schmerz * 0.88, kp * 0.9));
+    verhandlung = { einstieg, ziel: r5((einstieg + schmerz) / 2), schmerzgrenze: schmerz };
+  }
+
+  // ---- Schnellcheck: Preis/m² gegen Ortsschnitt und Kaufpreisfaktor
+  const pm2 = kp && fl ? kp / fl : null;
+  const vergleich = markt?.kauf || null;
+  const schnell = {
+    preis_m2: pm2 ? Math.round(pm2) : null,
+    vergleich_m2: vergleich,
+    vergleich_ort: markt?.name || null,
+    preis_ok: pm2 && vergleich ? pm2 <= vergleich : null,
+    faktor: real?.faktor ? Math.round(real.faktor * 10) / 10 : null,
+    faktor_ok: real?.faktor ? real.faktor <= 20 : null,
+    cashflow: real ? Math.round(real.cashflowMonat) : null,
+    cashflow_stress: stress ? Math.round(stress.cashflowMonat) : null,
+    dscr: real?.rateMonat ? Math.round(real.reinertrag / (real.rateMonat * 12) * 100) / 100 : null,
+  };
+  if (ortsWerte.length) annahmenListe.push(`Marktwerte ${markt.name}: ${ortsWerte.join(", ")} (${MARKT_QUELLE})`);
+
   const daten = {
+    urteil, verhandlung, schnell, markt_ort: markt?.name || null,
     titel: e.titel || [e.objektart, e.ort].filter(Boolean).join(" in ") || "Objekt",
     ort: e.ort || null, objektart: e.objektart || null, baujahr: e.baujahr || null,
     wohnflaeche_m2: fl, grundstueck_m2: gfl || null, einheiten, energieklasse: e.energieklasse || null,
     kaufpreis: kp, grunderwerbsteuer_prozent: a.grest, notar_grundbuch_prozent: a.notar, makler_prozent: makler,
-    bauzins_prozent: a.zins, szenarien, strategien, ampel, score, empfehlung, verhandlungsziel, warnungen,
+    bauzins_prozent: a.zins, szenarien, strategien, ampel, score, empfehlung, verhandlungsziel: verhandlung?.ziel ?? verhandlungsziel, warnungen,
     sanierungsjahr: e.sanierungsjahr || null, faktor_angabe: e.faktor_angabe || null,
     miete_quelle: mieteQuelle + mieteHinweis,
     max_kaufpreis_cashflow_positiv: strategien.find((s) => s.name === "Halten & vermieten")?.max_kaufpreis || null,
   };
+  // Umbau-Strategien nutzen dieselbe Eigenkapital-Regel
   return { daten, finanz: { eigenkapital: ek, zins_prozent: a.zins, tilgung_prozent: a.tilgung }, bericht: bericht(e, daten, real, annahmenListe, a, makler) };
 }
 
@@ -288,49 +362,100 @@ function risiken(e, d) {
   return r.length ? r : ["Keine besonderen Risiken aus der Anzeige erkennbar – Besichtigung und Unterlagen entscheiden."];
 }
 
+// Offene Fragen je Ansprechpartner (Skill: Makler/Verkäufer, Bauamt, Bank, Energieberater, Steuerberater)
+export function offeneFragen(e, d) {
+  const m = e.merkmale || {};
+  const etw = /wohnung/i.test(e.objektart || "");
+  const gewerbe = /gewerbe|büro|buero|hotel|pension|praxis/i.test(e.objektart || "") && !/wohn- und geschäft/i.test(e.objektart || "");
+  const f = { "Makler / Verkäufer": [], Bauamt: [], "Bank (Markus)": [], Energieberater: [], Steuerberater: [] };
+  const mk = f["Makler / Verkäufer"];
+  if (!e.kaufpreis) mk.push("Kaufpreis und Provision?");
+  if (!e.wohnflaeche_m2) mk.push("Wohn-/Nutzfläche je Einheit (Wohnflächenberechnung)?");
+  if (!(e.ist_miete_monat || e.ist_miete_jahr) && !gewerbe) mk.push("Aktuelle Mieten je Einheit – Mieterliste und Kontoauszüge der letzten 12 Monate?");
+  if (m.vermietet || e.ist_miete_monat || e.ist_miete_jahr) mk.push("Mietverträge, Mietrückstände, letzte Mieterhöhung?");
+  if (!e.baujahr) mk.push("Baujahr und letzte Modernisierungen (Dach, Fenster, Heizung, Leitungen)?");
+  if (!e.energieklasse) mk.push("Energieausweis und Alter der Heizung?");
+  if (etw) mk.push("Teilungserklärung, Hausgeld, Rücklage, Protokolle der letzten 3 Versammlungen, geplante Sonderumlagen?");
+  mk.push("Seit wann wird verkauft, gab es Preissenkungen, warum wird verkauft?");
+  if (gewerbe || m.zweites_grundstueck || m.baurecht || /grundst/i.test(e.objektart || "")) f.Bauamt.push("Bebauungsplan oder § 34 BauGB, Gebietsart (WA, MI, GE)?");
+  if (gewerbe) f.Bauamt.push("Ist die Nutzungsänderung zu Wohnen genehmigungsfähig? Stellplätze, Brandschutz – Bauvoranfrage möglich?");
+  if (m.denkmal) f.Bauamt.push("Denkmalauflagen für Fenster, Fassade, Dach?");
+  if (m.zweites_grundstueck || m.baurecht) f.Bauamt.push("Bauvorbescheid für zusätzliche Bebauung?");
+  f.Bauamt.push("Baulasten und genehmigte Nutzung laut Bauakte?");
+  f["Bank (Markus)"].push(`Finanzierung mit ${d.schnell?.cashflow != null ? "ca. 10.000 € Eigenkapital (Nebenkosten mitfinanziert)" : "wenig Eigenkapital"} möglich, zu welchem Zins?`);
+  f["Bank (Markus)"].push("Finanzierungsbestätigung vorab bereitlegen, damit sie am Tag der Besichtigung rausgehen kann.");
+  if (["E", "F", "G", "H"].includes(e.energieklasse) || m.oelheizung || m.nachtspeicher || (e.baujahr && e.baujahr < 1980)) f.Energieberater.push("Welche Maßnahmen sind nach Gebäudeenergiegesetz nötig, was kosten sie, welche Förderung (BEG/KfW) passt?");
+  if (gewerbe) f.Energieberater.push("Förderfähigkeit KfW 266 „Gewerbe zu Wohnen“ prüfen (Antrag vor Baubeginn).");
+  f.Steuerberater.push("Kaufpreisaufteilung Gebäude/Boden für die Abschreibung; privat oder über GmbH kaufen?");
+  if (d.strategien?.some((s) => /Aufteilung|Flip|verkaufen/.test(s.name) && s.eignung !== "nein")) f.Steuerberater.push("Spekulationsfrist und gewerblicher Grundstückshandel (3-Objekt-Grenze) bei Weiterverkauf?");
+  return Object.fromEntries(Object.entries(f).filter(([, v]) => v.length));
+}
+
 function bericht(e, d, real, annahmen, a, makler) {
   const z = (v) => (v == null || v === "" ? "fehlt – anfragen" : v);
-  const st = d.strategien.map((s) => `| ${s.name} | ${{ gut: "✅ gut", bedingt: "⚠️ bedingt", nein: "❌ nein" }[s.eignung]} | ${s.cashflow_monat != null ? eur(s.cashflow_monat) + "/Monat" : s.gewinn != null ? eur(s.gewinn) : "–"} | ${s.max_kaufpreis ? "bis " + eur(s.max_kaufpreis) : "–"} |`).join("\n");
+  const sc = d.schnell || {};
+  const ok = (v) => (v == null ? "" : v ? " ✅" : " ❌");
+  const eign = { gut: "✅ gut", bedingt: "⚠️ bedingt", nein: "❌ nein" };
+  const st = [...d.strategien].sort((x, y) => (x.buchstabe || "Z").localeCompare(y.buchstabe || "Z"))
+    .map((s) => `| ${s.buchstabe ? s.buchstabe + " · " : ""}${s.name} | ${eign[s.eignung]} | ${s.cashflow_monat != null ? eur(s.cashflow_monat) + "/Monat" : s.gewinn != null ? eur(s.gewinn) + " Gewinn" : "–"} | ${s.max_kaufpreis ? eur(s.max_kaufpreis) : "–"} | ${s.max_kaufpreis_vorsichtig ? eur(s.max_kaufpreis_vorsichtig) : "–"} |`).join("\n");
+  const alleRisiken = risiken(e, d);
+  const v = d.verhandlung;
+  const fragen = offeneFragen(e, d);
   return `# ${d.titel}
 
-${d.warnungen?.length ? `## ⚠️ Bitte zuerst prüfen\n${d.warnungen.map((w) => "- " + w).join("\n")}\n\n` : ""}## Kurzfazit
-**${d.empfehlung}.** ${d.verhandlungsziel ? `Verhandlungsziel: **${eur(d.verhandlungsziel)}**` : "Ein Verhandlungsziel ist nicht realistisch – der tragbare Preis liegt weit unter dem Angebot"} (Angebot ${eur(d.kaufpreis)}).
-${real ? `Im realistischen Szenario: Faktor ${real.faktor?.toFixed(1).replace(".", ",") ?? "–"}, Cashflow ${eur(real.cashflowMonat)} pro Monat vor Steuern.` : ""}
-
-## Eckdaten aus der Anzeige
+## ${d.urteil}
+${d.warnungen?.length ? `\n> **⚠️ Bitte zuerst prüfen:** ${d.warnungen.join(" ")}\n` : ""}
+## Steckbrief
 | | |
 |---|---|
-| Objektart | ${z(e.objektart)} |
-| Ort | ${z(e.ort)} |
+| Objektart | ${z(e.objektart)}${e.ort ? " · " + e.ort : ""} |
 | Kaufpreis | ${e.kaufpreis ? eur(e.kaufpreis) : "fehlt – anfragen"} |
-| Wohnfläche | ${e.wohnflaeche_m2 ? e.wohnflaeche_m2 + " m²" : "fehlt – anfragen"} |
-| Preis pro m² | ${e.kaufpreis && e.wohnflaeche_m2 ? eur(e.kaufpreis / e.wohnflaeche_m2) : "–"} |
-| Grundstück | ${e.grundstueck_m2 ? e.grundstueck_m2 + " m²" + (/wohnung/i.test(e.objektart || "") ? " (Gemeinschaftseigentum aller Eigentümer)" : "") : /wohnung/i.test(e.objektart || "") ? "–" : "fehlt – anfragen"} |
-| Einheiten / Zimmer | ${z(e.einheiten)}${e.einheiten_im_haus ? ` (Haus mit ${e.einheiten_im_haus} Wohnungen)` : ""} / ${z(e.zimmer)} |
-| Baujahr | ${z(e.baujahr)}${e.sanierungsjahr ? ` (komplett saniert ${e.sanierungsjahr})` : ""} |
-| Energieklasse | ${z(e.energieklasse)} |
-| Ist-Miete | ${e.ist_miete_jahr ? eur(e.ist_miete_jahr) + " im Jahr (" + eur(e.ist_miete_jahr / 12) + " im Monat)" : e.ist_miete_monat ? eur(e.ist_miete_monat) + " im Monat" : "fehlt – anfragen"} |${e.faktor_angabe ? `\n| Faktor laut Anzeige | ${dz(e.faktor_angabe, 1)} |` : ""}${e.hausgeld_monat ? `\n| Hausgeld | ${eur(e.hausgeld_monat)} im Monat |` : ""}
-| Makler | ${dz(makler)} %${e.makler_prozent == null || e.makler_prozent === "" ? " (Annahme)" : ""} |
+| Fläche | ${e.wohnflaeche_m2 ? dz(e.wohnflaeche_m2, 0) + " m²" : "fehlt – anfragen"}${e.grundstueck_m2 ? ` · Grundstück ${dz(e.grundstueck_m2, 0)} m²` : ""} |
+| Preis pro m² | ${sc.preis_m2 ? eur(sc.preis_m2) : "–"}${sc.vergleich_m2 ? ` (Ø Wohnungen ${sc.vergleich_ort}: ${eur(sc.vergleich_m2)})${ok(sc.preis_ok)}` : ""} |
+| Kaufpreisfaktor | ${sc.faktor ? dz(sc.faktor, 1) + " (Ziel ≤ 20)" + ok(sc.faktor_ok) : "–"} |
+| Cashflow realistisch | ${sc.cashflow != null ? eur(sc.cashflow) + "/Monat · bei Zins +1 %: " + eur(sc.cashflow_stress) : "–"} |
+| Kapitaldienstdeckung | ${sc.dscr ? dz(sc.dscr) + (sc.dscr >= 1.2 ? " ✅" : " (Banken wollen meist ≥ 1,2)") : "–"} |
+| Baujahr / Energie | ${z(e.baujahr)}${e.sanierungsjahr ? ` (saniert ${e.sanierungsjahr})` : ""} / ${z(e.energieklasse)} |
+| Ist-Miete | ${e.ist_miete_jahr ? eur(e.ist_miete_jahr / 12) + " im Monat" : e.ist_miete_monat ? eur(e.ist_miete_monat) + " im Monat" : "fehlt – anfragen"}${e.hausgeld_monat ? ` · Hausgeld ${eur(e.hausgeld_monat)}` : ""} |
+| Ampel | ${{ gruen: "🟢 Grün", gelb: "🟡 Gelb", rot: "🔴 Rot" }[d.ampel]} |
 
 ## Strategien
-| Strategie | Bewertung | Ergebnis | Lohnt sich |
-|---|---|---|---|
+| Strategie | Urteil | Ergebnis (realistisch) | lohnt bis (realistisch) | lohnt bis (vorsichtig) |
+|---|---|---|---|---|
 ${st}
 
-## Annahmen (im Rechner änderbar)
+## Top 3 Risiken
+${alleRisiken.slice(0, 3).map((x, i) => `${i + 1}. ${x}`).join("\n")}
+
+## Verhandlungsziel
+${v ? `| Einstieg | Ziel | Schmerzgrenze |\n|---|---|---|\n| ${eur(v.einstieg)} | ${eur(v.ziel)} | ${eur(v.schmerzgrenze)} |\n\nArgumente: ${verhandlungsArgumente(e, d).join(" · ")}. Die Schmerzgrenze nie nennen.` : `Kein realistisches Verhandlungsziel – der tragbare Preis liegt mehr als 30 % unter dem Angebot (${eur(d.kaufpreis)}).`}
+
+## Offene Fragen
+${Object.entries(fragen).map(([wer, l]) => `**${wer}**\n${l.map((x) => "- " + x).join("\n")}`).join("\n\n")}
+
+<details><summary>Detailrechnung und Annahmen</summary>
+
+${d.strategien.map((s) => `**${s.buchstabe ? s.buchstabe + " · " : ""}${s.name}** – ${s.begruendung}`).join("\n\n")}
+
+**Annahmen (im Rechner und unter „Annahmen anpassen“ änderbar)**
 ${annahmen.map((x) => "- " + x).join("\n")}
-- Finanzierung: ${dz(a.zins)} % Zins, ${dz(a.tilgung)} % Tilgung, Kaufnebenkosten ${dz(num(a.grest) + num(a.notar) + makler)} % (Grunderwerbsteuer NRW ${dz(a.grest)} %, Notar ${dz(a.notar)} %, Makler ${dz(makler)} %)
-${/gewerbe|büro|buero|hotel|pension|praxis|boarding/i.test(e.objektart || "") && !/wohn- und geschäft/i.test(e.objektart || "") ? "" : `- Marktwerte: Verkauf saniert ${dz(a.etw_saniert_m2, 0)} €/m², Eigentumswohnung im Bestand ${dz(a.etw_bestand_m2, 0)} €/m², Mehrfamilienhaus Faktor ${dz(a.verkaufsfaktor_mfh, 1)}, Bauland ${dz(a.bodenrichtwert_m2, 0)} €/m² (alles Annahmen für den Raum Hamm)`}
+- Finanzierung: ${dz(a.zins)} % Zins, ${dz(a.tilgung)} % Tilgung, Kaufnebenkosten ${dz(num(a.grest) + num(a.notar) + makler)} % (Grunderwerbsteuer NRW ${dz(a.grest)} %, Notar ${dz(a.notar)} %, Makler ${dz(makler)} %${e.makler_prozent == null || e.makler_prozent === "" ? " – Annahme" : ""})
 
-## Risiken
-${risiken(e, d).map((x) => "- " + x).join("\n")}
+${alleRisiken.length > 3 ? `**Weitere Risiken**\n${alleRisiken.slice(3).map((x) => "- " + x).join("\n")}` : ""}
 
-## Unterlagen und Fragen an Verkäufer / Makler
-- Exposé mit Grundrissen und Wohnflächenberechnung je Einheit
-- Mieterliste mit Ist-Mieten, Mietverträge, Nebenkostenabrechnung der letzten 2 Jahre
-- Energieausweis, Alter von Heizung, Dach, Fenstern, Elektrik und Leitungen
-- Grundbuchauszug und Baulastenverzeichnis${/wohnung/i.test(e.objektart || "") ? "\n- Teilungserklärung, Protokolle der letzten 3 Eigentümerversammlungen, Wirtschaftsplan, Stand der Rücklage" : ""}
-- Grund für den Verkauf und Verhandlungsspielraum
+</details>
 
-_Regelbasierte Ersteinschätzung ohne KI. Marktwerte sind Annahmen – vor dem Kauf mit Mietspiegel, Bank und Besichtigung prüfen._`;
+**Quellen:** Marktwerte: ${MARKT_QUELLE}. Sanierung: ${SANIERUNG_QUELLE}. Förderung: kfw.de. Alles regelbasiert ohne KI – vor dem Kauf mit Mietspiegel, Grundstücksmarktbericht (gars.nrw), BORIS NRW und Besichtigung prüfen.`;
+}
+
+function verhandlungsArgumente(e, d) {
+  const a = [];
+  if (["E", "F", "G", "H"].includes(e.energieklasse)) a.push(`Energieklasse ${e.energieklasse} – Sanierungskosten`);
+  if (!(e.ist_miete_monat || e.ist_miete_jahr)) a.push("keine Mietbelege");
+  if (d.schnell?.preis_ok === false) a.push(`Preis pro m² über dem Ortsschnitt (${eur(d.schnell.vergleich_m2)})`);
+  if (e.merkmale?.sanierungsbeduerftig || e.merkmale?.renovierungsbeduerftig) a.push("Renovierungsstau");
+  if (e.baujahr && e.baujahr < 1978 && !e.sanierungsjahr) a.push("Baujahr vor 1978 – Leitungen, Elektrik, Dämmung");
+  if (e.merkmale?.oelheizung || e.merkmale?.nachtspeicher) a.push("Heizungstausch nach Gebäudeenergiegesetz");
+  a.push("schnelle, sichere Abwicklung mit Finanzierungsbestätigung");
+  return a.slice(0, 4);
 }

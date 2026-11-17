@@ -3,6 +3,7 @@ import { rechneSzenario, maxKaufpreisCashflowNull, num } from "./rechner.js";
 import { speicher, geraet, ZugangFalsch, extras, lese, schreibe } from "./speicher.js";
 import { leseInserat } from "./lib/inserat-parse.js";
 import { auswerten, STANDARD_ANNAHMEN } from "./lib/auswertung.js";
+import { makleranfrage, ABSENDER_STANDARD } from "./lib/makler.js";
 
 const SZENARIEN = [["vorsichtig", "Vorsichtig"], ["realistisch", "Realistisch"], ["gut", "Gut"]];
 const $ = (id) => document.getElementById(id);
@@ -96,7 +97,7 @@ function formularFuellen(f, nurLeere = false) {
   if (f.merkmale) for (const m of MERKMALE) if (f.merkmale[m]) $("m-" + m).checked = true;
   if (f.link) eingabeLink = f.link;
   // Zusatzangaben, die kein eigenes Feld haben, für die Auswertung merken
-  zusatzAngaben = { ...zusatzAngaben, ...Object.fromEntries(["sanierungsjahr", "faktor_angabe", "einheiten_im_haus", "grundstueck_gemeinschaft", "ist_miete_jahr"].filter((k) => f[k] != null).map((k) => [k, f[k]])) };
+  zusatzAngaben = { ...zusatzAngaben, ...Object.fromEntries(["sanierungsjahr", "faktor_angabe", "einheiten_im_haus", "grundstueck_gemeinschaft", "ist_miete_jahr", "anbieter"].filter((k) => f[k] != null).map((k) => [k, f[k]])) };
   kontrolleZeigen();
 }
 
@@ -132,7 +133,7 @@ function formularLesen() {
     e[k] = ZAHLFELDER.has(k) ? num(v) : v;
   }
   for (const m of MERKMALE) e.merkmale[m] = $("m-" + m).checked;
-  for (const k of ["sanierungsjahr", "faktor_angabe", "einheiten_im_haus", "grundstueck_gemeinschaft"]) if (zusatzAngaben[k] != null) e[k] = zusatzAngaben[k];
+  for (const k of ["sanierungsjahr", "faktor_angabe", "einheiten_im_haus", "grundstueck_gemeinschaft", "anbieter"]) if (zusatzAngaben[k] != null) e[k] = zusatzAngaben[k];
   return e;
 }
 
@@ -242,6 +243,7 @@ function zeigeErgebnis() {
   aktuell.chat ||= [];
   zeigeChat();
   teilenVorbereiten();
+  zeigeMakler();
   objektSternSetzen();
   const ziel = "#objekt-" + aktuell.id;
   if (location.hash !== ziel) { stillerWechsel = true; location.hash = ziel; }
@@ -255,19 +257,28 @@ function zeigeStrategien() {
   const box = $("strategien");
   box.innerHTML = "";
   const rang = { gut: 0, bedingt: 1, nein: 2 };
-  for (const s of [...liste].sort((a, b) => (rang[a.eignung] ?? 3) - (rang[b.eignung] ?? 3))) {
+  const sortiert = [...liste].sort((a, b) => (rang[a.eignung] ?? 3) - (rang[b.eignung] ?? 3));
+  // Nur was in Frage kommt sofort zeigen – der Rest auf Wunsch
+  const schwach = sortiert.filter((s) => s.eignung === "nein");
+  let mehr = null;
+  if (schwach.length && schwach.length < sortiert.length) {
+    mehr = document.createElement("details");
+    mehr.innerHTML = `<summary class="hinweis">${schwach.length} weitere Strategie${schwach.length > 1 ? "n" : ""}, die sich nicht rechnen</summary>`;
+  }
+  for (const s of sortiert) {
     const d = document.createElement("div");
     d.className = "strategie " + (rang[s.eignung] !== undefined ? s.eignung : "");
     const zahl = s.cashflow_monat != null ? `Cashflow ${eur(s.cashflow_monat)}/Monat` : s.gewinn != null ? `Gewinn ${eur(s.gewinn)}` : "";
     const symbol = { gut: "✅", bedingt: "⚠️", nein: "❌" }[s.eignung] || "•";
     d.innerHTML = `<b></b><div class="zahl"></div><div class="hinweis"></div><div style="margin-top:6px;font-size:.88rem"></div>`;
-    d.children[0].textContent = `${symbol} ${s.name ?? ""}`;
+    d.children[0].textContent = `${symbol} ${s.buchstabe ? s.buchstabe + " · " : ""}${s.name ?? ""}`;
     d.children[1].textContent = zahl;
     d.children[1].className = "zahl " + ((s.cashflow_monat ?? s.gewinn ?? 0) < 0 ? "neg" : "pos");
-    d.children[2].textContent = s.max_kaufpreis ? `lohnt sich bis ca. ${eur(s.max_kaufpreis)} Kaufpreis` : "";
+    d.children[2].textContent = s.max_kaufpreis ? `lohnt sich bis ca. ${eur(s.max_kaufpreis)} Kaufpreis${s.max_kaufpreis_vorsichtig ? ` (vorsichtig: ${eur(s.max_kaufpreis_vorsichtig)})` : ""}` : "";
     d.children[3].textContent = s.begruendung ?? "";
-    box.appendChild(d);
+    (mehr && s.eignung === "nein" ? mehr : box).appendChild(d);
   }
+  if (mehr) box.appendChild(mehr);
 }
 
 function finanzAusEingabe() {
@@ -360,21 +371,58 @@ function zeigeUeberblick(r) {
       <div style="min-width:0">
         <span class="eyebrow">${esc([d.objektart, d.ort, d.baujahr && "Bj. " + d.baujahr].filter(Boolean).join(" · "))}</span>
         <h2>${esc(aktuell.titel)}</h2>
-        ${d.empfehlung ? `<div class="empfehlung">${esc(d.empfehlung)}</div>` : ""}
+        ${d.urteil || d.empfehlung ? `<div class="empfehlung">${esc(d.urteil || d.empfehlung)}</div>` : ""}
         <div class="hinweis">${aktuell.autor ? "Analysiert von " + esc(aktuell.autor) + " · " : ""}${aktuell.datum ? new Date(aktuell.datum).toLocaleDateString("de-DE") : ""}${aktuell.link ? ` · <a href="${esc(aktuell.link)}" target="_blank" rel="noopener">Zum Inserat</a>` : ""}</div>
       </div>
     </div>
     ${d.warnungen?.length ? `<div class="warnbox"><b>Bitte zuerst prüfen – die Daten wirken nicht plausibel:</b><ul>${d.warnungen.map((w) => `<li>${esc(w)}</li>`).join("")}</ul><span class="hinweis">Mit „Eingaben ändern“ korrigieren und neu auswerten.</span></div>` : ""}
     ${r ? `<div class="kpis">
-      <div class="kpi messing"><b>${eur(d.verhandlungsziel)}</b><span>Verhandlungsziel</span></div>
-      <div class="kpi"><b>${eur(r.preisM2)}</b><span>Preis/m² (Markt ${marktText})</span></div>
+      <div class="kpi messing"><b>${eur(d.verhandlung?.ziel ?? d.verhandlungsziel)}</b><span>${d.verhandlung ? `Verhandlungsziel (Einstieg ${eur(d.verhandlung.einstieg)}, Schmerzgrenze ${eur(d.verhandlung.schmerzgrenze)})` : "Verhandlungsziel"}</span></div>
+      <div class="kpi"><b class="${d.schnell?.preis_ok === false ? "neg" : ""}">${eur(r.preisM2)}</b><span>Preis/m² ${d.schnell?.vergleich_m2 ? `(Ø ${esc(d.schnell.vergleich_ort)} ${eur(d.schnell.vergleich_m2)})` : `(Markt ${marktText})`}</span></div>
       <div class="kpi"><b>${pct(r.bruttorendite)}</b><span>Bruttorendite (realistisch)</span></div>
       <div class="kpi"><b>${dez(r.faktor)}</b><span>Kaufpreisfaktor</span></div>
       <div class="kpi"><b class="${r.cashflowMonat < 0 ? "neg" : "pos"}">${eur(r.cashflowMonat)}</b><span>Cashflow/Monat (realistisch)</span></div>
       <div class="kpi"><b>${eur(r.ekFuerCashflow0)}</b><span>Eigenkapital für Cashflow 0</span></div>
+      ${d.schnell?.cashflow_stress != null ? `<div class="kpi"><b class="${d.schnell.cashflow_stress < 0 ? "neg" : "pos"}">${eur(d.schnell.cashflow_stress)}</b><span>Cashflow bei Zins +1 % (Stresstest)</span></div>` : ""}
       <div class="kpi"><b class="${r.maxKpCf0 >= num(d.kaufpreis) ? "pos" : "neg"}">${eur(r.maxKpCf0)}</b><span>Max. Kaufpreis für Cashflow ≥ 0 (bei ${eur(r.eigenkapital)} EK)</span></div>
     </div>` : `<p class="hinweis">Für den Rechner fehlten strukturierte Zahlen – siehe Bericht.</p>`}`;
 }
+
+// ---------- Makleranfrage ----------
+const ABSENDER_SPEICHER = "immo-absender";
+function absenderLesen() { try { return JSON.parse(localStorage.getItem(ABSENDER_SPEICHER)) || {}; } catch { return {}; } }
+function absenderZeigen() {
+  const ab = { ...ABSENDER_STANDARD, ...absenderLesen() };
+  for (const k of ["name", "telefon", "email"]) { const el = $("abs-" + k); if (el) el.value = ab[k] || ""; }
+}
+for (const k of ["name", "telefon", "email"]) $("abs-" + k)?.addEventListener("change", () => {
+  const ab = absenderLesen(); ab[k] = $("abs-" + k).value.trim();
+  try { localStorage.setItem(ABSENDER_SPEICHER, JSON.stringify(ab)); } catch { /* egal */ }
+  if (aktuell) zeigeMakler();
+});
+absenderZeigen();
+let maklerKurz = "";
+function maklerMailLink() {
+  const an = makleranfrage(aktuell.eingabe || {}, aktuell.daten || {}, absenderLesen()).empfaenger;
+  return `mailto:${encodeURIComponent(an)}?subject=${encodeURIComponent($("makler-betreff").value)}&body=${encodeURIComponent($("makler-text").value)}`;
+}
+function zeigeMakler() {
+  const m = makleranfrage(aktuell.eingabe || {}, aktuell.daten || {}, absenderLesen());
+  $("makler-karte").classList.toggle("versteckt", !aktuell.daten);
+  $("makler-an").textContent = [m.ansprechpartner && "An: " + m.ansprechpartner, m.empfaenger && "E-Mail: " + m.empfaenger, m.telefon_makler && "Tel.: " + m.telefon_makler].filter(Boolean).join(" · ") || "Ansprechpartner nicht erkannt – Empfänger in der Mail eintragen.";
+  $("makler-betreff").value = m.betreff;
+  $("makler-text").value = m.email;
+  maklerKurz = m.kurz;
+  $("makler-mail").href = maklerMailLink();
+  $("makler-fehlt").textContent = m.fehlt.length ? `Noch fehlt im Absender: ${m.fehlt.join(" und ")} – unter „Konto“ eintragen.` : "";
+}
+for (const id of ["makler-betreff", "makler-text"]) $(id).addEventListener("input", () => { $("makler-mail").href = maklerMailLink(); });
+async function kopiere(text, knopf, label) {
+  try { await navigator.clipboard.writeText(text); knopf.textContent = "✓ Kopiert"; } catch { knopf.textContent = "Kopieren nicht möglich"; }
+  setTimeout(() => (knopf.textContent = label), 2000);
+}
+$("makler-kopieren").onclick = () => kopiere(`Betreff: ${$("makler-betreff").value}\n\n${$("makler-text").value}`, $("makler-kopieren"), "E-Mail kopieren");
+$("makler-kurz").onclick = () => kopiere(maklerKurz, $("makler-kurz"), "Kurzfassung für Kleinanzeigen kopieren");
 
 // ---------- Aktionen ----------
 $("drucken").onclick = () => window.print();
@@ -552,12 +600,12 @@ function claudeAnfrage(o) {
     zeile("Makler", d.makler_prozent != null ? String(d.makler_prozent).replace(".", ",") + " %" : null),
     zeile("Merkmale", Object.entries(e.merkmale || {}).filter(([, v]) => v).map(([k]) => k.replace(/_/g, " ")).join(", ") || null),
     "",
-    "Unsere Vorab-Rechnung (feste Annahmen, ohne Marktrecherche):",
+    "Unsere Vorab-Rechnung aus der App (Ortsdurchschnitte von Portalen, Stand Nov. 2026, keine Live-Recherche):",
     real ? `- Faktor ${dez(real.faktor)}, Cashflow ${eur(real.cashflowMonat)}/Monat bei ${eur(fin.eigenkapital)} Eigenkapital, ${fin.zins_prozent} % Zins` : null,
     ...(d.strategien || []).map((st) => `- ${st.name}: ${st.eignung}${st.max_kaufpreis ? ", lohnt sich bis ca. " + eur(st.max_kaufpreis) : ""}`),
     d.verhandlungsziel ? `- Verhandlungsziel: ${eur(d.verhandlungsziel)}` : null,
     "",
-    "Bitte: Anzeige lesen, Mietspiegel, Vergleichspreise und Bodenrichtwert aktuell recherchieren, alle Strategien (Cashflow, Fix & Flip, Aufteilung, Grundstück, Ferienwohnung) mit echten Marktdaten neu rechnen, die größten Risiken nennen, ein Verhandlungsziel begründen und offene Fragen an den Makler auflisten.",
+    "Bitte die komplette Analyse nach dem Skill immobilien-analyse (Schritte 0–6): Anzeige lesen, Mietspiegel, Vergleichspreise, Bodenrichtwert (BORIS NRW) und aktuelle Bau-/Sanierungskosten mit Quelle und Datum recherchieren, die passenden Strategien A–E mit höchstens 10.000 € Eigenkapital in drei Szenarien als Tabelle rechnen, Stresstest, Top 3 Risiken, Verhandlungsziel (Einstieg / Ziel / Schmerzgrenze), offene Fragen und die Makleranfrage als E-Mail-Karte.",
   ];
   return teile.filter((t) => t !== null).join("\n");
 }

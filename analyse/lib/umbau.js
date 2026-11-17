@@ -1,6 +1,7 @@
 // Umbau-Rechnung für Büro-, Gewerbe- und Hotelobjekte: Wohnungen (vermieten oder verkaufen) und Service-Apartments.
 // Alle Werte sind Annahmen und im Formular änderbar. Förderung: KfW 266 "Gewerbe zu Wohnen" (Zuschuss, kein Rechtsanspruch).
 import { num } from "../rechner.js";
+import { marktFuer } from "./markt.js";
 
 export const UMBAU_ANNAHMEN = {
   umbau_m2: 1600,            // €/m² Nutzfläche für Umbau Büro → Wohnen (Bäder, Küchen, Haustechnik, Brandschutz); Spanne ca. 1.200–2.200
@@ -15,9 +16,12 @@ export const UMBAU_ANNAHMEN = {
 const eur = (v) => (v == null || !Number.isFinite(v) ? "–" : Math.round(v).toLocaleString("de-DE") + " €");
 const r5 = (v) => Math.round(v / 5000) * 5000;
 
-// Großstadt-Zuschlag für Dortmund, Bochum und Umgebung (PLZ 44…) – als Annahme ausgewiesen
+// Ortszuschlag gegenüber Hamm aus den Marktdaten (z. B. Dortmund, Bochum, Münster teurer, Hagen günstiger)
 function ortsZuschlag(ort) {
-  return /^44\d{3}/.test(String(ort || "").trim()) ? { miete: 1.0, verkauf: 400, text: "Großstadtlage (PLZ 44…): Miete +1 €/m², Verkauf +400 €/m²" } : { miete: 0, verkauf: 0, text: "" };
+  const m = marktFuer(ort);
+  if (!m || m.name === "Hamm") return { miete: 0, verkauf: 0, text: "" };
+  const miete = Math.round((m.miete - 7.9) * 10) / 10, verkauf = Math.round((m.kauf - 2090) / 50) * 50;
+  return { miete, verkauf, text: `Lage ${m.name}: Miete ${miete >= 0 ? "+" : ""}${miete.toLocaleString("de-DE")} €/m², Verkauf ${verkauf >= 0 ? "+" : ""}${verkauf.toLocaleString("de-DE")} €/m² gegenüber Hamm` };
 }
 
 // Kaufpreis per Halbierung suchen, bei dem eine Kennzahl die Grenze erreicht
@@ -51,7 +55,7 @@ export function umbauStrategien(e, a, nkProzent, annahmenListe) {
   // a) Umbau zu Wohnungen und vermieten (mit Förderung)
   const vermieten = (preis) => {
     const invest = preis * (1 + nkProzent / 100) + umbau - foerderung;
-    const ek = invest * num(a.ek_prozent) / 100;
+    const ek = Math.min(num(a.ek_betrag) || 10000, invest);
     const kapitaldienst = (invest - ek) * (zins + tilg);
     const miete = wfl * mieteNeu * 12;
     const noi = miete * 0.97 - wfl * 8 - wohnungen * 30 * 12 - wfl * 0.3 * 12; // Leerstand 3 %, Instandhaltung 8 €/m², Verwaltung, nicht umlagefähig
@@ -75,7 +79,7 @@ export function umbauStrategien(e, a, nkProzent, annahmenListe) {
   const service = (preis) => {
     const moebel = apartments * 6000;
     const invest = preis * (1 + nkProzent / 100) + umbau + moebel;
-    const ek = invest * num(a.ek_prozent) / 100;
+    const ek = Math.min(num(a.ek_betrag) || 10000, invest);
     const kapitaldienst = (invest - ek) * (zins + tilg);
     const umsatz = apartments * num(u.apartment_preis) * 365 * num(u.apartment_auslastung) / 100;
     // Übernachtungspreis enthält 7 % USt.; 55 % Betriebskosten (Reinigung, Wäsche, Plattformgebühren, Personal, Energie, Ersatz Möbel)
@@ -87,6 +91,7 @@ export function umbauStrategien(e, a, nkProzent, annahmenListe) {
 
   return [
     {
+      buchstabe: "B",
       name: "Umbau zu Wohnungen & vermieten",
       eignung: v.cf >= 300 ? "gut" : v.cf >= -200 ? "bedingt" : "nein",
       cashflow_monat: Math.round(v.cf),
@@ -94,6 +99,7 @@ export function umbauStrategien(e, a, nkProzent, annahmenListe) {
       begruendung: `${wohnungen} Wohnungen, Miete ${eur(wfl * mieteNeu)}/Monat. Gesamtinvestition ${eur(v.invest)} nach Abzug KfW-Zuschuss. Nutzungsänderung muss genehmigungsfähig sein (Bebauungsplan, Stellplätze, Brandschutz).`,
     },
     {
+      buchstabe: "C",
       name: "Umbau & Wohnungen verkaufen",
       eignung: vk.marge >= 20 ? "gut" : vk.marge >= 10 ? "bedingt" : "nein",
       gewinn: Math.round(vk.gewinn),
@@ -101,6 +107,7 @@ export function umbauStrategien(e, a, nkProzent, annahmenListe) {
       begruendung: `Verkaufserlös ca. ${eur(vk.erloes)} (${wohnungen} Wohnungen à ${etwNeu.toLocaleString("de-DE")} €/m²). Marge ${vk.marge.toFixed(0)} % (Ziel ≥ 20 % bei Projektentwicklung), 18 Monate Bauzeit, 5 % Vertrieb. Achtung: Verkauf vieler Einheiten ist gewerblicher Grundstückshandel.`,
     },
     {
+      buchstabe: "E",
       name: "Service-Apartments",
       // Betrieb ist ein eigenes Geschäft mit hohem Auslastungsrisiko – höchstens "bedingt"
       eignung: sa.cf >= -200 ? "bedingt" : "nein",

@@ -151,7 +151,10 @@
 
     /* Bericht */
     #bericht { overflow-wrap: anywhere; max-width: 72ch; }
-    #bericht table { display: block; overflow-x: auto; margin: 10px 0; }
+    #bericht table { display: block; overflow-x: auto; margin: 10px 0; overflow-wrap: normal; }
+    #bericht td, #bericht th { overflow-wrap: normal; word-break: normal; hyphens: auto; white-space: normal; text-align: left; }
+    #bericht td:first-child { min-width: 7.5em; } #bericht th { white-space: nowrap; }
+    #bericht details summary { cursor: pointer; font-weight: 700; margin: 1.2em 0 .4em; }
     #bericht h1 { font-size: 1.5rem; } #bericht h2 { margin-top: 1.6em; padding-bottom: 4px; border-bottom: 1px solid var(--linie); }
 
     /* Chat */
@@ -320,7 +323,7 @@
             <div><label for="a-bodenrichtwert_m2">Bauland (€/m²)</label><input id="a-bodenrichtwert_m2" type="number" /></div>
             <div><label for="a-zins">Zins (%)</label><input id="a-zins" type="number" step="0.05" /></div>
             <div><label for="a-tilgung">Tilgung (%)</label><input id="a-tilgung" type="number" step="0.25" /></div>
-            <div><label for="a-ek_prozent">Eigenkapital (% vom Preis)</label><input id="a-ek_prozent" type="number" /></div>
+            <div><label for="a-ek_betrag">Eigenkapital höchstens (€)</label><input id="a-ek_betrag" type="number" step="1000" /></div>
             <div><label for="a-makler">Makler Standard (%)</label><input id="a-makler" type="number" step="0.01" /></div>
             <div><label for="a-grest">Grunderwerbsteuer (%)</label><input id="a-grest" type="number" step="0.1" /></div>
             <div><label for="a-notar">Notar & Grundbuch (%)</label><input id="a-notar" type="number" step="0.1" /></div>
@@ -335,7 +338,7 @@
             <div><label for="a-apartment_preis">Service-Apartment (€/Nacht)</label><input id="a-apartment_preis" type="number" /></div>
             <div><label for="a-apartment_auslastung">Auslastung (%)</label><input id="a-apartment_auslastung" type="number" /></div>
           </div>
-          <p class="hinweis">Gilt für dieses Gerät. Werte gelten für den Raum Hamm – für andere Orte (z. B. Münster, Soest) anpassen. <button class="leise" id="annahmen-zurueck" type="button">Standardwerte</button></p>
+          <p class="hinweis">Gilt für dieses Gerät. Miete, Wohnungspreise und Bauland werden automatisch für den Ort der Anzeige eingesetzt (Hamm, Dortmund, Bochum, Hagen, Münster, Lünen, Kamen, Lippstadt, Soest, Kreise Unna und Soest), solange hier der Standardwert steht. Ein eigener Wert hat Vorrang. <button class="leise" id="annahmen-zurueck" type="button">Standardwerte</button></p>
         </details>
         <div class="reihe"><button id="start">Auswerten</button><span class="hinweis">Sofort, kostenlos, ohne KI.</span></div>
       </div>
@@ -361,7 +364,21 @@
         <div class="karte versteckt" id="strategien-karte">
           <span class="eyebrow">Was ist möglich?</span>
           <h2>Strategien im Vergleich</h2>
+          <p class="hinweis">A Halten · B Umbau · C Flip/Aufteilung · D Grundstück · E Ferien/Monteur. Maßgeblich ist das realistische Szenario.</p>
           <div class="strategien" id="strategien"></div>
+        </div>
+        <div class="karte kein-druck versteckt" id="makler-karte">
+          <span class="eyebrow">Bei Interesse</span>
+          <h2>Anfrage an den Makler</h2>
+          <p class="hinweis" id="makler-an"></p>
+          <label for="makler-betreff">Betreff</label><input id="makler-betreff" />
+          <label for="makler-text" style="margin-top:8px">E-Mail</label><textarea id="makler-text" rows="12"></textarea>
+          <div class="reihe">
+            <a class="knopf" id="makler-mail" href="#">In Mail öffnen</a>
+            <button class="zweit" id="makler-kopieren">E-Mail kopieren</button>
+            <button class="zweit" id="makler-kurz">Kurzfassung für Kleinanzeigen kopieren</button>
+          </div>
+          <p class="hinweis">Wird nie automatisch verschickt. Tipp: Finanzierungsbestätigung bei Markus vorab bereithalten, damit sie am selben Tag rausgehen kann. Die ausführliche Unterlagenliste erst nach der Besichtigung anfordern. <span id="makler-fehlt"></span></p>
         </div>
         <div class="karte kein-druck" id="chat-karte">
           <span class="eyebrow">Zwischen euch beiden</span>
@@ -442,6 +459,15 @@
         </div>
         <div class="reihe"><button id="anmelden">Anmelden</button><button class="zweit versteckt" id="abmelden">Abmelden</button><span id="login-fehler" class="hinweis" style="color:var(--kritisch)"></span></div>
 
+      </div>
+      <div class="karte">
+        <h2>Absender für Makleranfragen</h2>
+        <p class="hinweis">Wird in jede Anfrage an Makler eingesetzt. Bleibt auf diesem Gerät gespeichert.</p>
+        <div class="raster3">
+          <div><label for="abs-name">Name</label><input id="abs-name" autocomplete="name" /></div>
+          <div><label for="abs-telefon">Telefon</label><input id="abs-telefon" type="tel" autocomplete="tel" /></div>
+          <div><label for="abs-email">E-Mail</label><input id="abs-email" type="email" autocomplete="email" /></div>
+        </div>
       </div>
       <div class="karte">
         <h2>Benachrichtigungen</h2>

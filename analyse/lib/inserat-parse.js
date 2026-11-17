@@ -244,5 +244,25 @@ export function leseKleinanzeigenHtml(html) {
   f.titel = titel.replace(/\s+in\s+[^|]+?\s+-\s+.*$/, "").trim() || undefined;
   f.beschreibung = beschreibung.trim().slice(0, 4000) || undefined;
   f.details = details;
+  f.anbieter = leseAnbieter(s, beschreibung, textVon);
   return f;
+}
+
+// Anbieter für die Makleranfrage: Firma, Ansprechpartner, Telefon, E-Mail, Anzeigen-ID, Objekt-Nr.
+function leseAnbieter(s, beschreibung, textVon) {
+  const a = {};
+  const firma = /class="bizteaser--title[^"]*"[^>]*>([\s\S]*?)<\//.exec(s);
+  if (firma && textVon(firma[1])) a.firma = textVon(firma[1]);
+  const person = /userprofile-vip"[^>]*>([\s\S]*?)<\//.exec(s);
+  if (person && textVon(person[1])) a.name = textVon(person[1]);
+  a.gewerblich = /Gewerblicher Nutzer|Gewerblicher Anbieter/.test(s);
+  const tel = /adPhoneNumber:\s*'(\+?\d[\d /()-]{5,20})'/.exec(s);
+  if (tel) a.telefon = tel[1].trim();
+  const id = /Anzeigen-ID\s*<\/[^>]+>\s*(?:<[^>]+>\s*)*(\d{6,})/.exec(s) || /Anzeigen-ID[^\d]{0,80}(\d{6,})/.exec(s);
+  if (id) a.anzeigen_id = id[1];
+  const mail = /[\w.+-]+@[\w-]+\.[\w.-]+/.exec(beschreibung || "");
+  if (mail) a.email = mail[0].replace(/[.,;]+$/, "");
+  const obj = /Objekt(?:-?nr\.?|nummer|-ID)\s*:?\s*([A-Z0-9][\w/-]{2,20})/i.exec(beschreibung || "");
+  if (obj) a.objekt_nr = obj[1];
+  return Object.keys(a).length > 1 ? a : undefined;
 }

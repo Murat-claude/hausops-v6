@@ -51,5 +51,22 @@ const klein = bewerte({ kategorie: "Büro zum Umbau", titel: "Praxis", beschreib
 const scoutOk = g.preis === 4503984 && !g.ausschluss && g.punkte >= 3 && klein.ausschluss;
 console.log(scoutOk ? "ok    " : "FEHLER", "Scout: Preis je m² und Mindestfläche bei Büros", scoutOk ? "" : JSON.stringify([g.preis, g.ausschluss, g.punkte, klein.ausschluss]));
 fehler += scoutOk ? 0 : 1;
+// Ortsdaten: richtige Stadt per PLZ, Kreis als Rückfall, unbekannt = null
+const { marktFuer } = await import("../lib/markt.js");
+const orte = [["44137 Dortmund", "Dortmund"], ["59065 Hamm", "Hamm"], ["59423 Unna", "Kreis Unna"], ["59457 Werl", "Kreis Soest"], ["Bochum-Ost", "Bochum"], ["10115 Berlin", null]];
+const ortFehler = orte.filter(([o, soll]) => (marktFuer(o)?.name ?? null) !== soll);
+console.log(ortFehler.length ? "FEHLER" : "ok    ", "Marktdaten je Ort", ortFehler.map(([o]) => o).join(", "));
+fehler += ortFehler.length ? 1 : 0;
+// Rechnung mit höchstens 10.000 € Eigenkapital, Urteil und Verhandlung vorhanden
+const mfh = auswerten({ objektart: "Mehrfamilienhaus", ort: "59065 Hamm", kaufpreis: 320000, wohnflaeche_m2: 400, einheiten: 6, baujahr: 1952, ist_miete_jahr: 31200, merkmale: { vermietet: true } });
+const urteilOk = mfh.finanz.eigenkapital === 10000 && /^Lohnt sich/.test(mfh.daten.urteil) && mfh.daten.verhandlung?.einstieg < mfh.daten.verhandlung?.schmerzgrenze && mfh.daten.schnell.cashflow_stress < mfh.daten.schnell.cashflow;
+console.log(urteilOk ? "ok    " : "FEHLER", "Urteil, 10.000 € Eigenkapital, Stresstest, Verhandlung", urteilOk ? "" : JSON.stringify([mfh.finanz, mfh.daten.urteil, mfh.daten.verhandlung]));
+fehler += urteilOk ? 0 : 1;
+// Makleranfrage: keine Preisnennung, Ansprechpartner ohne Geschlechtsannahme
+const { makleranfrage } = await import("../lib/makler.js");
+const mk = makleranfrage({ anbieter: { name: "Daniel Benetka", firma: "Touchdown", anzeigen_id: "2598138832", email: "a@b.de" } }, { titel: "MFH Herten", ort: "45699 Herten", kaufpreis: 4500000 });
+const mkOk = mk.email.startsWith("Guten Tag Daniel Benetka,") && !/€/.test(mk.email + mk.kurz) && mk.betreff.includes("Anzeige 2598138832") && mk.empfaenger === "a@b.de";
+console.log(mkOk ? "ok    " : "FEHLER", "Makleranfrage ohne Preis, mit Ansprechpartner", mkOk ? "" : mk.email);
+fehler += mkOk ? 0 : 1;
 console.log(fehler ? `\n${fehler} Fehler` : "\nAlle Prüfungen bestanden");
 process.exit(fehler ? 1 : 0);
