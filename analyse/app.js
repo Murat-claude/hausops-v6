@@ -641,7 +641,7 @@ async function ladeFunde() {
     const d = await extras.funde();
     funde = d.funde || [];
     const st = d.status;
-    $("funde-status").textContent = st ? `Letzte Suche ${new Date(st.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}: ${st.neu} neu, ${st.geprueft ?? 0} durchgerechnet, ${st.gut} gut${st.fehler?.length ? ` · Probleme: ${st.fehler.join("; ")}` : ""}` : "Der Scout hat noch nicht gesucht. Er läuft alle 15 Minuten zwischen 6 und 22 Uhr.";
+    $("funde-status").textContent = st ? `Letzte Suche ${new Date(st.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}: ${st.neu} neu, ${st.geprueft ?? 0} durchgerechnet, ${st.gut} Top${st.fehler?.length ? ` · Probleme: ${st.fehler.join("; ")}` : ""}` : "Der Scout hat noch nicht gesucht. Er läuft alle 15 Minuten zwischen 6 und 22 Uhr.";
     zeigeFunde();
     zeigeFundeZahl();
   } catch (e) { $("funde-status").textContent = e.message; }
@@ -655,8 +655,13 @@ function zeigeFundeZahl() {
 function zeigeFunde() {
   const box = $("funde");
   const art = $("funde-art").value;
-  const liste = funde.filter((f) => (fundeFilter === "alle" || (fundeFilter === "gut" ? f.gut : f.bewertung)) && (!art || f.kategorie === art));
-  if (!liste.length) { box.innerHTML = `<p class="hinweis">${fundeFilter === "gut" ? "Gerade kein neuer Fund, der sich nach Durchrechnung lohnt. Unter „Alle neuen“ siehst du jede neue Anzeige." : "Keine Funde mit diesem Filter."}</p>`; return; }
+  const passt = (f) => fundeFilter === "alle" || (fundeFilter === "gut" ? f.gut : fundeFilter === "verhandeln" ? f.verhandeln : f.bewertung);
+  const liste = funde.filter((f) => passt(f) && (!art || f.kategorie === art));
+  const leer = {
+    gut: "Gerade kein Top-Fund. Top heißt: trägt sich zum Angebotspreis – auch im vorsichtigen Fall, mit 10.000 € Eigenkapital und vollständigen Daten. Unter „Mit Verhandlung“ stehen Objekte, die sich mit bis zu 15 % Nachlass rechnen.",
+    verhandeln: "Gerade kein Fund, der sich mit bis zu 15 % Nachlass rechnet.",
+  }[fundeFilter] || "Keine Funde mit diesem Filter.";
+  if (!liste.length) { box.innerHTML = `<p class="hinweis">${leer}</p>`; return; }
   box.innerHTML = "";
   for (const f of liste.slice(0, 120)) {
     const z = document.createElement("div");
@@ -667,7 +672,7 @@ function zeigeFunde() {
     const t = z.querySelector(".titel");
     t.textContent = f.titel || "(ohne Titel)";
     t.href = f.url;
-    if (f.gut) { const g = document.createElement("span"); g.className = "marke-gut"; g.textContent = "gut"; t.after(g); }
+    if (f.gut || f.verhandeln) { const g = document.createElement("span"); g.className = "marke-gut"; g.textContent = f.gut ? "Top" : f.bewertung?.stufe === "pruefen" ? "erst prüfen" : "verhandeln"; t.after(g); }
     const fak = f.faktor_inserat ?? f.faktor;
     z.querySelector(".meta").innerHTML = "";
     z.querySelector(".meta").append(
@@ -686,6 +691,11 @@ function zeigeFunde() {
         bw.ist_miete ? "(Ist-Miete)" : "(Marktmiete geschätzt)",
       ].filter(Boolean).join(" · ") + (bw.warnungen?.length ? " · ⚠️ Daten prüfen" : "");
       z.querySelector(".meta").after(zeile);
+      // Urteil und Verhandlungsrahmen direkt in der Liste – ohne erst zu öffnen
+      const urteil = document.createElement("div");
+      urteil.className = "meta";
+      urteil.textContent = [bw.empfehlung, bw.verhandlung ? `Verhandeln: Einstieg ${bw.verhandlung.einstieg.toLocaleString("de-DE")} € · Ziel ${bw.verhandlung.ziel.toLocaleString("de-DE")} € · Schmerzgrenze ${bw.verhandlung.schmerzgrenze.toLocaleString("de-DE")} €` : null, bw.nein_wenn ? `Nein, wenn ${bw.nein_wenn}` : null].filter(Boolean).join(" — ");
+      if (urteil.textContent) zeile.after(urteil);
     }
     const analysieren = document.createElement("button");
     analysieren.textContent = "Analysieren";
@@ -706,7 +716,7 @@ function zeigeFunde() {
     cl.className = "knopf zweit";
     cl.textContent = "Claude";
     cl.target = "_blank"; cl.rel = "noopener";
-    cl.href = claudeLink(`Bitte prüfe dieses Immobilienangebot für uns (Murat & Yasemin, Investoren aus Hamm) vollständig mit dem Skill immobilien-analyse, falls vorhanden: ${f.url}\n\n${f.titel} · ${f.preis_text} · ${f.groesse_text} · ${f.ort}\n\nBitte Anzeige lesen, Marktdaten aktuell recherchieren, alle Strategien (Cashflow, Fix & Flip, Aufteilung, Grundstück, Ferienwohnung) rechnen, Risiken und Verhandlungsziel nennen.`);
+    cl.href = claudeLink(`Bitte prüfe dieses Immobilienangebot für uns (Murat & Yasemin, Investoren aus Hamm) vollständig mit dem Skill immobilien-analyse, falls vorhanden: ${f.url}\n\n${f.titel} · ${f.preis_text} · ${f.groesse_text} · ${f.ort}\n\nBitte Anzeige lesen, Marktdaten aktuell recherchieren, passende Strategien mit höchstens 10.000 € Eigenkapital rechnen, Risiken, „Die Antwort wäre NEIN, wenn …“ und Verhandlungsziel nennen. Für eine Tiefenprüfung den Skill immobilien-tiefenanalyse nutzen.`);
     cl.style.padding = "7px 10px"; cl.style.fontSize = ".82rem";
     const stern = sternKnopf({ id: "f" + f.id, art: "fund", titel: f.titel, url: f.url, preis_text: f.preis_text, ort: f.ort, ampel: f.bewertung?.ampel || (f.gut ? "gruen" : null), info: f.bewertung?.beste?.max_kaufpreis ? `${f.bewertung.beste.name} bis ${f.bewertung.beste.max_kaufpreis.toLocaleString("de-DE")} €` : f.groesse_text });
     z.querySelector(".rechts").append(stern, analysieren, wa, cl);

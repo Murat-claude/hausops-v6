@@ -155,20 +155,25 @@ export function erstelleHandler(store, zugang, benachrichtige = (n) => sendePush
     if (teile[0] === "funde" && teile[1] === "neubewerten" && methode === "POST") {
       const { bewerteDetail } = await import("./scout.mjs");
       const funde = (await store.get("funde/liste", { type: "json" })) || [];
-      const ziele = funde.filter((f) => f.gut).slice(0, 12);
+      // In Häppchen (von/anzahl), damit die Funktion unter dem Zeitlimit bleibt
+      const von = Math.max(0, parseInt(url.searchParams.get("von") || "0", 10));
+      const anzahl = Math.min(10, Math.max(1, parseInt(url.searchParams.get("anzahl") || "8", 10)));
+      const alle = funde.filter((f) => f.gut || f.verhandeln || f.bewertung);
+      const ziele = alle.slice(von, von + anzahl);
       const ergebnis = [];
       for (const f of ziele) {
         try {
           const r = await fetch(f.url, { headers: { "User-Agent": "immo-scout/1.0 (private Objektsuche, wenige Abrufe)", "Accept-Language": "de-DE" } });
           if (!r.ok) { ergebnis.push({ titel: f.titel, fehler: r.status }); continue; }
           f.bewertung = bewerteDetail(f, await r.text());
-          f.gut = Boolean(f.bewertung && !f.bewertung.warnungen?.length && (f.bewertung.ampel === "gruen" || (f.bewertung.cashflow_monat ?? -1) >= 0));
-          ergebnis.push({ titel: f.titel, gut: f.gut, ampel: f.bewertung?.ampel });
+          f.gut = f.bewertung?.stufe === "top";
+          f.verhandeln = ["verhandeln", "pruefen"].includes(f.bewertung?.stufe);
+          ergebnis.push({ titel: f.titel, gut: f.gut, verhandeln: f.verhandeln, ampel: f.bewertung?.ampel });
         } catch (e) { ergebnis.push({ titel: f.titel, fehler: e.message }); }
-        await new Promise((ok) => setTimeout(ok, 500));
+        await new Promise((ok) => setTimeout(ok, 300));
       }
       await store.setJSON("funde/liste", funde);
-      return json(200, { ergebnis });
+      return json(200, { ergebnis, gesamt: alle.length, naechste: von + anzahl < alle.length ? von + anzahl : null });
     }
 
     if (teile[0] === "funde" && methode === "GET") {

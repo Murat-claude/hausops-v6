@@ -60,6 +60,16 @@ export function maxKaufpreisCashflowNull(basis, s, fin) {
   return Math.max((maxInvest - num(s.sanierung)) / nkFaktor, 0);
 }
 
+// Kaufpreis, bei dem die Kapitaldienstdeckung (Reinertrag ÷ Rate) genau den Zielwert erreicht (Bankregel, z. B. 1,1)
+export function maxKaufpreisDscr(basis, s, fin, ziel = 1.1) {
+  const nkFaktor = 1 + (num(basis.grunderwerbsteuer_prozent) + num(basis.notar_grundbuch_prozent) + num(basis.makler_prozent)) / 100;
+  const r = rechneSzenario(basis, s, fin);
+  const satz = (num(fin.zins_prozent) + num(fin.zins_aufschlag) + num(fin.tilgung_prozent)) / 100;
+  if (satz <= 0) return null;
+  const maxDarlehen = Math.max(r.reinertrag, 0) / (ziel * satz);
+  return Math.max((maxDarlehen + num(fin.eigenkapital) - num(s.sanierung)) / nkFaktor, 0);
+}
+
 function ekFuerCashflowNull(invest, reinertrag, zins, tilgung) {
   const satz = (zins + tilgung) / 100;
   if (satz <= 0) return 0;

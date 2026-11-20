@@ -68,5 +68,21 @@ const mk = makleranfrage({ anbieter: { name: "Daniel Benetka", firma: "Touchdown
 const mkOk = mk.email.startsWith("Guten Tag Daniel Benetka,") && !/€/.test(mk.email + mk.kurz) && mk.betreff.includes("Anzeige 2598138832") && mk.empfaenger === "a@b.de";
 console.log(mkOk ? "ok    " : "FEHLER", "Makleranfrage ohne Preis, mit Ansprechpartner", mkOk ? "" : mk.email);
 fehler += mkOk ? 0 : 1;
+// Strenger: Fälle aus den Funden, die sich im zweiten Schritt als schwach erwiesen haben, dürfen nicht "Top" sein
+const streng = [
+  ["Dortmund: 505 m² 'Einfamilienhaus' ohne Angaben", { objektart: "Einfamilienhaus", ort: "44137 Dortmund", kaufpreis: 328000, wohnflaeche_m2: 505, beschreibung: "Vorgarten Teich", merkmale: {} }],
+  ["Welver: Wohnung für Fix & Flip, Cashflow negativ", { objektart: "Eigentumswohnung", ort: "59514 Welver", kaufpreis: 115000, wohnflaeche_m2: 100, baujahr: 1975, merkmale: {} }],
+  ["Menden: MFH, Flip nur über Faktor 18", { objektart: "Mehrfamilienhaus", ort: "58708 Menden", kaufpreis: 249000, wohnflaeche_m2: 280, einheiten: 4, baujahr: 1960, merkmale: { vermietet: true }, ist_miete_monat: 1500 }],
+];
+for (const [name, e] of streng) {
+  const d = auswerten(e).daten;
+  const ok = d.stufe !== "top" && d.ampel !== "gruen";
+  console.log(ok ? "ok    " : "FEHLER", "Nicht Top:", name, ok ? "" : d.urteil);
+  fehler += ok ? 0 : 1;
+}
+// Ein echtes Top-Objekt bleibt Top: belegte Miete, Faktor ~11, vollständige Daten
+const top = auswerten({ objektart: "Mehrfamilienhaus", ort: "59065 Hamm", kaufpreis: 380000, wohnflaeche_m2: 520, einheiten: 8, baujahr: 1972, sanierungsjahr: 2012, energieklasse: "D", ist_miete_monat: 3600, beschreibung: "x".repeat(300), merkmale: { vermietet: true } }).daten;
+console.log(top.stufe === "top" ? "ok    " : "FEHLER", "Solides MFH (Faktor 8,8, saniert, belegte Miete) ist Top", top.stufe === "top" ? "" : top.urteil);
+fehler += top.stufe === "top" ? 0 : 1;
 console.log(fehler ? `\n${fehler} Fehler` : "\nAlle Prüfungen bestanden");
 process.exit(fehler ? 1 : 0);

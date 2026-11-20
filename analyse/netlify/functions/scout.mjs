@@ -1,12 +1,12 @@
 // Immo-Scout alle 15 Minuten (ca. 6–22 Uhr): sucht neue Anzeigen um Hamm (30 km),
 // rechnet die vielversprechendsten sofort durch und meldet nur echte Kandidaten per Push.
 import { getStore } from "@netlify/blobs";
-import { SUCHEN, UA, parseListe, bewerte, istNeu, istGut, UMBAU_KATEGORIEN } from "../../lib/scout-kern.mjs";
+import { SUCHEN, UA, parseListe, bewerte, istNeu, UMBAU_KATEGORIEN } from "../../lib/scout-kern.mjs";
 import { leseKleinanzeigenHtml } from "../../lib/inserat-parse.js";
 import { auswerten } from "../../lib/auswertung.js";
 import { sendePush } from "../../lib/push.mjs";
 
-const MAX_DETAILS = 4; // Detailseiten pro Lauf (zurückhaltend)
+const MAX_DETAILS = 6; // Detailseiten pro Lauf – alle aussichtsreichen werden voll durchgerechnet, bevor sie gemeldet werden
 // Bei kurzzeitiger Drosselung (403/429/503) einmal nach 4 Sekunden erneut versuchen
 async function holenStandard(pfad, versuch = 1) {
   const r = await fetch(`https://www.kleinanzeigen.de/${pfad}`, { headers: { "User-Agent": UA, "Accept-Language": "de-DE" } });
@@ -36,7 +36,9 @@ export function bewerteDetail(fund, html) {
   const beste = daten.strategien.filter((s) => !s.zusatz && s.name !== "Monteur- / Ferienwohnung").sort((a, b) => rang(b) - rang(a) || (b.max_kaufpreis || 0) - (a.max_kaufpreis || 0))[0];
   const real = daten.szenarien.realistisch;
   return {
-    ampel: daten.ampel, score: daten.score, empfehlung: daten.empfehlung, verhandlungsziel: daten.verhandlungsziel,
+    ampel: daten.ampel, score: daten.score, empfehlung: daten.urteil || daten.empfehlung, verhandlungsziel: daten.verhandlungsziel,
+    stufe: daten.stufe, verhandlung: daten.verhandlung, nein_wenn: daten.nein_wenn,
+    cashflow_vorsichtig_max: beste?.max_kaufpreis_vorsichtig ?? null,
     cashflow_monat: halten?.cashflow_monat ?? null,
     faktor: real?.kaltmiete_monat ? Math.round((daten.kaufpreis / (real.kaltmiete_monat * 12)) * 10) / 10 : null,
     beste: beste ? { name: beste.name, eignung: beste.eignung, max_kaufpreis: beste.max_kaufpreis } : null,
@@ -80,7 +82,10 @@ export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
   }));
   for (const o of neu) {
     // Gut nur ohne Datenwarnung; ohne Detailprüfung nur bei sehr starkem Faktor laut Anzeige
-    o.gut = o.bewertung ? !o.bewertung.warnungen?.length && (o.bewertung.ampel === "gruen" || (o.bewertung.cashflow_monat ?? -1) >= 0) : istGut(o) && (o.faktor_inserat ?? 99) <= 12;
+    // Gut = nach voller Detailrechnung "Top" (trägt sich zum Angebotspreis, auch im vorsichtigen Fall).
+    // Ohne Detailprüfung nie "gut" – lieber eine Meldung weniger als eine, die sich später nicht hält.
+    o.gut = o.bewertung?.stufe === "top";
+    o.verhandeln = ["verhandeln", "pruefen"].includes(o.bewertung?.stufe);
   }
 
   await store.setJSON("funde/liste", [...neu, ...funde].slice(0, 300));

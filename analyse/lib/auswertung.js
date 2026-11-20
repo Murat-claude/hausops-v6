@@ -1,6 +1,6 @@
 // Regelbasierte Immobilien-Auswertung – ohne KI, ohne laufende Kosten.
 // Alle Annahmen sind sichtbar und änderbar; jede Zahl im Bericht ist entweder aus der Anzeige oder als Annahme gekennzeichnet.
-import { rechneSzenario, maxKaufpreisCashflowNull, num } from "../rechner.js";
+import { rechneSzenario, maxKaufpreisCashflowNull, maxKaufpreisDscr, num } from "../rechner.js";
 import { umbauStrategien, umbauRisiken, UMBAU_ANNAHMEN } from "./umbau.js";
 import { marktFuer, MARKT_QUELLE } from "./markt.js";
 
@@ -8,11 +8,11 @@ export const STANDARD_ANNAHMEN = {
   // Miete, Wohnungspreise und Bauland werden automatisch aus den Ortsdaten (lib/markt.js) genommen,
   // solange hier der Standardwert steht. Ein eigener Wert im Formular hat immer Vorrang.
   miete_m2: 7.9,          // €/m² kalt, Hamm Ø Angebotsmiete Nov. 2026
-  etw_saniert_m2: 2350,   // €/m² Verkaufspreis saniert (Fix & Flip), Hamm
+  etw_saniert_m2: 2090,   // €/m² Angebotspreis Wohnung (Ortsschnitt) als Basis für den Verkauf nach Sanierung, Hamm
   etw_bestand_m2: 2090,   // €/m² Verkaufspreis Eigentumswohnung im Bestand (Aufteilung), Hamm
-  verkaufsfaktor_mfh: 18, // Verkaufspreis eines Mehrfamilienhauses = Jahreskaltmiete × Faktor
+  verkaufsfaktor_mfh: 15, // Verkaufspreis eines Mehrfamilienhauses = Jahreskaltmiete × Faktor (Bestand Ruhrgebiet/Hamm meist 12–16)
   bodenrichtwert_m2: 250, // €/m² Bauland, Hamm Ø Bodenrichtwert 2026
-  zins: 4.0,              // % Sollzins 10 Jahre
+  zins: 4.4,              // % Zins 10 Jahre bei über 90 % Beleihung (Interhyp 12.11.2026: 4,35 % eff.) – 100-%-Finanzierung
   tilgung: 2.0,           // % anfängliche Tilgung
   ek_betrag: 10000,       // € Eigenkapital (höchstens), Nebenkosten werden mitfinanziert
   grest: 6.5,             // Grunderwerbsteuer NRW
@@ -25,6 +25,17 @@ export const STANDARD_ANNAHMEN = {
 const r5 = (v) => Math.round(v / 5000) * 5000;
 const dz = (v, n = 2) => Number(v).toLocaleString("de-DE", { maximumFractionDigits: n });
 const eur = (v) => (v == null || !Number.isFinite(v) ? "–" : Math.round(v).toLocaleString("de-DE") + " €");
+
+// Angebotspreise liegen über den echten Kaufpreisen; ältere Häuser erzielen weniger als der Ortsschnitt
+const ANGEBOT_ABSCHLAG = 0.92;
+function altersFaktor(baujahr, sanierungsjahr) {
+  if (sanierungsjahr >= 2005) return 1.0;
+  if (!baujahr) return 0.85;
+  if (baujahr < 1950) return 0.8;
+  if (baujahr < 1980) return 0.82;
+  if (baujahr < 2000) return 0.95;
+  return 1.1;
+}
 
 function instandhaltung(baujahr, sanierungsjahr) {
   if (sanierungsjahr && sanierungsjahr >= 2000) return 10; // komplett saniert: wie jüngeres Gebäude
@@ -74,7 +85,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     const setze = (k, v, text) => { if (v && num(a[k]) === STANDARD_ANNAHMEN[k]) { a[k] = v; ortsWerte.push(text); } };
     setze("miete_m2", markt.miete, `Miete ${dz(markt.miete)} €/m²`);
     setze("etw_bestand_m2", markt.kauf, `Wohnungen ${dz(markt.kauf, 0)} €/m²`);
-    setze("etw_saniert_m2", Math.round(markt.kauf * 1.12 / 50) * 50, `saniert ca. ${dz(Math.round(markt.kauf * 1.12 / 50) * 50, 0)} €/m²`);
+    setze("etw_saniert_m2", markt.kauf, "");
     setze("bodenrichtwert_m2", markt.boden, `Bauland ${dz(markt.boden, 0)} €/m²`);
   }
   const kp = num(e.kaufpreis);
@@ -99,10 +110,21 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     if (pm2 > 7000) warnungen.push(`Preis pro m² ${eur(pm2)} ungewöhnlich hoch – Kaufpreis und Wohnfläche prüfen.`);
   }
   if (e.baujahr && (e.baujahr > jetzt + 2 || e.baujahr < 1500)) warnungen.push(`Baujahr ${e.baujahr} unplausibel – bitte prüfen.`);
+  // Typische Lesefehler der Anzeigen: Grundstück als Wohnfläche, Preise weit unter dem Ort
+  if (/einfamilien|doppelhaus|reihenhaus/i.test(e.objektart || "") && fl > 350) warnungen.push(`${Math.round(fl)} m² Wohnfläche sind für ein ${e.objektart} ungewöhnlich – vermutlich die Grundstücksfläche. Bitte prüfen.`);
+  const ortKauf = marktFuer(e.ort)?.kauf;
+  if (ortKauf && kp && fl && !istGrundstueck && !istGewerbe && kp / fl < ortKauf * (/mehrfamilien|wohn- und geschäft/i.test(e.objektart || "") ? 0.25 : 0.35)) warnungen.push(`Preis pro m² (${eur(kp / fl)}) liegt bei nur ${Math.round(kp / fl / ortKauf * 100)} % des Ortsschnitts – Fläche, Zustand oder Haken (Erbpacht, Wohnrecht, Abriss) prüfen.`);
+  // Fehlende Kernangaben: ohne sie gibt es kein "Top", sondern "erst prüfen"
+  const datenluecken = [];
+  if (!e.baujahr && !istGrundstueck) datenluecken.push("Baujahr");
+  if (e.beschreibung != null && String(e.beschreibung).trim().length < 150) datenluecken.push("Beschreibung fast leer");
+  if (einheitenGeschaetzt) datenluecken.push("Zahl der Wohnungen");
 
   // ---- Miete
   let istMiete = num(e.ist_miete_jahr) / 12 || num(e.ist_miete_monat) || 0;
-  const marktMiete = fl * num(a.miete_m2);
+  // Unsanierte ältere Wohnungen erzielen weniger als die Ø-Angebotsmiete
+  const mieteAlter = e.baujahr && e.baujahr < 1980 && !(e.sanierungsjahr >= 2005) ? 0.92 : 1;
+  const marktMiete = fl * num(a.miete_m2) * mieteAlter;
   let mieteHinweis = "";
   if (!istMiete && num(e.faktor_angabe) >= 5 && kp) {
     istMiete = kp / num(e.faktor_angabe) / 12;
@@ -131,9 +153,10 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   } else if (istMiete > 0) {
     realMiete = istMiete; mieteQuelle = "Ist-Miete laut Anzeige";
   } else {
-    realMiete = marktMiete; mieteQuelle = `ANNAHME ${dz(a.miete_m2)} €/m² Marktmiete`;
+    realMiete = marktMiete; mieteQuelle = `ANNAHME ${dz(a.miete_m2 * mieteAlter)} €/m² Marktmiete${mieteAlter < 1 ? " (Ø-Miete −8 % für unsanierten Altbau)" : ""}`;
   }
   annahmenListe.push(`Kaltmiete: ${eur(realMiete)}/Monat (${mieteQuelle}${mieteHinweis})`);
+  if (istMiete > 0 && realMiete === istMiete && marktMiete > 0 && istMiete > marktMiete * 1.2) annahmenListe.push(`Ist-Miete liegt ${Math.round((istMiete / marktMiete - 1) * 100)} % über der Marktmiete (${eur(marktMiete)}) – Mietverträge prüfen; im vorsichtigen Fall wird mit Marktmiete + 10 % gerechnet`);
 
   if (einheitenGeschaetzt) annahmenListe.push(`Wohneinheiten: ${einheiten} (ANNAHME, ca. 70 m² je Wohnung – Anzahl in der Anzeige nicht genannt)`);
   const san = sanierungSchaetzung(e);
@@ -152,7 +175,8 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     verwaltung_monat: einheiten > 1 ? 30 * einheiten : istEtw ? 0 : 25,
   });
   const szenarien = {
-    vorsichtig: szen(istMiete > 0 && !e.merkmale.leer ? 1 : 0.9, 1.5, 5, 3),
+    // Liegt die Ist-Miete deutlich über dem Markt, droht bei Mieterwechsel weniger Miete
+    vorsichtig: szen(istMiete > 0 && !e.merkmale.leer ? Math.min(1, (marktMiete * 1.1) / realMiete) : 0.9, 1.5, 5, 3),
     realistisch: szen(1, 1, 3, 0),
     gut: szen(istMiete > 0 && !e.merkmale.leer ? 1.05 : 1.08, 0.7, 2, -2),
   };
@@ -171,7 +195,8 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   const nk = (preis) => preis * nkProzent / 100;
 
   if (real && !istGrundstueck && (!istGewerbe || istMiete > 0)) {
-    const maxKp = maxKaufpreisCashflowNull(basis, szenarien.realistisch, fin);
+    // Höchstpreis wie bei der Bank: der niedrigere Wert aus Cashflow 0 (realistisch) und Kapitaldienstdeckung 1,1 (vorsichtig)
+    const maxKp = Math.min(maxKaufpreisCashflowNull(basis, szenarien.realistisch, fin), maxKaufpreisDscr(basis, szenarien.vorsichtig, fin, 1.1));
     const cf = real.cashflowMonat;
     // Bei nur geschätzter Miete braucht "gut" einen deutlichen Puffer
     const mieteBelegt = istMiete > 0 && !e.merkmale.leer;
@@ -179,57 +204,76 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     strategien.push({
       buchstabe: "A",
       name: "Halten & vermieten",
-      max_kaufpreis_vorsichtig: r5(maxKaufpreisCashflowNull(basis, szenarien.vorsichtig, fin)),
-      eignung: cf >= gutGrenze && vors.cashflowMonat >= -100 ? "gut" : cf >= -150 ? "bedingt" : "nein",
+      max_kaufpreis_vorsichtig: r5(Math.min(maxKaufpreisCashflowNull(basis, szenarien.vorsichtig, fin), maxKaufpreisDscr(basis, szenarien.vorsichtig, fin, 1.1))),
+      eignung: cf >= gutGrenze && vors.cashflowMonat >= -100 && maxKp >= kp ? "gut" : cf >= -150 ? "bedingt" : "nein",
       cashflow_monat: Math.round(cf),
       max_kaufpreis: r5(maxKp),
-      begruendung: `Faktor ${real.faktor ? dz(real.faktor, 1) : "–"}, Bruttorendite ${real.bruttorendite ? dz(real.bruttorendite, 1) : "–"} %. Mit ${eur(ek)} Eigenkapital, ${dz(a.zins)} % Zins und ${dz(a.tilgung)} % Tilgung.`,
+      begruendung: `Faktor ${real.faktor ? dz(real.faktor, 1) : "–"}, Bruttorendite ${real.bruttorendite ? dz(real.bruttorendite, 1) : "–"} %, vorsichtig ${eur(vors.cashflowMonat)}/Monat. Mit ${eur(ek)} Eigenkapital, ${dz(a.zins)} % Zins und ${dz(a.tilgung)} % Tilgung. Höchstpreis = niedrigerer Wert aus Cashflow 0 (realistisch) und Kapitaldienstdeckung 1,1 (vorsichtig).`,
+      nein_wenn: `die Miete unter ${eur(realMiete - Math.max(cf, 0))}/Monat fällt oder der Zins bei der Anschlussfinanzierung deutlich steigt`,
     });
   }
 
   if (fl && kp && !istGrundstueck && !istGewerbe) {
-    // Fix & Flip: kaufen, sanieren, als saniert verkaufen (9 Monate Haltezeit)
-    // Mehrfamilienhäuser werden nach Ertrag verkauft, kleinere Objekte nach Preis pro m²
+    // Fix & Flip: kaufen, sanieren, verkaufen – 12 Monate, echte Abschlusspreise (Angebotspreis −8 %)
+    // Mehrfamilienhäuser werden nach Ertrag verkauft (gedeckelt durch den Wohnungswert), kleinere Objekte nach Preis pro m²
     const mfh = einheiten >= 3;
-    const erloes = mfh ? szenarien.realistisch.kaltmiete_monat * 1.05 * 12 * num(a.verkaufsfaktor_mfh) : fl * num(a.etw_saniert_m2);
-    const sanFlip = Math.max(san.wert, fl * (e.sanierungsjahr >= 2005 ? 100 : 400));
-    const halte = (kp + nk(kp) + sanFlip) * num(a.zins) / 100 * 0.75;
-    const kosten = kp + nk(kp) + sanFlip + halte + erloes * 0.04;
-    const gewinn = erloes - kosten;
-    const marge = gewinn / kosten * 100;
-    const maxKp = ((erloes * 0.96) / 1.15 - sanFlip * (1 + num(a.zins) / 100 * 0.75)) / ((1 + nkProzent / 100) * (1 + num(a.zins) / 100 * 0.75));
-    const maxKpVors = ((erloes * 0.92 * 0.96) / 1.15 - sanFlip * 1.3 * (1 + num(a.zins) / 100 * 0.75)) / ((1 + nkProzent / 100) * (1 + num(a.zins) / 100 * 0.75));
+    const proM2 = num(a.etw_saniert_m2) * ANGEBOT_ABSCHLAG;
+    const erloesM2 = fl * proM2 * (e.baujahr && e.baujahr < 1950 ? 0.95 : 1);
+    const erloes = mfh ? Math.min(szenarien.realistisch.kaltmiete_monat * 1.05 * 12 * num(a.verkaufsfaktor_mfh), erloesM2 * 0.85) : erloesM2;
+    const sanFlip = Math.max(san.wert, fl * (e.sanierungsjahr >= 2005 ? 100 : !e.baujahr || e.baujahr < 1980 ? 700 : 500));
+    const z = num(a.zins) / 100;
+    const flip = (preis, erl, sanK) => {
+      const kosten = preis * (1 + nkProzent / 100) + sanK;
+      const gesamt = kosten + kosten * z + erl * 0.05; // 12 Monate Zinsen, 5 % Vertrieb
+      return { gewinn: erl - gesamt, marge: (erl - gesamt) / gesamt * 100 };
+    };
+    const maxFlip = (erl, sanK) => Math.max(((erl * 0.95) / 1.2 / (1 + z) - sanK) / (1 + nkProzent / 100), 0); // Ziel 20 % Marge
+    const f = flip(kp, erloes, sanFlip);
+    const maxKp = maxFlip(erloes, sanFlip);
+    const maxKpVors = maxFlip(erloes * 0.9, sanFlip * 1.3);
+    const vermietet = e.merkmale.vermietet && !e.merkmale.leer;
     strategien.push({
       buchstabe: "C",
       name: "Fix & Flip",
-      max_kaufpreis_vorsichtig: r5(Math.max(maxKpVors, 0)),
-      // Vermietet: saniert verkaufen geht erst nach Auszug der Mieter – höchstens "bedingt"
-      eignung: marge >= 15 ? (e.merkmale.vermietet && !e.merkmale.leer ? "bedingt" : "gut") : marge >= 5 ? "bedingt" : "nein",
-      gewinn: Math.round(gewinn),
-      max_kaufpreis: r5(Math.max(maxKp, 0)),
-      begruendung: `Verkauf saniert ca. ${eur(erloes)} (${mfh ? `Jahresmiete × ${a.verkaufsfaktor_mfh}` : `${dz(a.etw_saniert_m2, 0)} €/m²`}), Sanierung ${eur(sanFlip)}, 9 Monate Haltezeit, 4 % Verkaufskosten. Marge ${marge.toFixed(0)} % (Ziel ≥ 15 %).${e.merkmale.vermietet && !e.merkmale.leer ? " Achtung: vermietet – erst nach Auszug sanier- und verkaufbar." : ""}`,
+      max_kaufpreis_vorsichtig: r5(maxKpVors),
+      // Vermietet: erst nach Auszug sanier- und verkaufbar – als Flip nicht geeignet
+      eignung: vermietet ? "nein" : f.marge >= 20 && maxKpVors >= kp * 0.95 ? "gut" : f.marge >= 10 ? "bedingt" : "nein",
+      gewinn: Math.round(f.gewinn),
+      max_kaufpreis: r5(maxKp),
+      begruendung: `Verkauf saniert ca. ${eur(erloes)} (${mfh ? `Jahresmiete × ${a.verkaufsfaktor_mfh}, höchstens 85 % des Wohnungswerts` : `${dz(proM2, 0)} €/m² = Ortsschnitt −8 % Abschlag vom Angebots- zum Kaufpreis`}), Sanierung ${eur(sanFlip)}, 12 Monate Zinsen, 5 % Vertrieb. Marge ${f.marge.toFixed(0)} % (Ziel ≥ 20 %). Vorsichtig (Erlös −10 %, Sanierung +30 %) bis ${eur(r5(maxKpVors))}. Hinweis: Banken finanzieren Flips selten zu 100 %; Spekulationsfrist 10 Jahre.${vermietet ? " Achtung: vermietet – erst nach Auszug sanier- und verkaufbar." : ""}`,
+      nein_wenn: `der Verkaufspreis unter ca. ${eur((maxKp * (1 + nkProzent / 100) + sanFlip) * (1 + z) / 0.95 / fl)} pro m² liegt oder die Sanierung mehr als ${eur(sanFlip * 1.3)} kostet`,
     });
   }
 
   if (einheiten >= 2 && fl && kp && !istEtw && !istGewerbe) {
-    // Vermietete Wohnungen erzielen weniger als freie (Abschlag 15 %)
-    const vermietetAbschlag = e.merkmale.vermietet && !e.merkmale.leer ? 0.85 : 1;
-    const erloes = fl * num(a.etw_bestand_m2) * vermietetAbschlag;
-    const kostenAuf = 5000 * einheiten + 3000;
-    const halte = (kp + nk(kp)) * num(a.zins) / 100;
-    const kosten = kp + nk(kp) + san.wert + kostenAuf + halte + erloes * 0.04;
-    const gewinn = erloes - kosten;
-    const marge = gewinn / kosten * 100;
-    const maxKp = ((erloes * 0.96) / 1.15 - san.wert - kostenAuf) / ((1 + nkProzent / 100) * (1 + num(a.zins) / 100));
-    const maxKpVors = ((erloes * 0.92 * 0.96) / 1.15 - san.wert * 1.5 - kostenAuf) / ((1 + nkProzent / 100) * (1 + num(a.zins) / 100));
+    // Aufteilung: Wohnungen einzeln verkaufen. Echte Kaufpreise (−8 %), Altersabschlag, vermietete Wohnungen
+    // gehen an Kapitalanleger (höchstens Jahresmiete × 22). 24 Monate, Gemeinschaftseigentum herrichten, 6 % Vertrieb.
+    const vermietet = e.merkmale.vermietet && !e.merkmale.leer;
+    const proM2 = num(a.etw_bestand_m2) * ANGEBOT_ABSCHLAG * altersFaktor(e.baujahr, e.sanierungsjahr);
+    const frei = fl * proM2;
+    const erloes = vermietet ? Math.min(frei * 0.9, szenarien.realistisch.kaltmiete_monat * 12 * 22) : frei;
+    const gemeinschaft = fl * (e.sanierungsjahr >= 2005 ? 30 : !e.baujahr || e.baujahr < 1980 ? 150 : 80);
+    const kostenAuf = 2500 * einheiten + 5000 + gemeinschaft;
+    const z = num(a.zins) / 100;
+    const aufteilen = (preis, erl, sanK) => {
+      const kosten = preis * (1 + nkProzent / 100) + sanK + kostenAuf;
+      const gesamt = kosten + kosten * z * 2 + erl * 0.06;
+      return { gewinn: erl - gesamt, marge: (erl - gesamt) / gesamt * 100 };
+    };
+    const maxAuf = (erl, sanK) => Math.max(((erl * 0.94) / 1.2 / (1 + 2 * z) - sanK - kostenAuf) / (1 + nkProzent / 100), 0);
+    const g = aufteilen(kp, erloes, san.wert);
+    const maxKp = maxAuf(erloes, san.wert);
+    const maxKpVors = maxAuf(erloes * 0.9, san.wert * 1.5);
     strategien.push({
       buchstabe: "C",
       name: "Aufteilung in Eigentumswohnungen",
-      max_kaufpreis_vorsichtig: r5(Math.max(maxKpVors, 0)),
-      eignung: marge >= 15 ? "gut" : marge >= 5 ? "bedingt" : "nein",
-      gewinn: Math.round(gewinn),
-      max_kaufpreis: r5(Math.max(maxKp, 0)),
-      begruendung: `${einheiten} Wohnungen à ${dz(a.etw_bestand_m2, 0)} €/m²${vermietetAbschlag < 1 ? " (−15 %, weil vermietet)" : ""} = ${eur(erloes)}. Aufteilungskosten ca. ${eur(kostenAuf)}, 12 Monate. Marge ${marge.toFixed(0)} %. Achtung: ab 4 Verkäufen in 5 Jahren gewerblicher Grundstückshandel.`,
+      max_kaufpreis_vorsichtig: r5(maxKpVors),
+      // Ohne bekannte Zahl der Wohnungen höchstens "bedingt"
+      eignung: g.marge >= 20 && maxKpVors >= kp * 0.95 && !einheitenGeschaetzt ? "gut" : g.marge >= 10 ? "bedingt" : "nein",
+      gewinn: Math.round(g.gewinn),
+      max_kaufpreis: r5(maxKp),
+      begruendung: `${einheiten} Wohnungen à ${dz(proM2, 0)} €/m² (Ortsschnitt −8 %, Altersabschlag)${vermietet ? ", vermietet höchstens Jahresmiete × 22" : ""} = ${eur(erloes)}. Teilung, Vermessung und Gemeinschaftseigentum ca. ${eur(kostenAuf)}, 24 Monate, 6 % Vertrieb. Marge ${g.marge.toFixed(0)} % (Ziel ≥ 20 %). Achtung: Abgeschlossenheitsbescheinigung nötig, in Gebieten mit Umwandlungsverbot (§ 250 BauGB) genehmigungspflichtig, ab 4 Verkäufen in 5 Jahren gewerblicher Grundstückshandel.`,
+      nein_wenn: `die Wohnungen weniger als ca. ${eur(proM2 * 0.9)} pro m² erzielen oder die Bank die Aufteilung nicht mitfinanziert`,
     });
   }
 
@@ -279,6 +323,9 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   const r = (s) => rang[s.eignung] - (s.name === "Service-Apartments" ? 0.5 : 0);
   const beste = [...kern].sort((x, y) => r(y) - r(x) || (y.max_kaufpreis || 0) - (x.max_kaufpreis || 0))[0];
   let ampel = !beste ? "gelb" : beste.eignung === "gut" ? "gruen" : beste.eignung === "bedingt" ? "gelb" : "rot";
+  // Grün nur, wenn es sich auch im vorsichtigen Fall trägt (sonst entpuppt es sich im zweiten Schritt als schwach)
+  if (ampel === "gruen" && beste.max_kaufpreis_vorsichtig != null && beste.max_kaufpreis_vorsichtig < kp * 0.95) ampel = "gelb";
+  if (ampel === "gruen" && (beste.max_kaufpreis || 0) < kp) ampel = "gelb";
   // Bei fraglichen Daten nie Grün – erst prüfen
   if (warnungen.length && ampel === "gruen") ampel = "gelb";
   let score = { gruen: 75, gelb: 50, rot: 25 }[ampel];
@@ -297,21 +344,26 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     : `Zum Angebotspreis nicht wirtschaftlich${besterMax ? " – interessant erst ab ca. " + eur(besterMax) : ""}`;
 
   // ---- Urteil (erste Zeile laut Analyse-Skill): maßgeblich ist das realistische Szenario
-  const lohnt = !warnungen.length && beste && beste.eignung === "gut" && (beste.max_kaufpreis || 0) >= kp * 0.98;
+  const lohnt = !warnungen.length && ampel === "gruen";
+  // Stufe für die Funde: Top (trägt sich zum Angebotspreis, auch vorsichtig) – Verhandeln (bis −15 %) – Nein
+  const stufe = lohnt ? (datenluecken.length ? "pruefen" : "top") : !warnungen.length && besterMax && besterMax >= kp * 0.85 ? "verhandeln" : "nein";
   const weg = beste && (solide.length ? [...solide] : kern).sort((x, y) => (y.max_kaufpreis || 0) - (x.max_kaufpreis || 0))[0];
-  const urteil = warnungen.length ? `Daten prüfen, bevor gerechnet wird: ${warnungen[0].split(" – ")[0]}`
-    : lohnt ? `Lohnt sich zum Angebotspreis – ${beste.name} trägt sich bis ca. ${eur(beste.max_kaufpreis)}`
-    : besterMax ? `Lohnt sich nicht zum Angebotspreis von ${eur(kp)} – lohnt sich ab ca. ${eur(besterMax)} (${weg?.name || "beste Strategie"})`
-    : `Lohnt sich nicht zum Angebotspreis – kein Weg trägt sich mit den Annahmen`;
-
   // ---- Verhandlung: Einstieg / Ziel / Schmerzgrenze aus realistischem und vorsichtigem Höchstpreis
   let verhandlung = null;
   if (besterMax && besterMax >= kp * 0.7) {
     const schmerz = r5(Math.min(kp, besterMax));
     const vorsMax = Math.max(0, ...kern.filter((s) => s.name === weg?.name).map((s) => s.max_kaufpreis_vorsichtig || 0));
     const einstieg = r5(Math.min(schmerz * 0.88, vorsMax || schmerz * 0.88, kp * 0.9));
-    verhandlung = { einstieg, ziel: r5((einstieg + schmerz) / 2), schmerzgrenze: schmerz };
+    verhandlung = { einstieg, ziel: r5(Math.max(einstieg, Math.min(schmerz * 0.93, kp * 0.97))), schmerzgrenze: schmerz };
   }
+
+  const urteil = warnungen.length ? `Daten prüfen, bevor gerechnet wird: ${warnungen[0].split(" – ")[0]}`
+    : lohnt && datenluecken.length ? `Rechnet sich, aber erst prüfen – es fehlt: ${datenluecken.join(", ")}. ${beste.name} trägt sich bis ca. ${eur(beste.max_kaufpreis)}`
+    : lohnt ? `Lohnt sich zum Angebotspreis – ${beste.name} trägt sich bis ca. ${eur(beste.max_kaufpreis)}, vorsichtig bis ${eur(beste.max_kaufpreis_vorsichtig ?? beste.max_kaufpreis)}`
+    : stufe === "verhandeln" && besterMax >= kp ? `Nur mit Verhandlung: ${weg?.name || "beste Strategie"} trägt sich realistisch bis ca. ${eur(besterMax)}, im vorsichtigen Fall nur bis ${eur(weg?.max_kaufpreis_vorsichtig ?? besterMax)} – Preis Richtung ${eur(verhandlung?.ziel ?? besterMax)} handeln`
+    : stufe === "verhandeln" ? `Nur mit Verhandlung: lohnt sich bis ca. ${eur(besterMax)} (${weg?.name || "beste Strategie"}) – ${Math.round((1 - besterMax / kp) * 100)} % unter dem Angebot`
+    : besterMax ? `Lohnt sich nicht zum Angebotspreis von ${eur(kp)} – lohnt sich ab ca. ${eur(besterMax)} (${weg?.name || "beste Strategie"})`
+    : `Lohnt sich nicht zum Angebotspreis – kein Weg trägt sich mit den Annahmen`;
 
   // ---- Schnellcheck: Preis/m² gegen Ortsschnitt und Kaufpreisfaktor
   const pm2 = kp && fl ? kp / fl : null;
@@ -330,7 +382,8 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   if (ortsWerte.length) annahmenListe.push(`Marktwerte ${markt.name}: ${ortsWerte.join(", ")} (${MARKT_QUELLE})`);
 
   const daten = {
-    urteil, verhandlung, schnell, markt_ort: markt?.name || null,
+    urteil, stufe, datenluecken, verhandlung, schnell, markt_ort: markt?.name || null,
+    nein_wenn: (lohnt ? beste : weg)?.nein_wenn || null,
     titel: e.titel || [e.objektart, e.ort].filter(Boolean).join(" in ") || "Objekt",
     ort: e.ort || null, objektart: e.objektart || null, baujahr: e.baujahr || null,
     wohnflaeche_m2: fl, grundstueck_m2: gfl || null, einheiten, energieklasse: e.energieklasse || null,
@@ -404,7 +457,7 @@ function bericht(e, d, real, annahmen, a, makler) {
   return `# ${d.titel}
 
 ## ${d.urteil}
-${d.warnungen?.length ? `\n> **⚠️ Bitte zuerst prüfen:** ${d.warnungen.join(" ")}\n` : ""}
+${d.nein_wenn ? `\n**Die Antwort wäre NEIN, wenn** ${d.nein_wenn}.\n` : ""}${d.warnungen?.length ? `\n> **⚠️ Bitte zuerst prüfen:** ${d.warnungen.join(" ")}\n` : ""}
 ## Steckbrief
 | | |
 |---|---|
