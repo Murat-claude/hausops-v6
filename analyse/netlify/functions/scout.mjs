@@ -5,6 +5,7 @@ import { SUCHEN, UA, parseListe, bewerte, istNeu, UMBAU_KATEGORIEN } from "../..
 import { leseKleinanzeigenHtml } from "../../lib/inserat-parse.js";
 import { auswerten } from "../../lib/auswertung.js";
 import { sendePush } from "../../lib/push.mjs";
+import { einfuegen, aufraeumen, preisAenderung, naechstePruefung, meldenswert } from "../../lib/archiv.mjs";
 
 const MAX_DETAILS = 6; // Detailseiten pro Lauf – alle aussichtsreichen werden voll durchgerechnet, bevor sie gemeldet werden
 // Bei kurzzeitiger Drosselung (403/429/503) einmal nach 4 Sekunden erneut versuchen
@@ -46,12 +47,17 @@ export function bewerteDetail(fund, html) {
     warnungen: daten.warnungen || [],
     kaufpreis: daten.kaufpreis, wohnflaeche: daten.wohnflaeche_m2,
     baujahr: e.baujahr || null, einheiten: e.einheiten || null,
+    anbieter: e.anbieter || null, objektart: e.objektart || null,
   };
 }
 
 export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
   const gesehen = new Set((await store.get("scout/gesehen", { type: "json" })) || []);
   const funde = (await store.get("funde/liste", { type: "json" })) || [];
+  let archiv = aufraeumen((await store.get("archiv/liste", { type: "json" })) || []);
+  const imArchiv = new Map(archiv.map((x) => [x.id, x]));
+  const senkungen = [];
+  const geaendert = new Set(); // vom Scout geänderte Archiv-Einträge (für das Zusammenführen am Ende)
   const neu = [], fehler = [];
   // Ergebnisseiten parallel laden (eine Seite je Kategorie)
   // Umbau- und Ferien-Suchen (größerer Umkreis) nur im ersten Lauf jeder Stunde
@@ -62,6 +68,14 @@ export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
     const [kategorie, , opts = {}] = suchen[i];
     if (s.status === "rejected") { fehler.push(`${kategorie}: ${s.reason?.message || s.reason}`); return; }
     for (const o of parseListe(s.value, kategorie).map((x) => bewerte(x, opts))) {
+      // Objekte im Archiv: neuer Preis in der Ergebnisliste? Dann gleich festhalten
+      const a = imArchiv.get(o.id);
+      if (a && o.preis && a.preis && o.preis < a.preis) {
+        const felder = preisAenderung(a, o.preis, jetzt);
+        Object.assign(a, felder, { geprueft: jetzt.toISOString() });
+        geaendert.add(a.id);
+        if (felder.gesenkt) senkungen.push({ eintrag: a, senkung: felder.gesenkt, stufe: null });
+      }
       if (gesehen.has(o.id)) continue;
       gesehen.add(o.id);
       if (istNeu(o) && !o.ausschluss) neu.push({ ...o, gefunden: new Date().toISOString(), gut: false });
@@ -88,10 +102,52 @@ export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
     o.verhandeln = ["verhandeln", "pruefen"].includes(o.bewertung?.stufe);
   }
 
+  // Archiv reihum nachprüfen (je Lauf bis zu 3 Anzeigen, jede höchstens einmal am Tag): Preis gesenkt? Noch online?
+  const pruefen = naechstePruefung(archiv, 3, jetzt).filter((x) => !senkungen.some((s) => s.eintrag.id === x.id));
+  await Promise.allSettled(pruefen.map(async (a) => {
+    a.geprueft = jetzt.toISOString();
+    geaendert.add(a.id);
+    let html;
+    try { html = await holen(a.url.replace("https://www.kleinanzeigen.de/", "")); }
+    catch (e) { if (/HTTP 4(04|10)/.test(e.message)) a.status = "offline"; return; }
+    if (!html.includes(`/${a.id}-`)) { a.status = "offline"; return; } // weitergeleitet = Anzeige gelöscht
+    a.status = "online";
+    const bw = bewerteDetail({ ...a, kategorie: a.kategorie || "Haus" }, html);
+    if (!bw?.kaufpreis) return;
+    const felder = preisAenderung(a, bw.kaufpreis, jetzt);
+    Object.assign(a, felder);
+    a.bewertung = { stufe: bw.stufe, ampel: bw.ampel, empfehlung: bw.empfehlung, max_kaufpreis: bw.beste?.max_kaufpreis ?? null, weg: bw.beste?.name ?? "" };
+    if (bw.anbieter && !a.anbieter) a.anbieter = bw.anbieter;
+    if (felder.gesenkt) senkungen.push({ eintrag: a, senkung: felder.gesenkt, stufe: bw.stufe });
+  }));
+  // Top- und Verhandlungs-Funde automatisch ins Archiv (Ordner "Beobachten"), damit Preissenkungen auffallen
+  for (const o of neu.filter((x) => x.gut || x.verhandeln)) {
+    if (imArchiv.has(o.id)) continue;
+    archiv = einfuegen(archiv, { ...o, bewertung: o.bewertung, anbieter: o.bewertung?.anbieter }, "beobachten", jetzt).liste;
+    geaendert.add(o.id);
+  }
+  // Frisch lesen und nur die eigenen Änderungen übernehmen – Ordnerwechsel aus der App in der Zwischenzeit bleiben erhalten
+  if (geaendert.size) {
+    const frisch = aufraeumen((await store.get("archiv/liste", { type: "json" })) || []);
+    const meine = new Map(archiv.filter((x) => geaendert.has(x.id)).map((x) => [x.id, x]));
+    const zusammen = frisch.map((x) => (meine.has(x.id) ? { ...meine.get(x.id), ordner: x.ordner } : x));
+    for (const [id, x] of meine) if (!frisch.some((f) => f.id === id) && !imArchiv.has(id)) zusammen.unshift(x);
+    await store.setJSON("archiv/liste", zusammen.slice(0, 1500));
+  }
+  for (const { eintrag: a, senkung, stufe } of senkungen.slice(0, 3)) {
+    if (!meldenswert(a, senkung, stufe)) continue;
+    const jetztInteressant = stufe === "top" ? " · jetzt Top!" : stufe === "verhandeln" ? " · jetzt mit Verhandlung interessant" : "";
+    await sendePush(store, {
+      titel: `📉 Preis −${String(senkung.prozent).replace(".", ",")} %: ${eur(senkung.auf)}${jetztInteressant}`,
+      text: `${a.titel}\n${eur(senkung.von)} → ${eur(senkung.auf)} · ${a.ort.replace(/^\d{5}\s*/, "")}${a.ordner === "weggelegt" ? " (war weggelegt)" : ""}`,
+      url: "/#archiv",
+    });
+  }
+
   await store.setJSON("funde/liste", [...neu, ...funde].slice(0, 300));
   await store.setJSON("scout/gesehen", [...gesehen].slice(-8000));
   const gute = neu.filter((o) => o.gut);
-  await store.setJSON("scout/status", { zeit: new Date().toISOString(), neu: neu.length, gut: gute.length, geprueft: kandidaten.length, fehler });
+  await store.setJSON("scout/status", { zeit: new Date().toISOString(), neu: neu.length, gut: gute.length, verhandeln: neu.filter((x) => x.verhandeln).length, geprueft: kandidaten.length, archiv_geprueft: pruefen.length, senkungen: senkungen.length, fehler });
 
   for (const b of gute.slice(0, 3)) {
     const bw = b.bewertung;
@@ -104,7 +160,7 @@ export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
       url: "/#funde",
     });
   }
-  return { neu: neu.length, gut: gute.length, geprueft: kandidaten.length, fehler };
+  return { neu: neu.length, gut: gute.length, geprueft: kandidaten.length, archiv_geprueft: pruefen.length, senkungen: senkungen.length, fehler };
 }
 
 export default async () => {

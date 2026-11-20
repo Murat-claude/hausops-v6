@@ -173,7 +173,26 @@ export function leseInserat(roh, vorgaben = {}) {
     versteigerung: m(/zwangsversteiger|versteigerungstermin|amtsgericht.{0,40}versteiger/),
     altbau: m(/altbau|gründerzeit|jugendstil/) || (f.baujahr && f.baujahr < 1950),
   };
+  const kontakt = kontaktAusText(roh);
+  if (kontakt) f.anbieter = { ...kontakt, ...(vorgaben.anbieter || {}) };
   return f;
+}
+
+// Ansprechpartner aus eingefügtem Text (Exposé, Mail, andere Portale): E-Mail, Telefon, Name, Firma, Objekt-Nr.
+export function kontaktAusText(roh) {
+  const t = String(roh || "");
+  const a = {};
+  const mail = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/.exec(t);
+  if (mail && !/kleinanzeigen|example/i.test(mail[0])) a.email = mail[0].replace(/[.,;]+$/, "");
+  const tel = /(?:tel(?:efon)?\.?|mobil|fon|☎)\s*:?\s*(\+?\d[\d\s/()-]{6,18}\d)/i.exec(t);
+  if (tel) a.telefon = tel[1].replace(/\s+/g, " ").trim();
+  const name = /(?:[Aa]nsprechpartner(?:in)?|[Kk]ontakt|[Ii]hr [Mm]akler|[Ii]hre [Mm]aklerin)\s*:?\s*(?:[Hh]err|[Ff]rau)?\s*([A-ZÄÖÜ][a-zäöüß]+(?:[ -][A-ZÄÖÜ][a-zäöüß]+){1,2})/.exec(t);
+  if (name) a.name = name[1];
+  const firma = /([A-ZÄÖÜ][\wäöüß&.-]+(?:\s[A-ZÄÖÜ&][\wäöüß&.-]+){0,3}\s(?:GmbH(?: & Co\. KG)?|UG|KG|AG|e\.K\.|Immobilien))\b/.exec(t);
+  if (firma) a.firma = firma[1];
+  const obj = /objekt(?:-?nr\.?|nummer|-id|\s?id)\s*:?\s*([A-Z0-9][\w/-]{2,20})/i.exec(t);
+  if (obj) a.objekt_nr = obj[1];
+  return Object.keys(a).length ? a : null;
 }
 
 // Zieht die Eckdaten aus einer heruntergeladenen Kleinanzeigen-Detailseite (HTML).

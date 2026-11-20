@@ -3,6 +3,7 @@
 import { rechneSzenario, maxKaufpreisCashflowNull, maxKaufpreisDscr, num } from "../rechner.js";
 import { umbauStrategien, umbauRisiken, UMBAU_ANNAHMEN } from "./umbau.js";
 import { marktFuer, MARKT_QUELLE } from "./markt.js";
+import { wertermittlung } from "./ertragswert.js";
 
 export const STANDARD_ANNAHMEN = {
   // Miete, Wohnungspreise und Bauland werden automatisch aus den Ortsdaten (lib/markt.js) genommen,
@@ -189,6 +190,9 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   const vors = fl && kp ? rechneSzenario(basis, szenarien.vorsichtig, fin) : null;
   // Stresstest immer: Zins +1 %-Punkt im realistischen Szenario
   const stress = fl && kp ? rechneSzenario(basis, szenarien.realistisch, { ...fin, zins_aufschlag: 1 }) : null;
+  // Amtliche Plausibilitätsprüfung: Ertrags- bzw. Vergleichswert nach ImmoWertV mit Gutachterausschuss-Daten
+  const wert = kp && fl ? wertermittlung({ ...e, einheiten }, { ortName: markt?.name || "Hamm", bodenrichtwert: num(a.bodenrichtwert_m2), jahresmiete: istMiete > 0 ? istMiete * 12 : 0 }) : null;
+  const ueberWert = wert && kp > wert.wert * 1.15;
 
   // ---- Strategien
   const strategien = [];
@@ -344,6 +348,8 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     : `Zum Angebotspreis nicht wirtschaftlich${besterMax ? " – interessant erst ab ca. " + eur(besterMax) : ""}`;
 
   // ---- Urteil (erste Zeile laut Analyse-Skill): maßgeblich ist das realistische Szenario
+  // Liegt das Angebot mehr als 15 % über dem amtlichen Wert, ist es kein Top-Objekt – egal was die Strategie verspricht
+  if (ampel === "gruen" && ueberWert) ampel = "gelb";
   const lohnt = !warnungen.length && ampel === "gruen";
   // Stufe für die Funde: Top (trägt sich zum Angebotspreis, auch vorsichtig) – Verhandeln (bis −15 %) – Nein
   const stufe = lohnt ? (datenluecken.length ? "pruefen" : "top") : !warnungen.length && besterMax && besterMax >= kp * 0.85 ? "verhandeln" : "nein";
@@ -351,7 +357,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   // ---- Verhandlung: Einstieg / Ziel / Schmerzgrenze aus realistischem und vorsichtigem Höchstpreis
   let verhandlung = null;
   if (besterMax && besterMax >= kp * 0.7) {
-    const schmerz = r5(Math.min(kp, besterMax));
+    const schmerz = r5(Math.min(kp, besterMax, wert ? wert.wert * 1.1 : Infinity));
     const vorsMax = Math.max(0, ...kern.filter((s) => s.name === weg?.name).map((s) => s.max_kaufpreis_vorsichtig || 0));
     const einstieg = r5(Math.min(schmerz * 0.88, vorsMax || schmerz * 0.88, kp * 0.9));
     verhandlung = { einstieg, ziel: r5(Math.max(einstieg, Math.min(schmerz * 0.93, kp * 0.97))), schmerzgrenze: schmerz };
@@ -370,14 +376,20 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   const vergleich = markt?.kauf || null;
   const schnell = {
     preis_m2: pm2 ? Math.round(pm2) : null,
-    vergleich_m2: vergleich,
+    vergleich_m2: wert?.g?.kauf || vergleich,
+    vergleich_quelle: wert?.g ? (wert.g.eigene ? "Gutachterausschuss" : "Gutachterausschuss Hamm, Annahme") : "Portale",
     vergleich_ort: markt?.name || null,
-    preis_ok: pm2 && vergleich ? pm2 <= vergleich : null,
+    preis_ok: pm2 && (wert?.g?.kauf || vergleich) ? pm2 <= (wert?.g?.kauf || vergleich) : null,
     faktor: real?.faktor ? Math.round(real.faktor * 10) / 10 : null,
     faktor_ok: real?.faktor ? real.faktor <= 20 : null,
     cashflow: real ? Math.round(real.cashflowMonat) : null,
     cashflow_stress: stress ? Math.round(stress.cashflowMonat) : null,
     dscr: real?.rateMonat ? Math.round(real.reinertrag / (real.rateMonat * 12) * 100) / 100 : null,
+    // Wie viel Leerstand verträgt das Objekt, bevor der Cashflow negativ wird?
+    break_even_leerstand: real?.jahresKaltmiete ? Math.round((1 - (real.rateMonat * 12 + real.bewirtschaftung) / real.jahresKaltmiete) * 100) : null,
+    ek_rendite_tilgung: real && ek > 0 ? Math.round(((real.cashflowMonat + real.tilgungMonat) * 12) / ek * 100) : null,
+    wert: wert ? { methode: wert.methode, wert: wert.wert, text: wert.text, quelle: wert.quelle, abweichung: Math.round((kp / wert.wert - 1) * 100) } : null,
+    gutachter_kauf: wert?.g?.kauf || null,
   };
   if (ortsWerte.length) annahmenListe.push(`Marktwerte ${markt.name}: ${ortsWerte.join(", ")} (${MARKT_QUELLE})`);
 
@@ -464,10 +476,13 @@ ${d.nein_wenn ? `\n**Die Antwort wäre NEIN, wenn** ${d.nein_wenn}.\n` : ""}${d.
 | Objektart | ${z(e.objektart)}${e.ort ? " · " + e.ort : ""} |
 | Kaufpreis | ${e.kaufpreis ? eur(e.kaufpreis) : "fehlt – anfragen"} |
 | Fläche | ${e.wohnflaeche_m2 ? dz(e.wohnflaeche_m2, 0) + " m²" : "fehlt – anfragen"}${e.grundstueck_m2 ? ` · Grundstück ${dz(e.grundstueck_m2, 0)} m²` : ""} |
-| Preis pro m² | ${sc.preis_m2 ? eur(sc.preis_m2) : "–"}${sc.vergleich_m2 ? ` (Ø Wohnungen ${sc.vergleich_ort}: ${eur(sc.vergleich_m2)})${ok(sc.preis_ok)}` : ""} |
+| Preis pro m² | ${sc.preis_m2 ? eur(sc.preis_m2) : "–"}${sc.vergleich_m2 ? ` (Ø Kaufpreis ${sc.vergleich_ort || "Hamm"}: ${eur(sc.vergleich_m2)}, ${sc.vergleich_quelle})${ok(sc.preis_ok)}` : ""} |
+| Wert (ImmoWertV) | ${sc.wert ? `${eur(sc.wert.wert)} ${sc.wert.methode} – Angebot ${sc.wert.abweichung >= 0 ? sc.wert.abweichung + " % darüber" : -sc.wert.abweichung + " % darunter"}${sc.wert.abweichung > 15 ? " ❌" : sc.wert.abweichung <= 0 ? " ✅" : ""}` : "–"} |
 | Kaufpreisfaktor | ${sc.faktor ? dz(sc.faktor, 1) + " (Ziel ≤ 20)" + ok(sc.faktor_ok) : "–"} |
 | Cashflow realistisch | ${sc.cashflow != null ? eur(sc.cashflow) + "/Monat · bei Zins +1 %: " + eur(sc.cashflow_stress) : "–"} |
 | Kapitaldienstdeckung | ${sc.dscr ? dz(sc.dscr) + (sc.dscr >= 1.2 ? " ✅" : " (Banken wollen meist ≥ 1,2)") : "–"} |
+| Leerstand verkraftbar | ${sc.break_even_leerstand != null ? (sc.break_even_leerstand > 0 ? `bis ${sc.break_even_leerstand} % der Miete` : "keiner – schon voll vermietet negativ") : "–"} |
+| Eigenkapitalrendite inkl. Tilgung | ${sc.ek_rendite_tilgung != null ? sc.ek_rendite_tilgung + " % im Jahr auf das Eigenkapital" : "–"} |
 | Baujahr / Energie | ${z(e.baujahr)}${e.sanierungsjahr ? ` (saniert ${e.sanierungsjahr})` : ""} / ${z(e.energieklasse)} |
 | Ist-Miete | ${e.ist_miete_jahr ? eur(e.ist_miete_jahr / 12) + " im Monat" : e.ist_miete_monat ? eur(e.ist_miete_monat) + " im Monat" : "fehlt – anfragen"}${e.hausgeld_monat ? ` · Hausgeld ${eur(e.hausgeld_monat)}` : ""} |
 | Ampel | ${{ gruen: "🟢 Grün", gelb: "🟡 Gelb", rot: "🔴 Rot" }[d.ampel]} |
@@ -490,7 +505,7 @@ ${Object.entries(fragen).map(([wer, l]) => `**${wer}**\n${l.map((x) => "- " + x)
 
 ${d.strategien.map((s) => `**${s.buchstabe ? s.buchstabe + " · " : ""}${s.name}** – ${s.begruendung}`).join("\n\n")}
 
-**Annahmen (im Rechner und unter „Annahmen anpassen“ änderbar)**
+${sc.wert ? `**Wertermittlung nach ImmoWertV (${sc.wert.methode})** – ${sc.wert.text}. Quelle: ${sc.wert.quelle}.\n\n` : ""}**Annahmen (im Rechner und unter „Annahmen anpassen“ änderbar)**
 ${annahmen.map((x) => "- " + x).join("\n")}
 - Finanzierung: ${dz(a.zins)} % Zins, ${dz(a.tilgung)} % Tilgung, Kaufnebenkosten ${dz(num(a.grest) + num(a.notar) + makler)} % (Grunderwerbsteuer NRW ${dz(a.grest)} %, Notar ${dz(a.notar)} %, Makler ${dz(makler)} %${e.makler_prozent == null || e.makler_prozent === "" ? " – Annahme" : ""})
 
@@ -498,7 +513,7 @@ ${alleRisiken.length > 3 ? `**Weitere Risiken**\n${alleRisiken.slice(3).map((x) 
 
 </details>
 
-**Quellen:** Marktwerte: ${MARKT_QUELLE}. Sanierung: ${SANIERUNG_QUELLE}. Förderung: kfw.de. Alles regelbasiert ohne KI – vor dem Kauf mit Mietspiegel, Grundstücksmarktbericht (gars.nrw), BORIS NRW und Besichtigung prüfen.`;
+**Quellen:** Wertermittlung: Gutachterausschüsse Hamm und Dortmund, Grundstücksmarktbericht 2026; Bewirtschaftungskosten Anlage 3 ImmoWertV (Stand 2026). Marktwerte: ${MARKT_QUELLE}. Sanierung: ${SANIERUNG_QUELLE}. Förderung: kfw.de. Alles regelbasiert ohne KI – vor dem Kauf mit Mietspiegel, Grundstücksmarktbericht (gars.nrw), BORIS NRW und Besichtigung prüfen.`;
 }
 
 function verhandlungsArgumente(e, d) {

@@ -84,5 +84,28 @@ for (const [name, e] of streng) {
 const top = auswerten({ objektart: "Mehrfamilienhaus", ort: "59065 Hamm", kaufpreis: 380000, wohnflaeche_m2: 520, einheiten: 8, baujahr: 1972, sanierungsjahr: 2012, energieklasse: "D", ist_miete_monat: 3600, beschreibung: "x".repeat(300), merkmale: { vermietet: true } }).daten;
 console.log(top.stufe === "top" ? "ok    " : "FEHLER", "Solides MFH (Faktor 8,8, saniert, belegte Miete) ist Top", top.stufe === "top" ? "" : top.urteil);
 fehler += top.stufe === "top" ? 0 : 1;
+// Wertermittlung nach ImmoWertV: plausibel nahe am Gutachterausschuss-Kaufpreis
+const { wertermittlung } = await import("../lib/ertragswert.js");
+const ew = wertermittlung({ objektart: "Mehrfamilienhaus", wohnflaeche_m2: 520, einheiten: 8, baujahr: 1972, sanierungsjahr: 2012 }, { ortName: "Hamm", jahresmiete: 43200 });
+const ewOk = ew.methode === "Ertragswert" && ew.wert > 520 * 1345 * 0.8 && ew.wert < 520 * 1345 * 1.25;
+console.log(ewOk ? "ok    " : "FEHLER", "Ertragswert MFH Hamm im Rahmen des Gutachterausschusses", ewOk ? "" : ew.wert);
+fehler += ewOk ? 0 : 1;
+// Archiv: Preissenkung, Ordner bleibt, Ablauf nach einem halben Jahr, Meldung für Weggelegte nur bei deutlicher Senkung
+const ar = await import("../lib/archiv.mjs");
+const t0 = new Date("2026-05-01T10:00:00Z");
+let L = ar.einfuegen([], { url: "https://www.kleinanzeigen.de/s-anzeige/x/1234567890-208-1", titel: "Haus", preis: 300000 }, "weggelegt", t0).liste;
+L = ar.einfuegen(L, { url: "https://www.kleinanzeigen.de/s-anzeige/x/1234567890-208-1", preis: 285000 }, undefined, new Date("2026-05-10T10:00:00Z")).liste;
+const x = L[0];
+const arOk = x.id === "1234567890" && x.ordner === "weggelegt" && x.gesenkt?.prozent === 5 && x.verlauf.length === 2
+  && !ar.meldenswert(x, x.gesenkt, "nein") && ar.meldenswert(x, x.gesenkt, "verhandeln")
+  && ar.aufraeumen(L, new Date("2026-11-15T10:00:00Z")).length === 0 && ar.aufraeumen(L, new Date("2026-10-01T10:00:00Z")).length === 1;
+console.log(arOk ? "ok    " : "FEHLER", "Archiv: Preisverlauf, Ordner, halbes Jahr, Meldungen", arOk ? "" : JSON.stringify(x));
+fehler += arOk ? 0 : 1;
+// Kontakt aus eingefügtem Text
+const { kontaktAusText } = await import("../lib/inserat-parse.js");
+const k = kontaktAusText("Ihr Ansprechpartner: Herr Thomas Becker, Becker Immobilien GmbH, Tel. 02381 / 12345-6, E-Mail: t.becker@becker-immo.de");
+const kOk = k?.email === "t.becker@becker-immo.de" && k.name === "Thomas Becker" && k.telefon.startsWith("02381");
+console.log(kOk ? "ok    " : "FEHLER", "Kontakt aus Exposé-Text erkannt", kOk ? "" : JSON.stringify(k));
+fehler += kOk ? 0 : 1;
 console.log(fehler ? `\n${fehler} Fehler` : "\nAlle Prüfungen bestanden");
 process.exit(fehler ? 1 : 0);

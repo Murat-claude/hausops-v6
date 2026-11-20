@@ -9,10 +9,17 @@
 // POST   /api/objekte/:id/chat       -> { eintraege: [...] } an den Chat anhängen
 // GET    /api/allgemein              -> allgemeiner Chat
 // POST   /api/allgemein              -> { eintraege: [...] } anhängen
+// GET    /api/profil                 -> Absender für Makleranfragen (für beide gleich)
+// PUT    /api/profil                 -> Absender speichern
+// GET    /api/archiv                 -> Archiv (ein halbes Jahr, Ordner, Preisverlauf)
+// POST   /api/archiv                 -> { eintrag, ordner } anlegen oder zusammenführen
+// PUT    /api/archiv/:id             -> { ordner } verschieben
+// DELETE /api/archiv/:id             -> entfernen
 import { getStore } from "@netlify/blobs";
 import { timingSafeEqual, createHash } from "node:crypto";
 import { sendePush } from "../../lib/push.mjs";
 import { leseKleinanzeigenHtml } from "../../lib/inserat-parse.js";
+import { einfuegen, aufraeumen, bereinige } from "../../lib/archiv.mjs";
 
 const MAX_CHAT = 400;
 
@@ -224,6 +231,57 @@ export function erstelleHandler(store, zugang, benachrichtige = (n) => sendePush
       } else return json(400, { fehler: "Unbekannte Aktion" });
       await store.setJSON("merkliste/todos", liste.slice(0, 500));
       return json(200, { todos: liste });
+    }
+
+    // ---------- Absender (gemeinsam für beide) ----------
+    if (teile[0] === "profil") {
+      if (methode === "GET") return json(200, { profil: (await store.get("profil/absender", { type: "json" })) || {} });
+      if (methode === "PUT") {
+        const b = (await body()) || {};
+        const profil = Object.fromEntries(["name", "telefon", "email", "ort"].map((k) => [k, String(b[k] ?? "").trim().slice(0, 120)]));
+        await store.setJSON("profil/absender", profil);
+        return json(200, { profil });
+      }
+    }
+
+    // ---------- Archiv ----------
+    if (teile[0] === "archiv") {
+      const KEY = "archiv/liste";
+      let liste = aufraeumen((await store.get(KEY, { type: "json" })) || []);
+      if (methode === "GET") {
+        // Einmalig: alte Favoriten ins Archiv übernehmen
+        if (!(await store.get("archiv/migriert"))) {
+          const fav = (await store.get("merkliste/favoriten", { type: "json" })) || [];
+          for (const f of fav) {
+            const id = f.art === "objekt" ? f.id : undefined;
+            liste = einfuegen(liste, { ...f, id, url: f.art === "objekt" ? "#objekt-" + String(f.id).replace(/^o/, "") : f.url, preis: parseInt(String(f.preis_text || "").replace(/\D/g, ""), 10) || null }, "favoriten").liste;
+          }
+          await store.setJSON(KEY, liste);
+          await store.set("archiv/migriert", "1");
+        }
+        return json(200, { archiv: liste });
+      }
+      if (methode === "POST") {
+        const b = (await body()) || {};
+        const r = einfuegen(liste, b.eintrag || {}, b.ordner);
+        if (!r.eintrag) return json(400, { fehler: "Eintrag unvollständig" });
+        await store.setJSON(KEY, r.liste.slice(0, 1500));
+        if (b.ordner === "favoriten" && b.eintrag?.von) await benachrichtige({ titel: `⭐ ${b.eintrag.von} hat einen Favoriten gemerkt`, text: `${r.eintrag.titel}${r.eintrag.preis ? " · " + r.eintrag.preis.toLocaleString("de-DE") + " €" : ""}`.slice(0, 160), url: "/#archiv", ausser: b.eintrag.von }).catch(() => 0);
+        return json(200, { archiv: r.liste, eintrag: r.eintrag });
+      }
+      if (teile[1] && gueltigeId(teile[1]) && methode === "PUT") {
+        const b = (await body()) || {};
+        const alt = liste.find((x) => x.id === teile[1]);
+        if (!alt || !bereinige({ id: alt.id }, b.ordner)) return json(404, { fehler: "Nicht im Archiv" });
+        liste = einfuegen(liste, alt, b.ordner).liste;
+        await store.setJSON(KEY, liste);
+        return json(200, { archiv: liste });
+      }
+      if (teile[1] && gueltigeId(teile[1]) && methode === "DELETE") {
+        liste = liste.filter((x) => x.id !== teile[1]);
+        await store.setJSON(KEY, liste);
+        return json(200, { archiv: liste });
+      }
     }
 
     if (teile[0] === "allgemein") {

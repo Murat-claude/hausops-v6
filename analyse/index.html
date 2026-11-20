@@ -150,6 +150,19 @@
     tr.summe td { font-weight: 700; }
 
     /* Bericht */
+    /* Archiv-Ordner und Klappkarten */
+    .ordner { border: 1px solid var(--linie); border-radius: 12px; margin: 10px 0; background: var(--flaeche, transparent); }
+    .ordner > summary, .klapp > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-weight: 700; }
+    .klapp > summary { padding: 0; } .klapp > summary h2 { margin: 0; }
+    .ordner > summary::-webkit-details-marker, .klapp > summary::-webkit-details-marker { display: none; }
+    .ordner > summary::before, .klapp > summary::before { content: "▸"; transition: transform .15s; color: var(--leise); }
+    .ordner[open] > summary::before, .klapp[open] > summary::before { transform: rotate(90deg); }
+    .ordner > summary .anzahl { margin-left: auto; font-weight: 400; color: var(--leise); font-size: .85rem; }
+    .ordner > .liste { padding: 0 10px 8px; }
+    .senkung { color: var(--gut); font-weight: 700; }
+    .senkungen-box { border: 1px solid var(--gut); border-radius: 12px; padding: 8px 12px; margin: 10px 0; }
+    #archiv-suche { width: 100%; margin: 8px 0 4px; }
+    .rechts select.klein { width: auto; padding: 5px 6px; font-size: .82rem; }
     #bericht { overflow-wrap: anywhere; max-width: 72ch; }
     #bericht table { display: block; overflow-x: auto; margin: 10px 0; overflow-wrap: normal; }
     #bericht td, #bericht th { overflow-wrap: normal; word-break: normal; hyphens: auto; white-space: normal; text-align: left; }
@@ -239,8 +252,7 @@
       <nav class="tabs" aria-label="Bereiche">
         <a href="#funde" data-tab="funde"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Funde <span class="punkt" id="funde-zahl" hidden></span></a>
         <a href="#neu" data-tab="neu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19h16M7 15l3-3 3 3 5-6"/></svg>Analyse</a>
-        <a href="#objekte" data-tab="objekte"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Ablage</a>
-        <a href="#merkliste" data-tab="merkliste"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg>Merkliste <span class="punkt" id="todo-zahl" hidden></span></a>
+        <a href="#archiv" data-tab="archiv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 7h18v13H3zM3 7l2-3h14l2 3M9 12h6"/></svg>Archiv <span class="punkt" id="todo-zahl" hidden></span></a>
         <a href="#konto" data-tab="konto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>Konto</a>
       </nav>
       <span class="status" id="verbunden">nicht angemeldet</span>
@@ -252,8 +264,9 @@
     <!-- Funde (Startseite) -->
     <section class="ansicht" data-ansicht="funde">
       <div class="karte">
-        <span class="eyebrow">Immo-Scout · alle 15 Minuten, 6–22 Uhr · 30 km um Hamm</span>
+        <span class="eyebrow">Immo-Scout · alle 15 Minuten, 6–22 Uhr · 30 km um Hamm, Umbau &amp; Ferien bis 50 km</span>
         <h2>Neue Funde</h2>
+        <div id="funde-senkungen"></div>
         <p class="hinweis" id="funde-status">Wird geladen …</p>
         <div class="filter kein-druck" id="funde-filter">
           <button class="zweit" data-filter="gut" aria-pressed="true">Top</button>
@@ -421,31 +434,28 @@
     </section>
 
     <!-- Objekte -->
-    <section class="ansicht" data-ansicht="objekte" hidden>
+    <!-- Archiv: Ordner, eigene Analysen, To-dos -->
+    <section class="ansicht" data-ansicht="archiv" hidden>
       <div class="karte">
-        <h2 id="verlauf-titel">Unsere Objekte</h2>
-        <div id="verlauf" class="liste"><p class="hinweis">Noch keine Analysen. Leg unter „Analysieren“ das erste Objekt an.</p></div>
+        <span class="eyebrow">Ein halbes Jahr gespeichert · Preise werden täglich geprüft</span>
+        <h2>Archiv</h2>
+        <p class="hinweis">Top- und Verhandlungs-Funde kommen automatisch in „Beobachten“. Sinkt der Preis, bekommt ihr eine Meldung – auch bei weggelegten Objekten, wenn sie dadurch interessant werden.</p>
+        <input id="archiv-suche" type="search" placeholder="Im Archiv suchen (Ort, Titel) …" aria-label="Im Archiv suchen" />
+        <div id="archiv" class="ordner-liste"></div>
       </div>
-    </section>
-
-    <!-- Merkliste -->
-    <section class="ansicht" data-ansicht="merkliste" hidden>
-      <div class="karte">
-        <span class="eyebrow">Gemeinsam</span>
-        <h2>To-dos</h2>
+      <details class="karte klapp" id="analysen-karte">
+        <summary><h2 id="verlauf-titel">Eigene Analysen</h2></summary>
+        <div id="verlauf" class="liste"><p class="hinweis">Noch keine Analysen. Leg unter „Analyse“ das erste Objekt an.</p></div>
+      </details>
+      <details class="karte klapp" id="todos-karte" open>
+        <summary><h2>To-dos</h2></summary>
         <div class="todo-neu kein-druck">
           <input id="todo-text" placeholder="z. B. Makler anrufen, Mieterliste anfordern" />
           <select id="todo-fuer" aria-label="Für wen"><option value="">für uns</option><option>Murat</option><option>Yasemin</option></select>
           <button id="todo-hinzu">Hinzufügen</button>
         </div>
         <div id="todos" class="liste"></div>
-      </div>
-      <div class="karte">
-        <span class="eyebrow">Gemerkt</span>
-        <h2>Favoriten</h2>
-        <p class="hinweis">Mit dem Stern bei Funden oder Objekten merken.</p>
-        <div id="favoriten" class="liste"></div>
-      </div>
+      </details>
     </section>
 
     <!-- Konto -->
@@ -463,7 +473,7 @@
       </div>
       <div class="karte">
         <h2>Absender für Makleranfragen</h2>
-        <p class="hinweis">Wird in jede Anfrage an Makler eingesetzt. Bleibt auf diesem Gerät gespeichert.</p>
+        <p class="hinweis">Wird automatisch in jede Anfrage eingesetzt – gilt für euch beide und wird auf dem Server gespeichert.</p>
         <div class="raster3">
           <div><label for="abs-name">Name</label><input id="abs-name" autocomplete="name" /></div>
           <div><label for="abs-telefon">Telefon</label><input id="abs-telefon" type="tel" autocomplete="tel" /></div>

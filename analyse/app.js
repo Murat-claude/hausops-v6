@@ -4,6 +4,7 @@ import { speicher, geraet, ZugangFalsch, extras, lese, schreibe } from "./speich
 import { leseInserat } from "./lib/inserat-parse.js";
 import { auswerten, STANDARD_ANNAHMEN } from "./lib/auswertung.js";
 import { makleranfrage, ABSENDER_STANDARD } from "./lib/makler.js";
+import { ORDNER, idAusUrl, restTage } from "./lib/archiv.mjs";
 
 const SZENARIEN = [["vorsichtig", "Vorsichtig"], ["realistisch", "Realistisch"], ["gut", "Gut"]];
 const $ = (id) => document.getElementById(id);
@@ -47,6 +48,7 @@ async function verbinden() {
   zeigeStatus();
   ladeFunde();
   ladeMerkliste();
+  ladeProfil();
   pushStatus();
   route();
 }
@@ -97,7 +99,8 @@ function formularFuellen(f, nurLeere = false) {
   if (f.merkmale) for (const m of MERKMALE) if (f.merkmale[m]) $("m-" + m).checked = true;
   if (f.link) eingabeLink = f.link;
   // Zusatzangaben, die kein eigenes Feld haben, für die Auswertung merken
-  zusatzAngaben = { ...zusatzAngaben, ...Object.fromEntries(["sanierungsjahr", "faktor_angabe", "einheiten_im_haus", "grundstueck_gemeinschaft", "ist_miete_jahr", "anbieter"].filter((k) => f[k] != null).map((k) => [k, f[k]])) };
+  const anbieter = f.anbieter || zusatzAngaben.anbieter ? { ...(f.anbieter || {}), ...(zusatzAngaben.anbieter || {}) } : undefined; // zuerst gelesene Quelle (Link) hat Vorrang
+  zusatzAngaben = { ...zusatzAngaben, ...Object.fromEntries(["sanierungsjahr", "faktor_angabe", "einheiten_im_haus", "grundstueck_gemeinschaft", "ist_miete_jahr"].filter((k) => f[k] != null).map((k) => [k, f[k]])), ...(anbieter ? { anbieter } : {}) };
   kontrolleZeigen();
 }
 
@@ -390,24 +393,40 @@ function zeigeUeberblick(r) {
 
 // ---------- Makleranfrage ----------
 const ABSENDER_SPEICHER = "immo-absender";
+let profil = {};
 function absenderLesen() { try { return JSON.parse(localStorage.getItem(ABSENDER_SPEICHER)) || {}; } catch { return {}; } }
+// Gemeinsames Profil vom Server hat Vorrang, lokale Eingaben füllen Lücken
+const absenderAktuell = () => ({ ...ABSENDER_STANDARD, ...Object.fromEntries(Object.entries({ ...absenderLesen(), ...profil }).filter(([, v]) => v)) });
 function absenderZeigen() {
-  const ab = { ...ABSENDER_STANDARD, ...absenderLesen() };
-  for (const k of ["name", "telefon", "email"]) { const el = $("abs-" + k); if (el) el.value = ab[k] || ""; }
+  const ab = absenderAktuell();
+  for (const k of ["name", "telefon", "email"]) { const el = $("abs-" + k); if (el && document.activeElement !== el) el.value = ab[k] || ""; }
 }
-for (const k of ["name", "telefon", "email"]) $("abs-" + k)?.addEventListener("change", () => {
+async function ladeProfil() {
+  try { profil = (await extras.profil()).profil || {}; } catch { profil = {}; }
+  // Einmalig: lokal eingetragene Daten für beide übernehmen
+  const lokal = absenderLesen();
+  if (speicher.modus === "gemeinsam" && !profil.telefon && !profil.email && (lokal.telefon || lokal.email)) {
+    try { profil = (await extras.profilSpeichern({ ...absenderAktuell(), ...lokal })).profil; } catch { /* egal */ }
+  }
+  absenderZeigen();
+  if (aktuell) zeigeMakler();
+}
+for (const k of ["name", "telefon", "email"]) $("abs-" + k)?.addEventListener("change", async () => {
   const ab = absenderLesen(); ab[k] = $("abs-" + k).value.trim();
   try { localStorage.setItem(ABSENDER_SPEICHER, JSON.stringify(ab)); } catch { /* egal */ }
+  if (speicher.modus === "gemeinsam") {
+    try { profil = (await extras.profilSpeichern({ ...absenderAktuell(), [k]: ab[k] })).profil; hinweis("Absender für euch beide gespeichert."); } catch (e) { fehler(e.message); }
+  }
   if (aktuell) zeigeMakler();
 });
 absenderZeigen();
 let maklerKurz = "";
 function maklerMailLink() {
-  const an = makleranfrage(aktuell.eingabe || {}, aktuell.daten || {}, absenderLesen()).empfaenger;
+  const an = makleranfrage(aktuell.eingabe || {}, aktuell.daten || {}, absenderAktuell()).empfaenger;
   return `mailto:${encodeURIComponent(an)}?subject=${encodeURIComponent($("makler-betreff").value)}&body=${encodeURIComponent($("makler-text").value)}`;
 }
 function zeigeMakler() {
-  const m = makleranfrage(aktuell.eingabe || {}, aktuell.daten || {}, absenderLesen());
+  const m = makleranfrage(aktuell.eingabe || {}, aktuell.daten || {}, absenderAktuell());
   $("makler-karte").classList.toggle("versteckt", !aktuell.daten);
   $("makler-an").textContent = [m.ansprechpartner && "An: " + m.ansprechpartner, m.empfaenger && "E-Mail: " + m.empfaenger, m.telefon_makler && "Tel.: " + m.telefon_makler].filter(Boolean).join(" · ") || "Ansprechpartner nicht erkannt – Empfänger in der Mail eintragen.";
   $("makler-betreff").value = m.betreff;
@@ -417,6 +436,8 @@ function zeigeMakler() {
   $("makler-fehlt").textContent = m.fehlt.length ? `Noch fehlt im Absender: ${m.fehlt.join(" und ")} – unter „Konto“ eintragen.` : "";
 }
 for (const id of ["makler-betreff", "makler-text"]) $(id).addEventListener("input", () => { $("makler-mail").href = maklerMailLink(); });
+$("makler-mail").addEventListener("click", () => { if (aktuell && speicher.modus === "gemeinsam") archivieren(objektEintrag(), "angefragt"); });
+$("makler-kurz").addEventListener("click", () => { if (aktuell && speicher.modus === "gemeinsam") archivieren(objektEintrag(), "angefragt"); });
 async function kopiere(text, knopf, label) {
   try { await navigator.clipboard.writeText(text); knopf.textContent = "✓ Kopiert"; } catch { knopf.textContent = "Kopieren nicht möglich"; }
   setTimeout(() => (knopf.textContent = label), 2000);
@@ -463,7 +484,7 @@ function speichereSpaeter() {
 const AMPEL = { gruen: "gruen", gelb: "gelb", rot: "rot" };
 function zeigeVerlauf(liste = []) {
   const box = $("verlauf");
-  $("verlauf-titel").textContent = speicher.modus === "gemeinsam" ? "Unsere Objekte" : "Objekte auf diesem Gerät";
+  $("verlauf-titel").textContent = speicher.modus === "gemeinsam" ? `Eigene Analysen (${liste.length})` : "Analysen auf diesem Gerät";
   if (!liste.length) { box.innerHTML = `<p class="hinweis">Noch keine Analysen. Leg unter „Analysieren“ das erste Objekt an.</p>`; return; }
   box.innerHTML = "";
   for (const e of liste) {
@@ -531,7 +552,7 @@ let offenerLink = "";
 function zeigeAnsicht(name) {
   document.querySelectorAll("[data-ansicht]").forEach((el) => { el.hidden = el.dataset.ansicht !== name; });
   document.querySelectorAll("[data-tab]").forEach((a) => {
-    const aktiv = a.dataset.tab === name || (name === "objekt" && a.dataset.tab === "objekte");
+    const aktiv = a.dataset.tab === name || (name === "objekt" && a.dataset.tab === "archiv");
     if (aktiv) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
   if (name === "funde") { schreibe("immo-funde-gesehen", new Date().toISOString()); zeigeFundeZahl(); }
@@ -551,10 +572,11 @@ async function route() {
       if (speicher.modus !== "gemeinsam") { offenerLink = "#" + h; $("login-fehler").textContent = "Bitte anmelden – danach öffnet sich das geteilte Objekt."; }
       else fehler("Dieses Objekt gibt es nicht mehr.");
     } catch (e) { fehler(e.message); }
-    zeigeAnsicht(speicher.modus === "gemeinsam" ? "objekte" : "konto");
+    zeigeAnsicht(speicher.modus === "gemeinsam" ? "archiv" : "konto");
     return;
   }
-  zeigeAnsicht(["neu", "objekte", "funde", "merkliste", "konto", "objekt"].includes(h) ? h : "funde");
+  const ziel = { objekte: "archiv", merkliste: "archiv" }[h] || h;
+  zeigeAnsicht(["neu", "archiv", "funde", "konto", "objekt"].includes(ziel) ? ziel : "funde");
 }
 window.addEventListener("hashchange", route);
 
@@ -646,6 +668,20 @@ async function ladeFunde() {
     zeigeFundeZahl();
   } catch (e) { $("funde-status").textContent = e.message; }
 }
+// Preissenkungen der letzten 14 Tage aus dem Archiv – ganz oben auf der Startseite
+function zeigeSenkungen() {
+  const box = $("funde-senkungen");
+  if (!box) return;
+  const grenze = new Date(Date.now() - 14 * 86400000).toISOString();
+  const liste = archiv.filter((x) => x.gesenkt && x.gesenkt.d > grenze).sort((a, b) => b.gesenkt.d.localeCompare(a.gesenkt.d)).slice(0, 5);
+  box.innerHTML = "";
+  if (!liste.length) return;
+  const d = document.createElement("div");
+  d.className = "senkungen-box";
+  d.innerHTML = `<b>📉 Preis gesenkt</b><div class="liste"></div>`;
+  for (const x of liste) d.querySelector(".liste").appendChild(archivZeile(x));
+  box.appendChild(d);
+}
 function zeigeFundeZahl() {
   const seit = lese("immo-funde-gesehen", "");
   const n = funde.filter((f) => f.gut && (!seit || f.gefunden > seit)).length;
@@ -656,13 +692,20 @@ function zeigeFunde() {
   const box = $("funde");
   const art = $("funde-art").value;
   const passt = (f) => fundeFilter === "alle" || (fundeFilter === "gut" ? f.gut : fundeFilter === "verhandeln" ? f.verhandeln : f.bewertung);
-  const liste = funde.filter((f) => passt(f) && (!art || f.kategorie === art));
+  let liste = funde.filter((f) => passt(f) && (!art || f.kategorie === art) && !istWeggelegt(f.id));
+  zeigeSenkungen();
+  // Kein Top-Objekt? Dann gleich die Objekte zeigen, die sich mit Verhandlung rechnen – statt einer leeren Seite
+  let ersatz = "";
+  if (fundeFilter === "gut" && !liste.length) {
+    const verh = funde.filter((f) => f.verhandeln && (!art || f.kategorie === art) && !istWeggelegt(f.id));
+    if (verh.length) { liste = verh; ersatz = `<p class="hinweis">Gerade kein Top-Objekt. Diese ${verh.length} rechnen sich mit Verhandlung:</p>`; }
+  }
   const leer = {
     gut: "Gerade kein Top-Fund. Top heißt: trägt sich zum Angebotspreis – auch im vorsichtigen Fall, mit 10.000 € Eigenkapital und vollständigen Daten. Unter „Mit Verhandlung“ stehen Objekte, die sich mit bis zu 15 % Nachlass rechnen.",
     verhandeln: "Gerade kein Fund, der sich mit bis zu 15 % Nachlass rechnet.",
   }[fundeFilter] || "Keine Funde mit diesem Filter.";
   if (!liste.length) { box.innerHTML = `<p class="hinweis">${leer}</p>`; return; }
-  box.innerHTML = "";
+  box.innerHTML = ersatz;
   for (const f of liste.slice(0, 120)) {
     const z = document.createElement("div");
     z.className = "zeile";
@@ -699,6 +742,7 @@ function zeigeFunde() {
     }
     const analysieren = document.createElement("button");
     analysieren.textContent = "Analysieren";
+    analysieren.className = f.gut || f.verhandeln ? "zweit" : "";
     analysieren.onclick = async () => {
       formularLeeren();
       $("text").value = `${f.url}\n\n${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}\n${f.beschreibung || ""}`;
@@ -706,20 +750,20 @@ function zeigeFunde() {
       await auslesen();
       if (formularLesen().kaufpreis) await starteAnalyse();
     };
-    const wa = document.createElement("a");
-    wa.className = "knopf zweit";
-    wa.textContent = "WhatsApp";
-    wa.target = "_blank"; wa.rel = "noopener";
-    wa.href = "https://wa.me/?text=" + encodeURIComponent(`🏠 ${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}${fak ? ` · Faktor ~${fak}` : ""}\n${f.url}`);
-    wa.style.padding = "7px 10px"; wa.style.fontSize = ".82rem";
-    const cl = document.createElement("a");
-    cl.className = "knopf zweit";
-    cl.textContent = "Claude";
-    cl.target = "_blank"; cl.rel = "noopener";
-    cl.href = claudeLink(`Bitte prüfe dieses Immobilienangebot für uns (Murat & Yasemin, Investoren aus Hamm) vollständig mit dem Skill immobilien-analyse, falls vorhanden: ${f.url}\n\n${f.titel} · ${f.preis_text} · ${f.groesse_text} · ${f.ort}\n\nBitte Anzeige lesen, Marktdaten aktuell recherchieren, passende Strategien mit höchstens 10.000 € Eigenkapital rechnen, Risiken, „Die Antwort wäre NEIN, wenn …“ und Verhandlungsziel nennen. Für eine Tiefenprüfung den Skill immobilien-tiefenanalyse nutzen.`);
-    cl.style.padding = "7px 10px"; cl.style.fontSize = ".82rem";
-    const stern = sternKnopf({ id: "f" + f.id, art: "fund", titel: f.titel, url: f.url, preis_text: f.preis_text, ort: f.ort, ampel: f.bewertung?.ampel || (f.gut ? "gruen" : null), info: f.bewertung?.beste?.max_kaufpreis ? `${f.bewertung.beste.name} bis ${f.bewertung.beste.max_kaufpreis.toLocaleString("de-DE")} €` : f.groesse_text });
-    z.querySelector(".rechts").append(stern, analysieren, wa, cl);
+    // Ein Klick: Anfrage an den Anbieter (nur bei Objekten, die sich nach Durchrechnung lohnen)
+    const knoepfe = [sternKnopf(fundEintrag(f))];
+    if (f.gut || f.verhandeln) {
+      const anfrage = document.createElement("button");
+      anfrage.textContent = imArchiv(f.id)?.ordner === "angefragt" ? "✓ Angefragt" : "Anfrage senden";
+      anfrage.title = f.bewertung?.anbieter?.email ? `E-Mail an ${f.bewertung.anbieter.name || f.bewertung.anbieter.email}` : "Text kopieren und Anzeige öffnen";
+      anfrage.onclick = () => anfrageSenden({ ...f, objektart: f.bewertung?.objektart, anbieter: f.bewertung?.anbieter }, fundEintrag(f));
+      knoepfe.push(anfrage);
+    }
+    const weg = document.createElement("button");
+    weg.className = "leise"; weg.textContent = "Weglegen"; weg.title = "Ins Archiv „Weggelegt“ – Preissenkungen werden trotzdem gemeldet";
+    weg.onclick = () => archivieren(fundEintrag(f), "weggelegt", "Weggelegt. Sinkt der Preis deutlich, meldet sich die App.");
+    knoepfe.push(analysieren, weg);
+    z.querySelector(".rechts").append(...knoepfe);
     box.appendChild(z);
   }
 }
@@ -781,37 +825,137 @@ if ("serviceWorker" in navigator) swRegistrierung().catch(() => {});
 $("funde-art").addEventListener("change", zeigeFunde);
 
 // ---------- Merkliste: Favoriten und To-dos ----------
-let merk = { favoriten: [], todos: [] };
-const istFavorit = (id) => merk.favoriten.some((f) => f.id === id);
+let merk = { todos: [] };
+let archiv = [];
+const imArchiv = (id) => archiv.find((x) => x.id === id);
+const istFavorit = (id) => imArchiv(id)?.ordner === "favoriten";
+const istWeggelegt = (id) => imArchiv(id)?.ordner === "weggelegt";
+
+// Ins Archiv legen oder verschieben (Ordner: favoriten, beobachten, angefragt, weggelegt)
+async function archivieren(eintrag, ordner, meldung) {
+  if (speicher.modus !== "gemeinsam") { fehler("Dafür bitte unter „Konto“ anmelden."); return false; }
+  try {
+    archiv = (await extras.archivSpeichern({ ...eintrag, von: geraet.name }, ordner)).archiv;
+    zeigeArchiv(); zeigeFunde(); objektSternSetzen();
+    if (meldung) hinweis(meldung);
+    return true;
+  } catch (e) { fehler(e.message); return false; }
+}
 function sternKnopf(eintrag) {
   const b = document.createElement("button");
   b.className = "stern";
   b.dataset.favorit = eintrag.id;
-  const setzen = () => { const an = istFavorit(eintrag.id); b.textContent = an ? "★" : "☆"; b.setAttribute("aria-pressed", String(an)); b.title = an ? "Aus Favoriten entfernen" : "Merken"; };
-  setzen();
-  b.onclick = async () => {
-    if (speicher.modus !== "gemeinsam") { fehler("Zum Merken bitte unter „Konto“ anmelden."); return; }
-    try {
-      const r = await extras.favorit({ ...eintrag, von: geraet.name }, istFavorit(eintrag.id));
-      merk.favoriten = r.favoriten;
-      document.querySelectorAll(`[data-favorit="${CSS.escape(eintrag.id)}"]`).forEach((x) => { x.textContent = istFavorit(eintrag.id) ? "★" : "☆"; x.setAttribute("aria-pressed", String(istFavorit(eintrag.id))); });
-      zeigeMerkliste();
-      hinweis(istFavorit(eintrag.id) ? "Gemerkt." : "Aus Favoriten entfernt.");
-      objektSternSetzen();
-    } catch (e) { fehler(e.message); }
-  };
+  const an = istFavorit(eintrag.id);
+  b.textContent = an ? "★" : "☆";
+  b.setAttribute("aria-pressed", String(an));
+  b.title = an ? "Aus Favoriten nehmen (bleibt unter Beobachten)" : "Als Favorit merken";
+  b.onclick = () => archivieren(eintrag, istFavorit(eintrag.id) ? "beobachten" : "favoriten", istFavorit(eintrag.id) ? "Unter „Beobachten“ abgelegt." : "Als Favorit gemerkt – Preisänderungen werden gemeldet.");
   return b;
 }
 async function ladeMerkliste() {
-  try { merk = await extras.merkliste(); } catch { merk = { favoriten: [], todos: [] }; }
+  try { merk = await extras.merkliste(); } catch { merk = { todos: [] }; }
+  try { archiv = (await extras.archiv()).archiv || []; } catch { archiv = []; }
   zeigeMerkliste();
+  zeigeArchiv();
+  zeigeFunde();
   objektSternSetzen();
 }
+
+// Eintrag fürs Archiv aus einem Scout-Fund
+function fundEintrag(f) {
+  return { id: f.id, url: f.url, titel: f.titel, ort: f.ort, kategorie: f.kategorie, preis: f.preis, flaeche: f.flaeche, bewertung: f.bewertung, anbieter: f.bewertung?.anbieter };
+}
+
+// ---------- Ein-Klick-Anfrage ----------
+// Mit E-Mail des Anbieters: Mail-App öffnet sich fertig ausgefüllt. Ohne: Kurztext in die Zwischenablage und Anzeige öffnen.
+async function anfrageSenden(info, archivEintrag) {
+  const p = absenderAktuell();
+  if (!p.telefon || !p.email) {
+    hinweis("Bitte einmal eure Telefonnummer und E-Mail eintragen – danach geht jede Anfrage mit einem Klick.");
+    location.hash = "#konto";
+    setTimeout(() => $("abs-telefon")?.focus(), 200);
+    return;
+  }
+  const m = makleranfrage({ anbieter: info.anbieter, titel: info.titel, ort: info.ort }, { titel: info.titel, ort: info.ort, objektart: info.objektart || info.kategorie }, p);
+  if (m.empfaenger) {
+    location.href = `mailto:${encodeURIComponent(m.empfaenger)}?subject=${encodeURIComponent(m.betreff)}&body=${encodeURIComponent(m.email)}`;
+    hinweis(`Mail an ${m.ansprechpartner || m.empfaenger} ist vorbereitet – nur noch auf Senden tippen.`);
+  } else {
+    try { await navigator.clipboard.writeText(m.kurz); } catch { /* egal */ }
+    if (info.url) window.open(info.url, "_blank", "noopener");
+    hinweis("Anfrage-Text kopiert. In der Anzeige auf „Nachricht schreiben“ tippen, einfügen, senden.");
+  }
+  if (archivEintrag) archivieren(archivEintrag, "angefragt");
+}
+
+// ---------- Archiv mit Ordnern ----------
+const eurK = (v) => (v ? v.toLocaleString("de-DE") + " €" : "–");
+function archivZeile(x) {
+  const z = document.createElement("div");
+  z.className = "zeile";
+  z.innerHTML = `<span class="streifen"></span><div style="min-width:0"><a class="titel"></a><div class="meta"></div><div class="meta bewertung"></div></div><div class="rechts"></div>`;
+  z.firstChild.classList.add({ gruen: "gruen", gelb: "gelb", rot: "rot" }[x.bewertung?.ampel] || "x");
+  const t = z.querySelector(".titel");
+  t.textContent = x.titel;
+  t.href = x.url || (x.objekt_id ? "#objekt-" + x.objekt_id : "#archiv");
+  if (x.url?.startsWith("https://")) { t.target = "_blank"; t.rel = "noopener"; }
+  const meta = z.querySelector(".meta");
+  meta.append(`${x.kategorie ? x.kategorie + " · " : ""}${x.ort || ""} · `);
+  const preis = document.createElement("span");
+  preis.className = "zahl";
+  preis.textContent = eurK(x.preis);
+  meta.append(preis);
+  if (x.gesenkt) { const g = document.createElement("span"); g.className = "senkung"; g.textContent = ` ↓ ${String(x.gesenkt.prozent).replace(".", ",")} % (vorher ${eurK(x.gesenkt.von)})`; meta.append(g); }
+  meta.append(` · noch ${restTage(x)} Tage${x.status === "offline" ? " · ⚠️ Anzeige nicht mehr online" : ""}`);
+  z.querySelector(".bewertung").textContent = x.bewertung?.empfehlung || "";
+  const r = z.querySelector(".rechts");
+  const sel = document.createElement("select");
+  sel.className = "klein"; sel.setAttribute("aria-label", "Ordner");
+  for (const [id, name] of ORDNER) sel.add(new Option(name, id, false, id === x.ordner));
+  sel.onchange = async () => { try { archiv = (await extras.archivOrdner(x.id, sel.value)).archiv; zeigeArchiv(); zeigeFunde(); } catch (e) { fehler(e.message); } };
+  r.append(sel);
+  if (x.url?.startsWith("https://")) {
+    const an = document.createElement("button");
+    an.textContent = "Anfrage";
+    an.onclick = () => anfrageSenden({ ...x, objektart: x.kategorie }, x);
+    r.append(an);
+  }
+  const del = document.createElement("button");
+  del.className = "leise"; del.textContent = "Entfernen";
+  del.onclick = async () => {
+    if (del.dataset.sicher !== "1") { del.dataset.sicher = "1"; del.textContent = "Wirklich?"; setTimeout(() => { del.dataset.sicher = ""; del.textContent = "Entfernen"; }, 4000); return; }
+    try { archiv = (await extras.archivLoeschen(x.id)).archiv; zeigeArchiv(); zeigeFunde(); } catch (e) { fehler(e.message); }
+  };
+  r.append(del);
+  return z;
+}
+function zeigeArchiv() {
+  const box = $("archiv");
+  if (!box) return;
+  const q = ($("archiv-suche")?.value || "").trim().toLowerCase();
+  const passt = (x) => !q || `${x.titel} ${x.ort} ${x.kategorie}`.toLowerCase().includes(q);
+  const offen = new Set([...box.querySelectorAll("details[open]")].map((d) => d.dataset.ordner));
+  box.innerHTML = "";
+  if (speicher.modus !== "gemeinsam") { box.innerHTML = `<p class="hinweis">Zum Archiv bitte unter „Konto“ anmelden.</p>`; return; }
+  for (const [id, name] of ORDNER) {
+    const liste = archiv.filter((x) => x.ordner === id && passt(x)).sort((a, b) => (b.gesenkt?.d || b.aktualisiert || "").localeCompare(a.gesenkt?.d || a.aktualisiert || ""));
+    const d = document.createElement("details");
+    d.className = "ordner"; d.dataset.ordner = id;
+    d.open = offen.size ? offen.has(id) : id !== "weggelegt" && liste.length > 0;
+    const gesenkt = liste.filter((x) => x.gesenkt).length;
+    d.innerHTML = `<summary>${name}${gesenkt ? ` <span class="senkung">↓ ${gesenkt}</span>` : ""}<span class="anzahl">${liste.length}</span></summary><div class="liste"></div>`;
+    const l = d.querySelector(".liste");
+    if (!liste.length) l.innerHTML = `<p class="hinweis">${q ? "Nichts gefunden." : { favoriten: "Mit dem Stern merken.", beobachten: "Top- und Verhandlungs-Funde landen hier automatisch.", angefragt: "Nach einer Anfrage landet das Objekt hier.", weggelegt: "Mit „Weglegen“ aus den Funden hierher." }[id]}</p>`;
+    for (const x of liste) l.appendChild(archivZeile(x));
+    box.appendChild(d);
+  }
+}
+$("archiv-suche")?.addEventListener("input", zeigeArchiv);
+
 function zeigeMerkliste() {
   const offen = merk.todos.filter((t) => !t.erledigt && (!t.fuer || t.fuer === geraet.name)).length;
   $("todo-zahl").hidden = !offen;
   $("todo-zahl").textContent = offen;
-  // To-dos
   const tb = $("todos");
   tb.innerHTML = merk.todos.length ? "" : `<p class="hinweis">Keine To-dos. Oben eintragen oder bei einem Objekt „+ To-do“ wählen.</p>`;
   for (const t of [...merk.todos].sort((a, b) => a.erledigt - b.erledigt)) {
@@ -836,29 +980,6 @@ function zeigeMerkliste() {
     z.append(cb, mitte, x);
     tb.appendChild(z);
   }
-  // Favoriten
-  const fb = $("favoriten");
-  fb.innerHTML = merk.favoriten.length ? "" : `<p class="hinweis">Noch keine Favoriten.</p>`;
-  for (const f of merk.favoriten) {
-    const z = document.createElement("div");
-    z.className = "zeile";
-    z.innerHTML = `<span class="streifen"></span><div style="min-width:0"><a class="titel"></a><div class="meta"></div></div><div class="rechts"></div>`;
-    z.firstChild.classList.add({ gruen: "gruen", gelb: "gelb", rot: "rot" }[f.ampel] || "x");
-    const t = z.querySelector(".titel");
-    t.textContent = f.titel || "(ohne Titel)";
-    if (f.art === "objekt") t.href = "#objekt-" + f.id.replace(/^o/, "");
-    else { t.href = f.url; t.target = "_blank"; t.rel = "noopener"; }
-    z.querySelector(".meta").textContent = [f.preis_text, f.ort, f.info, f.von ? "gemerkt von " + f.von : null].filter(Boolean).join(" · ");
-    const r = z.querySelector(".rechts");
-    if (f.art === "fund") {
-      const an = document.createElement("button");
-      an.textContent = "Analysieren";
-      an.onclick = async () => { formularLeeren(); $("text").value = f.url; location.hash = "#neu"; await auslesen(); if (formularLesen().kaufpreis) await starteAnalyse(); };
-      r.appendChild(an);
-    }
-    r.appendChild(sternKnopf(f));
-    fb.appendChild(z);
-  }
 }
 async function todoAnlegen(text, fuer, objekt) {
   if (speicher.modus !== "gemeinsam") { fehler("Für To-dos bitte unter „Konto“ anmelden."); return false; }
@@ -876,21 +997,25 @@ $("todo-hinzu").onclick = async () => {
   }
 };
 $("todo-text").addEventListener("keydown", (e) => { if (e.key === "Enter") $("todo-hinzu").click(); });
+const objektArchivId = () => idAusUrl(aktuell?.link) || "o" + aktuell?.id;
+function objektEintrag() {
+  return { id: objektArchivId(), url: aktuell.link || "#objekt-" + aktuell.id, objekt_id: aktuell.id, titel: aktuell.titel, ort: aktuell.daten?.ort || "", kategorie: aktuell.daten?.objektart || "", preis: aktuell.daten?.kaufpreis, flaeche: aktuell.daten?.wohnflaeche_m2, bewertung: { stufe: aktuell.daten?.stufe, ampel: aktuell.daten?.ampel, empfehlung: aktuell.daten?.urteil || aktuell.daten?.empfehlung, max_kaufpreis: aktuell.daten?.verhandlung?.schmerzgrenze }, anbieter: aktuell.eingabe?.anbieter };
+}
 function objektSternSetzen() {
   if (!aktuell) return;
-  const an = istFavorit("o" + aktuell.id);
+  const an = istFavorit(objektArchivId());
   $("objekt-stern").textContent = an ? "★ Gemerkt" : "☆ Merken";
   $("objekt-stern").setAttribute("aria-pressed", String(an));
 }
 $("objekt-stern").onclick = () => {
   if (!aktuell) return;
-  sternKnopf({ id: "o" + aktuell.id, art: "objekt", titel: aktuell.titel, url: aktuell.link || "", preis_text: aktuell.daten?.kaufpreis ? eur(aktuell.daten.kaufpreis) : "", ort: aktuell.daten?.ort || "", ampel: aktuell.daten?.ampel, info: aktuell.daten?.empfehlung || "" }).click();
+  sternKnopf(objektEintrag()).click();
 };
 let todoObjekt = null;
 $("objekt-todo").onclick = () => {
   if (!aktuell) return;
   todoObjekt = { id: aktuell.id, titel: aktuell.titel };
-  location.hash = "#merkliste";
+  location.hash = "#archiv";
   $("todo-text").placeholder = `To-do zu „${aktuell.titel}“, z. B. Makler anrufen`;
   setTimeout(() => $("todo-text").focus(), 50);
 };

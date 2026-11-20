@@ -132,4 +132,10 @@ export const extras = {
   async merkliste() { return speicher.modus === "gemeinsam" ? api("merkliste") : { favoriten: [], todos: [] }; },
   async favorit(eintrag, entfernen = false) { return api("favoriten", "POST", { aktion: entfernen ? "entfernen" : "hinzu", eintrag }); },
   async todo(daten) { return api("todos", "POST", daten); },
+  async archiv() { return speicher.modus === "gemeinsam" ? api("archiv") : { archiv: [] }; },
+  async archivSpeichern(eintrag, ordner) { return api("archiv", "POST", { eintrag, ordner }); },
+  async archivOrdner(id, ordner) { return api("archiv/" + encodeURIComponent(id), "PUT", { ordner }); },
+  async archivLoeschen(id) { return api("archiv/" + encodeURIComponent(id), "DELETE"); },
+  async profil() { return speicher.modus === "gemeinsam" ? api("profil") : { profil: {} }; },
+  async profilSpeichern(profil) { return api("profil", "PUT", profil); },
 };
