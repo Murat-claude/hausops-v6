@@ -38,6 +38,24 @@ ${mail}`;
 
   const kurz = `${anrede} Ihr Objekt in ${ort} passt gut in unser Portfolio. Wir sind Immobilieninvestoren aus Hamm mit mehreren Bestandsobjekten in NRW, die Finanzierung steht – eine Bestätigung schicken wir gern sofort. Wir würden zeitnah besichtigen und entscheiden schnell. Könnten Sie uns vorab ${vorab} senden? Viele Grüße, ${ab.name}, Tel. ${tel}`;
 
+  if (an.anmieten || eingabe.anmieten) {
+    const betreffM = `Mietanfrage ${nr} – zuverlässige Mieter, langfristig`;
+    const emailM = `${anrede}
+
+wir interessieren uns für Ihr Objekt „${titel}“ in ${ort} und würden es gern langfristig anmieten.
+
+Wir sind ein Ehepaar aus Hamm und Immobilieninvestoren. Unser Plan: die Wohnung hochwertig einzurichten und an Feriengäste zu vermieten – selbstverständlich nur mit Ihrer schriftlichen Zustimmung und allen nötigen Genehmigungen. Für Sie heißt das: pünktliche Miete, eine gepflegte Wohnung, regelmäßige Reinigung und eine feste Ansprechperson vor Ort.
+
+Hätten Sie grundsätzlich Interesse an diesem Modell? Gern stellen wir uns bei einer Besichtigung vor.
+
+Freundliche Grüße
+${ab.name}
+${ab.ort}
+Tel. ${tel}
+${mail}`;
+    const kurzM = `${anrede} wir würden Ihr Objekt in ${ort} gern langfristig anmieten und – nur mit Ihrer schriftlichen Zustimmung – möbliert an Feriengäste vermieten. Pünktliche Miete, gepflegte Wohnung, feste Ansprechperson vor Ort. Hätten Sie grundsätzlich Interesse? Viele Grüße, ${ab.name}, Tel. ${tel}`;
+    return { betreff: betreffM, email: emailM, kurz: kurzM, empfaenger: an.email || "", ansprechpartner: [an.name, an.firma].filter(Boolean).join(", "), telefon_makler: an.telefon || "", fehlt: [!ab.telefon && "Telefon", !ab.email && "E-Mail"].filter(Boolean) };
+  }
   const fehlt = [!ab.telefon && "Telefon", !ab.email && "E-Mail"].filter(Boolean);
   return { betreff, email, kurz, empfaenger: an.email || "", ansprechpartner: [an.name, an.firma].filter(Boolean).join(", "), telefon_makler: an.telefon || "", fehlt };
 }

@@ -789,16 +789,23 @@ function fundKarte(f) {
   const titel = el("a", "fund-titel", f.titel || "(ohne Titel)");
   titel.href = f.url; titel.target = "_blank"; titel.rel = "noopener";
   const preis = el("div", "fund-preis");
-  preis.append(el("b", null, f.preis ? tsd(f.preis) + " €" : f.preis_text), el("span", null, [f.preis_m2 ? tsd(f.preis_m2) + " €/m²" : null, f.groesse_text, f.kategorie].filter(Boolean).join(" · ")));
+  if (f.miete) preis.append(el("b", null, f.preis ? tsd(f.preis) + " € Miete" : f.preis_text), el("span", null, ["kalt im Monat", f.groesse_text, "zum Anmieten"].filter(Boolean).join(" · ")));
+  else preis.append(el("b", null, f.preis ? tsd(f.preis) + " €" : f.preis_text), el("span", null, [f.preis_m2 ? tsd(f.preis_m2) + " €/m²" : null, f.groesse_text, f.kategorie].filter(Boolean).join(" · ")));
   k.append(kopf, titel, preis);
   const chips = el("div", "chips");
   const fak = bw?.faktor ?? f.faktor_inserat ?? f.faktor;
   if (bw?.cashflow_monat != null) chips.append(el("span", "chip " + (bw.cashflow_monat >= 0 ? "pos" : "neg"), `Cashflow ${bw.cashflow_monat >= 0 ? "+" : ""}${tsd(bw.cashflow_monat)} €/M.`));
   if (fak) chips.append(el("span", "chip", `Faktor ${String(fak).replace(".", ",")}`));
+  if (bw?.startkapital != null) chips.append(el("span", "chip", `Startkapital ${tsd(bw.startkapital)} €`));
+  if (bw?.max_kaltmiete) chips.append(el("span", "chip " + (bw.max_kaltmiete >= (f.preis || 0) ? "pos" : ""), `lohnt bis ${tsd(bw.max_kaltmiete)} € Miete`));
   if (bw?.beste?.max_kaufpreis) chips.append(el("span", "chip " + (bw.beste.max_kaufpreis >= (f.preis || 0) ? "pos" : ""), `lohnt bis ${tsd(bw.beste.max_kaufpreis)} €`));
   if (chips.children.length) k.append(chips);
   if (bw?.empfehlung) k.append(el("p", "fund-urteil", bw.empfehlung));
-  if (bw && (bw.verhandlung || bw.nein_wenn || bw.beste)) {
+  if (bw?.anmieten) {
+    const mehr = el("details", "fund-mehr");
+    mehr.append(el("summary", null, "Rechnung & Bedingungen"), el("p", "hinweis", bw.hinweis), el("p", "hinweis", "Die Antwort wäre NEIN, wenn " + bw.nein_wenn + "."));
+    k.append(mehr);
+  } else if (bw && (bw.verhandlung || bw.nein_wenn || bw.beste)) {
     const mehr = el("details", "fund-mehr");
     mehr.append(el("summary", null, "Verhandlung & Details"));
     if (bw.verhandlung) {
@@ -823,10 +830,10 @@ function fundKarte(f) {
     const angefragt = imArchiv(f.id)?.ordner === "angefragt";
     const anfrage = el("button", "haupt", angefragt ? "✓ Angefragt" : "Anfrage senden");
     anfrage.title = bw?.anbieter?.email ? `E-Mail an ${bw.anbieter.name || bw.anbieter.email}` : "Text kopieren und Anzeige öffnen";
-    anfrage.onclick = () => anfrageSenden({ ...f, objektart: bw?.objektart, anbieter: bw?.anbieter }, fundEintrag(f));
+    anfrage.onclick = () => anfrageSenden({ ...f, objektart: bw?.objektart, anbieter: bw?.anbieter, anmieten: f.miete }, fundEintrag(f));
     akt.append(anfrage);
   } else analysieren.classList.add("haupt");
-  akt.append(analysieren);
+  if (!f.miete) akt.append(analysieren);
   const stern = sternKnopf(fundEintrag(f));
   stern.classList.add("icon");
   const weg = el("button", "icon leise", "✕");
@@ -945,7 +952,7 @@ async function anfrageSenden(info, archivEintrag) {
     setTimeout(() => $("abs-telefon")?.focus(), 200);
     return;
   }
-  const m = makleranfrage({ anbieter: info.anbieter, titel: info.titel, ort: info.ort }, { titel: info.titel, ort: info.ort, objektart: info.objektart || info.kategorie }, p);
+  const m = makleranfrage({ anbieter: info.anbieter, titel: info.titel, ort: info.ort, anmieten: info.anmieten }, { titel: info.titel, ort: info.ort, objektart: info.objektart || info.kategorie }, p);
   if (m.empfaenger) {
     location.href = `mailto:${encodeURIComponent(m.empfaenger)}?subject=${encodeURIComponent(m.betreff)}&body=${encodeURIComponent(m.email)}`;
     hinweis(`Mail an ${m.ansprechpartner || m.empfaenger} ist vorbereitet – nur noch auf Senden tippen.`);

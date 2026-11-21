@@ -123,5 +123,13 @@ const fw = auswerten({ objektart: "Eigentumswohnung", ort: "59955 Winterberg", k
 const feOk = lageOk && fw && fw.eignung !== "gut" && fw.max_kaufpreis > 0;
 console.log(feOk ? "ok    " : "FEHLER", "Ferienvermietung Winterberg: Satzung nach Ort, vorsichtige Rechnung", feOk ? "" : JSON.stringify(fw));
 fehler += feOk ? 0 : 1;
+// Anmieten zur Ferienvermietung: günstige Miete trägt, teure nicht; Winterberg nie Top ohne Genehmigung; Mietanfrage-Text
+const gue = fe.anmietRechnung({ preis: 450, flaeche: 55, ort: "59964 Medebach", titel: "Möblierte Wohnung, Ferienvermietung möglich", beschreibung: "" });
+const teuerM = fe.anmietRechnung({ preis: 1600, flaeche: 140, ort: "59955 Winterberg", titel: "Einfamilienhaus", beschreibung: "" });
+const { makleranfrage: mk2 } = await import("../lib/makler.js");
+const mm = mk2({ anmieten: true, anbieter: { name: "Frau Test" } }, { titel: "Wohnung", ort: "59955 Winterberg" });
+const amOk = gue && gue.cashflow_monat > teuerM.cashflow_monat && gue.max_kaltmiete > teuerM.max_kaltmiete && teuerM.stufe !== "top" && /anmieten/.test(mm.email) && /Zustimmung/.test(mm.kurz) && !/€/.test(mm.email);
+console.log(amOk ? "ok    " : "FEHLER", "Anmieten: Rechnung, Winterberg-Regel, Mietanfrage", amOk ? "" : JSON.stringify([gue, teuerM]));
+fehler += amOk ? 0 : 1;
 console.log(fehler ? `\n${fehler} Fehler` : "\nAlle Prüfungen bestanden");
 process.exit(fehler ? 1 : 0);

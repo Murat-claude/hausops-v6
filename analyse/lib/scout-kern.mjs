@@ -24,6 +24,9 @@ export const SUCHEN = [
   ["Winterberg: Haus", `s-haus-kaufen/winterberg/sortierung:neuste/c208${WINTERBERG}`, { maxKm: 22, stuendlich: true, rubrik: "ferien" }],
   ["Winterberg: Pension/Hotel", `s-gewerbeimmobilien/kaufen/winterberg/sortierung:neuste/c277${WINTERBERG}+gewerbeimmobilien.art_s:kaufen+gewerbeimmobilien.objektart_s:gastronomie_hotels`, { maxKm: 22, stuendlich: true, rubrik: "ferien", preisProM2: true }],
   ["Winterberg: Grundstück", `s-grundstuecke-garten/winterberg/sortierung:neuste/c207${WINTERBERG}`, { maxKm: 22, stuendlich: true, rubrik: "ferien" }],
+  // Anmieten und als Ferienwohnung weitervermieten (nur mit Erlaubnis des Vermieters)
+  ["Winterberg: Wohnung mieten", `s-wohnung-mieten/winterberg/sortierung:neuste/c203${WINTERBERG}`, { maxKm: 22, stuendlich: true, rubrik: "ferien", miete: true }],
+  ["Winterberg: Haus mieten", `s-haus-mieten/winterberg/sortierung:neuste/c205${WINTERBERG}`, { maxKm: 22, stuendlich: true, rubrik: "ferien", miete: true }],
 ];
 export const FERIEN_KATEGORIEN = SUCHEN.filter(([, , o = {}]) => o.rubrik === "ferien").map(([k]) => k);
 export const UMBAU_KATEGORIEN = ["Büro zum Umbau", "Hotel/Pension"];
@@ -112,6 +115,14 @@ export function bewerte(o, opts = {}) {
     if (/leerstand|leer stehend|leerstehend|umnutzung|umbau|wohnraum|wohnungen möglich|nutzungsänderung/.test(t)) punkte += 1;
   }
   o.punkte = punkte;
+  // Mietangebote (Anmieten zur Ferienvermietung): Preis ist die Monatsmiete, keine Kaufregeln
+  if (opts.miete) {
+    o.miete = true; o.faktor = null;
+    o.punkte = (/ferienvermietung|untervermietung|gewerblich|airbnb/.test(t) ? 3 : 0) + (/möbliert|moebliert|eingerichtet/.test(t) ? 1 : 0) + (/skigebiet|lift|piste|sauna|kamin|aussicht/.test(t) ? 1 : 0);
+    const ohneMiete = /tausch|wg-zimmer|wg zimmer|zimmer in wg|nur für|wochenendheimfahrer|monteur(?:zimmer)? gesucht|befristet bis/.test(t);
+    o.ausschluss = ohneMiete || AUSSCHLUSS.filter((w) => w !== "zu vermieten").some((w) => t.includes(w)) || (o.km != null && o.km > (opts.maxKm || 22)) || !p || p < 150 || p > 5000;
+    return o;
+  }
   const kauf = o.kategorie !== "Garage";
   const miete = (!opts.preisProM2 && (o.preis_text + o.groesse_text).includes("€/m²")) || /miete|zu vermieten/.test((o.preis_text + o.titel).toLowerCase());
   const zuKlein = opts.minFlaeche && a && a < opts.minFlaeche;

@@ -17,7 +17,7 @@ export const FERIEN_ANNAHMEN = {
   fewo_adr_haus: 170,       // € pro Nacht ab 110 m² als ganzes Ferienhaus
   fewo_betreuung: 20,       // % vom Umsatz für Betreuung vor Ort (Schlüssel, Kontrolle, Gäste) – ihr wohnt 150 km entfernt
   fewo_plattform: 15,       // % vom Umsatz für Airbnb/Booking/Zahlung
-  fewo_moebel_m2: 250,      // €/m² Einrichtung, falls nicht möbliert verkauft
+  fewo_moebel_m2: 180,      // €/m² Einrichtung (ca. 9.000 € für 50 m²), falls nicht möbliert
 };
 
 // Orte der Ferienregion (PLZ) und Ortsteile ohne Winterberger Wohnraumschutzsatzung
@@ -114,5 +114,59 @@ export function ferienStrategie(e, a, nkProzent, sanierung, annahmenListe = []) 
     begruendung: `${Math.round(real.naechte)} Nächte × ${preisNacht} € = ${eur(real.umsatz)} Umsatz im Jahr (realistisch). Nach Plattform, Betreuung, Reinigung, Nebenkosten und Instandhaltung bleiben ${eur(real.rein)}; Kreditrate ${eur(real.rate)}. Vorsichtig (${ausl - 10} %): ${eur(vors.cf)}/Monat, gut (${ausl + 10} %): ${eur(gut.cf)}/Monat. ${lage.text}`,
     nein_wenn: `die Auslastung unter ${ausl - 10} % fällt (${Math.round(365 * (ausl - 10) / 100)} Nächte im Jahr) oder die Stadt keine Genehmigung erteilt`,
     risiko: lage.text,
+  };
+}
+
+// ---------- Anmieten und als Ferienwohnung weitervermieten ----------
+// Nur mit schriftlicher Erlaubnis des Vermieters zur Untervermietung als Ferienwohnung (Skill ferienwohnung-profi, Abschnitt 7).
+// In Winterberg (PLZ 59955) gilt die Wohnraumschutzsatzung auch für Mieter: über 90 Tage Kurzzeitvermietung nur mit Genehmigung.
+const ERLAUBNIS = /ferienvermietung (?:ist )?(?:möglich|erlaubt|gestattet)|untervermietung (?:ist )?(?:möglich|erlaubt|gestattet)|gewerbliche (?:nutzung|vermietung)|als ferienwohnung (?:nutzbar|vermietbar|geeignet)|airbnb (?:erlaubt|möglich)|zur ferienvermietung/i;
+
+export function anmietRechnung(o, a = {}) {
+  const u = { ...FERIEN_ANNAHMEN, ...Object.fromEntries(Object.entries(a).filter(([k]) => k in FERIEN_ANNAHMEN)) };
+  const kalt = num(o.preis), fl = num(o.flaeche);
+  if (!kalt || !fl || kalt < 150) return null;
+  const t = `${o.titel || ""} ${o.beschreibung || ""}`;
+  const haus = /haus/i.test(String(o.kategorie || "")) || fl > 110;
+  const einheiten = 1;
+  const preisNacht = haus && fl > 110 ? num(u.fewo_adr_haus) : adr(fl, u);
+  const moebliert = /möbliert|moebliert|eingerichtet|ausgestattet/i.test(t);
+  const einrichtung = moebliert ? 0 : fl * num(u.fewo_moebel_m2);
+  const kaution = kalt * 3;
+  const warm = kalt + fl * 2.5; // Nebenkostenvorauszahlung an den Vermieter (Annahme 2,50 €/m²)
+  const rechne = (ausl) => {
+    const naechte = 365 * ausl / 100 * einheiten;
+    const umsatz = naechte * preisNacht;
+    const netto = umsatz / 1.07;
+    const kosten = netto * (num(u.fewo_plattform) + num(u.fewo_betreuung) + 3) / 100 // Plattform, Betreuung, Ersatz Einrichtung
+      + naechte / 3.1 * 35          // Reinigung, soweit nicht über die Endreinigung gedeckt
+      + 900                          // Strom-Mehrverbrauch, Internet, Versicherung, Rundfunk
+      + warm * 12
+      + einrichtung / 5;             // Einrichtung über 5 Jahre verteilt
+    return { umsatz, netto, cf: (netto - kosten) / 12, naechte };
+  };
+  const ausl = num(u.fewo_auslastung);
+  const real = rechne(ausl), vors = rechne(ausl - 10);
+  // Bis zu welcher Kaltmiete trägt es sich (realistisch, Cashflow 0)?
+  const maxKalt = Math.max(0, Math.round((real.cf * 12 + kalt * 12) / 12 / 10) * 10);
+  const erlaubnis = ERLAUBNIS.test(t);
+  const winterberg = /^\s*59955\b/.test(String(o.ort || ""));
+  const eignung = real.cf >= 300 && vors.cf >= 0 ? "gut" : real.cf >= 0 ? "bedingt" : "nein";
+  const stufe = eignung === "gut" ? (erlaubnis && !winterberg ? "top" : "pruefen") : eignung === "bedingt" ? "verhandeln" : "nein";
+  return {
+    anmieten: true,
+    stufe,
+    ampel: { gut: "gruen", bedingt: "gelb", nein: "rot" }[eignung],
+    cashflow_monat: Math.round(real.cf),
+    cashflow_vorsichtig: Math.round(vors.cf),
+    startkapital: Math.round(kaution + einrichtung),
+    max_kaltmiete: maxKalt,
+    beste: { name: "Anmieten & Ferienvermietung", eignung, max_kaufpreis: null },
+    empfehlung: eignung === "gut" ? `Anmieten lohnt sich: ca. ${Math.round(real.cf).toLocaleString("de-DE")} € im Monat übrig${erlaubnis ? "" : " – Erlaubnis des Vermieters zur Ferienvermietung klären"}`
+      : eignung === "bedingt" ? `Knapp: ca. ${Math.round(real.cf).toLocaleString("de-DE")} € im Monat – nur mit günstigerer Miete (bis ${maxKalt.toLocaleString("de-DE")} € kalt) oder höherer Auslastung`
+      : `Lohnt sich nicht: ca. ${Math.round(real.cf).toLocaleString("de-DE")} € im Monat – trägt sich erst bis ${maxKalt.toLocaleString("de-DE")} € Kaltmiete`,
+    nein_wenn: `der Vermieter die Ferienvermietung nicht erlaubt${winterberg ? ", die Stadt Winterberg keine Genehmigung erteilt" : ""} oder die Auslastung unter ${ausl - 10} % fällt`,
+    hinweis: `${Math.round(real.naechte)} Nächte × ${preisNacht} € = ${Math.round(real.umsatz).toLocaleString("de-DE")} € Umsatz; Warmmiete ca. ${Math.round(warm).toLocaleString("de-DE")} €/Monat; Startkapital ca. ${Math.round(kaution + einrichtung).toLocaleString("de-DE")} € (3 Kaltmieten Kaution${einrichtung ? " + Einrichtung" : ", möbliert"}). ${erlaubnis ? "Anzeige erwähnt Ferien-/Untervermietung." : "Ohne schriftliche Erlaubnis des Vermieters keine Ferienvermietung."}${winterberg ? " Winterberg: Genehmigung der Stadt und Wohnraum-ID nötig (Satzung vom 05.11.2026)." : ""}`,
+    ist_miete: false,
   };
 }

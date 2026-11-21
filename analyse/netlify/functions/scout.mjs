@@ -6,6 +6,7 @@ import { leseKleinanzeigenHtml } from "../../lib/inserat-parse.js";
 import { auswerten } from "../../lib/auswertung.js";
 import { sendePush } from "../../lib/push.mjs";
 import { einfuegen, aufraeumen, preisAenderung, naechstePruefung, meldenswert } from "../../lib/archiv.mjs";
+import { anmietRechnung } from "../../lib/ferien.js";
 
 const MAX_DETAILS = 6; // Detailseiten pro Lauf – alle aussichtsreichen werden voll durchgerechnet, bevor sie gemeldet werden
 // Bei kurzzeitiger Drosselung (403/429/503) einmal nach 4 Sekunden erneut versuchen
@@ -91,7 +92,9 @@ export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
   // Umbau-Objekte bekommen einen eigenen Platz, damit sie nicht hinter Wohnobjekten zurückfallen
   const umbau = neu.filter((o) => UMBAU_KATEGORIEN.includes(o.kategorie) && o.punkte >= 1).slice(0, 2);
   // Ferienimmobilien (Winterberg) bekommen eigene Plätze, damit die Rubrik immer durchgerechnete Objekte hat
-  const ferien = neu.filter((o) => FERIEN_KATEGORIEN.includes(o.kategorie) && o.kategorie !== "Winterberg: Grundstück").slice(0, 3);
+  // Mietangebote werden direkt aus der Liste gerechnet (kein Kauf, keine Detailseite nötig)
+  for (const o of neu.filter((x) => x.miete)) o.bewertung = anmietRechnung(o);
+  const ferien = neu.filter((o) => FERIEN_KATEGORIEN.includes(o.kategorie) && o.kategorie !== "Winterberg: Grundstück" && !o.miete).slice(0, 3);
   const wohnen = neu.filter((o) => o.punkte >= 1 && !["Garage", "Gewerbe", ...UMBAU_KATEGORIEN, ...FERIEN_KATEGORIEN].includes(o.kategorie)).slice(0, Math.max(2, MAX_DETAILS - umbau.length - ferien.length));
   const kandidaten = [...umbau, ...ferien, ...wohnen];
   await Promise.allSettled(kandidaten.map(async (o) => {
@@ -161,7 +164,7 @@ export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
       ? [bw.cashflow_monat != null ? `Cashflow ${bw.cashflow_monat >= 0 ? "+" : ""}${eur(bw.cashflow_monat)}/Monat` : null, bw.faktor ? `Faktor ${String(bw.faktor).replace(".", ",")}` : null, bw.beste?.max_kaufpreis ? `${bw.beste.name} bis ${eur(bw.beste.max_kaufpreis)}` : null].filter(Boolean).join(" · ")
       : `Faktor laut Anzeige ${String(b.faktor_inserat).replace(".", ",")}`;
     await sendePush(store, {
-      titel: `${bw?.ampel === "gruen" ? "🟢" : "🏠"} ${b.preis_text} · ${b.km ?? "?"} km ${b.ort.replace(/^\d{5}\s*/, "")}`,
+      titel: `${bw?.ampel === "gruen" ? "🟢" : "🏠"} ${b.miete ? "Zum Anmieten: " + b.preis_text + " Miete" : b.preis_text} · ${b.km ?? "?"} km ${b.ort.replace(/^\d{5}\s*/, "")}`,
       text: `${b.titel}\n${zahlen}`,
       url: "/#funde",
     });
