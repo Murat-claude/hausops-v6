@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#173a31" />
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" /><meta name="theme-color" content="#121a17" media="(prefers-color-scheme: dark)" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Immo-Analyse" />
   <link rel="manifest" href="manifest.json" />
@@ -137,7 +137,9 @@
     .strategie.gut .chip { background: color-mix(in srgb, var(--gut) 16%, var(--flaeche)); color: var(--gut); }
     .strategie.bedingt .chip { background: color-mix(in srgb, var(--warn) 18%, var(--flaeche)); color: var(--warn); }
     .strategie.nein .chip { background: color-mix(in srgb, var(--kritisch) 14%, var(--flaeche)); color: var(--kritisch); }
-    .strategie .zahl { font: 500 1.05rem var(--f-zahl); }
+    .strategie .zahl { font: 700 1.05rem var(--f-text); font-variant-numeric: tabular-nums; }
+    .strategie details summary { cursor: pointer; color: var(--akzent); font-size: .85rem; font-weight: 600; list-style: none; }
+    .strategie details summary::-webkit-details-marker { display: none; }
     .strategie p { margin: 0; font-size: .9rem; }
 
     /* Rechner */
@@ -351,6 +353,15 @@
     .fund-aktionen button:not(.icon) { justify-content: center; }
     .fund-aktionen button:not(.haupt):not(.icon) { padding-inline: 14px; }
 
+    /* Einfache Bedienung: große Hauptaktion, Rest aufklappbar */
+    .analyse-knoepfe { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; }
+    .analyse-knoepfe .haupt { justify-content: center; font-size: 1.02rem; }
+    .objekt-aktionen { margin-top: 14px; display: grid; }
+    .objekt-aktionen .haupt { justify-content: center; font-size: 1.02rem; }
+    .klapp > summary h2 { font-size: 1.08rem; }
+    .klapp:not([open]) { padding-block: 14px; }
+    .klapp[open] > summary { margin-bottom: 10px; }
+    #bericht h1 { display: none; }
     /* Hinweise unten über der Tab-Leiste statt über dem Inhalt */
     .toast { top: auto; bottom: calc(var(--tabhoehe) + env(safe-area-inset-bottom, 0px) + 14px); border-radius: 14px; }
     @media (min-width: 761px) { .toast { bottom: 24px; } }
@@ -394,8 +405,8 @@
     <!-- Funde (Startseite) -->
     <section class="ansicht" data-ansicht="funde">
       <div class="karte">
-        <span class="eyebrow">Immo-Scout · alle 15 Minuten, 6–22 Uhr · 50 km um Hamm · bis 1,5 Mio. €</span>
-        <h2>Neue Funde</h2>
+        <span class="eyebrow">50 km um Hamm · bis 1,5 Mio. € · alle 15 Min.</span>
+        <h2>Funde</h2>
         <div id="funde-senkungen"></div>
         <p class="hinweis" id="funde-status">Wird geladen …</p>
         <div class="filter kein-druck" id="funde-filter">
@@ -414,18 +425,18 @@
     <!-- Analysieren -->
     <section class="ansicht" data-ansicht="neu" hidden>
       <div class="karte kein-druck">
-        <span class="eyebrow">Schritt 1 · Anzeige reinlegen</span>
-        <h2>Link oder Anzeigentext einfügen</h2>
-        <textarea id="text" rows="5" placeholder="Kleinanzeigen-Link einfügen – die Daten werden automatisch ausgelesen. Bei anderen Portalen (ImmoScout24, Immowelt, Makler) den Text der Anzeige kopieren und hier einfügen."></textarea>
-        <p class="hinweis">Screenshot? Auf dem iPhone das Bild öffnen, Text gedrückt halten → „Alles auswählen“ → „Kopieren“ und hier einfügen.</p>
-        <div class="reihe"><button id="auslesen">Daten übernehmen</button><button class="leise" id="leeren">Alles leeren</button></div>
+        <h2>Objekt prüfen</h2>
+        <p class="hinweis">Kleinanzeigen-Link oder Anzeigentext einfügen – die App liest alles aus und rechnet sofort.</p>
+        <textarea id="text" rows="4" placeholder="Link oder Anzeigentext hier einfügen …"></textarea>
+        <div class="reihe analyse-knoepfe"><button id="analysieren" class="haupt">Analysieren</button><button class="zweit versteckt" id="einfuegen">Einfügen</button><button class="leise" id="leeren">Leeren</button></div>
+        <p class="hinweis">Tipp: Bei Screenshots auf dem iPhone den Text im Bild gedrückt halten → „Alles auswählen“ → „Kopieren“ und hier einfügen.</p>
+        <button id="auslesen" class="versteckt" type="button">Nur auslesen</button>
         <div id="fehler" class="fehler versteckt"></div>
       </div>
 
-      <div class="karte kein-druck" id="eckdaten">
-        <span class="eyebrow">Schritt 2 · Eckdaten prüfen</span>
-        <h2>Objekt</h2>
-        <p class="hinweis">Grün = aus der Anzeige erkannt. Leere Felder ergänzen, wenn bekannt – Pflicht sind nur Kaufpreis und Wohnfläche.</p>
+      <details class="karte klapp kein-druck" id="eckdaten">
+        <summary><h2>Eckdaten selbst eingeben oder korrigieren</h2></summary>
+        <p class="hinweis">Grün = aus der Anzeige erkannt. Pflicht sind nur Kaufpreis und Wohnfläche.</p>
         <div class="raster3">
           <div class="breit"><label for="e-titel">Bezeichnung</label><input id="e-titel" placeholder="z. B. MFH Bergkamen-Weddinghofen" /></div>
           <div><label for="e-objektart">Objektart</label>
@@ -442,7 +453,7 @@
           <div><label for="e-hausgeld_monat">Hausgeld (€/Monat, bei Wohnung)</label><input id="e-hausgeld_monat" type="number" inputmode="numeric" /></div>
           <div><label for="e-makler_prozent">Makler (%)</label><input id="e-makler_prozent" type="number" step="0.01" inputmode="decimal" placeholder="leer = 3,57" /></div>
           <div><label for="e-sanierung">Renovierung (€)</label><input id="e-sanierung" type="number" inputmode="numeric" placeholder="leer = Schätzung" /></div>
-          <div><label for="e-eigenkapital">Eigenkapital (€)</label><input id="e-eigenkapital" type="number" inputmode="numeric" placeholder="leer = 25 %" /></div>
+          <div><label for="e-eigenkapital">Eigenkapital (€)</label><input id="e-eigenkapital" type="number" inputmode="numeric" placeholder="leer = 10.000 €" /></div>
         </div>
         <p class="kontrolle" id="kontrolle" aria-live="polite"></p>
         <fieldset class="merkmale">
@@ -484,8 +495,8 @@
           </div>
           <p class="hinweis">Gilt für dieses Gerät. Miete, Wohnungspreise und Bauland werden automatisch für den Ort der Anzeige eingesetzt (Hamm, Dortmund, Bochum, Hagen, Münster, Lünen, Kamen, Lippstadt, Soest, Kreise Unna und Soest), solange hier der Standardwert steht. Ein eigener Wert hat Vorrang. <button class="leise" id="annahmen-zurueck" type="button">Standardwerte</button></p>
         </details>
-        <div class="reihe"><button id="start">Auswerten</button><span class="hinweis">Sofort, kostenlos, ohne KI.</span></div>
-      </div>
+        <div class="reihe"><button id="start">Mit diesen Daten rechnen</button><span class="hinweis">Sofort, kostenlos, ohne KI.</span></div>
+      </details>
     </section>
 
     <!-- Ein Objekt -->
@@ -493,6 +504,9 @@
       <div id="ergebnis" class="ansicht versteckt">
         <div class="karte" id="ueberblick-karte">
           <div id="ueberblick"></div>
+          <div class="objekt-aktionen kein-druck">
+            <button class="haupt" id="objekt-anfrage">Anfrage an den Anbieter senden</button>
+          </div>
           <div class="teilen kein-druck">
             <a class="knopf wa" id="whatsapp" href="#" target="_blank" rel="noopener">Per WhatsApp schicken</a>
             <button class="zweit" id="teilen">Teilen …</button>
@@ -508,12 +522,11 @@
         <div class="karte versteckt" id="strategien-karte">
           <span class="eyebrow">Was ist möglich?</span>
           <h2>Strategien im Vergleich</h2>
-          <p class="hinweis">A Halten · B Umbau · C Flip/Aufteilung · D Grundstück · E Ferien/Monteur. Maßgeblich ist das realistische Szenario.</p>
+          <p class="hinweis">Maßgeblich ist das realistische Szenario. Antippen für die Begründung.</p>
           <div class="strategien" id="strategien"></div>
         </div>
-        <div class="karte kein-druck versteckt" id="makler-karte">
-          <span class="eyebrow">Bei Interesse</span>
-          <h2>Anfrage an den Makler</h2>
+        <details class="karte klapp kein-druck versteckt" id="makler-karte">
+          <summary><h2>E-Mail an den Makler ansehen und anpassen</h2></summary>
           <p class="hinweis" id="makler-an"></p>
           <label for="makler-betreff">Betreff</label><input id="makler-betreff" />
           <label for="makler-text" style="margin-top:8px">E-Mail</label><textarea id="makler-text" rows="12"></textarea>
@@ -523,7 +536,7 @@
             <button class="zweit" id="makler-kurz">Kurzfassung für Kleinanzeigen kopieren</button>
           </div>
           <p class="hinweis">Wird nie automatisch verschickt. Tipp: Finanzierungsbestätigung bei Markus vorab bereithalten, damit sie am selben Tag rausgehen kann. Die ausführliche Unterlagenliste erst nach der Besichtigung anfordern. <span id="makler-fehlt"></span></p>
-        </div>
+        </details>
         <div class="karte kein-druck" id="chat-karte">
           <span class="eyebrow">Zwischen euch beiden</span>
           <h2>Notizen zu diesem Objekt</h2>
@@ -534,9 +547,9 @@
             <button id="chat-senden">Speichern</button>
           </div>
         </div>
-        <div class="karte" id="rechner-karte">
-          <span class="eyebrow">Rechner · vor Steuern</span>
-          <h2>Cashflow und Rendite</h2>
+        <details class="karte klapp" id="rechner-karte">
+          <summary><h2>Selbst nachrechnen</h2></summary>
+          <p class="hinweis">Rechner vor Steuern: Zahlen ändern, alles rechnet sofort neu.</p>
           <div class="raster2 kein-druck">
             <div class="raster2">
               <div><label for="f-ek">Eigenkapital (€)</label><input id="f-ek" type="number" /></div>
@@ -550,8 +563,11 @@
           </div>
           <p class="hinweis">Gelb hinterlegte Felder sind änderbar. Änderungen werden für euch beide gespeichert.</p>
           <div class="tab-wrap"><table id="rechner"></table></div>
-        </div>
-        <div class="karte"><div id="bericht"></div></div>
+        </details>
+        <details class="karte klapp" id="bericht-karte">
+          <summary><h2>Ganzer Bericht: Risiken, offene Fragen, Quellen</h2></summary>
+          <div id="bericht"></div>
+        </details>
         <div class="karte kein-druck">
           <div class="reihe" style="margin-top:0">
             <button class="zweit" id="drucken">Als PDF speichern</button>

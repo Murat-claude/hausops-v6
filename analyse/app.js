@@ -52,6 +52,7 @@ async function verbinden() {
   ladeProfil();
   pushStatus();
   route();
+  if (geteiltOffen && speicher.modus === "gemeinsam") { const t = geteiltOffen; geteiltOffen = null; formularLeeren(); $("text").value = t; location.hash = "#neu"; analysieren(); }
 }
 
 $("anmelden").onclick = async () => {
@@ -192,18 +193,53 @@ async function auslesen() {
     gefunden += Object.keys(f).length - 1;
   }
   if (!eingabeLink && links[0]) eingabeLink = links[0];
-  if (gefunden) hinweis("Daten übernommen. Bitte kurz prüfen (grün markiert) und fehlende Felder ergänzen.");
-  else if (!ka) fehler("Im Text wurden keine Zahlen erkannt. Bitte die Felder unten ausfüllen.");
-  $("eckdaten").scrollIntoView({ behavior: "smooth", block: "start" });
+  return gefunden;
 }
+
+// Ein Knopf für alles: auslesen und sofort rechnen. Fehlt etwas Wichtiges, öffnet sich das Formular mit Hinweis.
+function eckdatenOeffnen(meldung) {
+  $("eckdaten").open = true;
+  if (meldung) fehler(meldung);
+  setTimeout(() => $("eckdaten").scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+}
+let analyseLaeuft = false;
+async function analysieren() {
+  if (analyseLaeuft) return;
+  fehler("");
+  if (!$("text").value.trim()) { $("text").focus(); fehler("Bitte zuerst einen Link oder den Anzeigentext einfügen."); return; }
+  analyseLaeuft = true;
+  const knopf = $("analysieren");
+  knopf.disabled = true; knopf.textContent = "Lese und rechne …";
+  try {
+    const gefunden = await auslesen();
+    const e = formularLesen();
+    const grundstueck = /grundst/i.test(e.objektart || "");
+    if (e.kaufpreis && (e.wohnflaeche_m2 || (grundstueck && e.grundstueck_m2))) await starteAnalyse();
+    else eckdatenOeffnen(gefunden ? `Fast fertig – bitte noch ${!e.kaufpreis ? "den Kaufpreis" : grundstueck ? "die Grundstücksgröße" : "die Wohnfläche"} eintragen und „Mit diesen Daten rechnen“ tippen.` : "In der Anzeige wurden keine Zahlen gefunden. Bitte Kaufpreis und Wohnfläche eintragen.");
+  } finally { analyseLaeuft = false; knopf.disabled = false; knopf.textContent = "Analysieren"; }
+}
+$("analysieren").onclick = analysieren;
+// Link eingefügt? Dann gleich los
+$("text").addEventListener("paste", () => setTimeout(() => { if (/kleinanzeigen\.de\/s-anzeige\//.test($("text").value)) analysieren(); }, 60));
+if (navigator.clipboard?.readText) {
+  $("einfuegen").classList.remove("versteckt");
+  $("einfuegen").onclick = async () => {
+    try { const t = await navigator.clipboard.readText(); if (t) { $("text").value = t; analysieren(); } else fehler("Die Zwischenablage ist leer."); }
+    catch { fehler("Einfügen wurde nicht erlaubt – bitte lange ins Feld tippen und „Einfügen“ wählen."); }
+  };
+}
+// Aus Kleinanzeigen geteilt (Android: Teilen → Immo-Analyse; iPhone: Kurzbefehl mit ?url=…)
+const geteilt = (() => { const q = new URLSearchParams(location.search); const t = [q.get("titel"), q.get("text"), q.get("url")].filter(Boolean).join("\n").trim(); return t || null; })();
+let geteiltOffen = geteilt;
+if (geteilt) { history.replaceState(null, "", location.pathname + "#neu"); }
 $("auslesen").onclick = auslesen;
 
 async function starteAnalyse() {
   fehler("");
   const e = formularLesen();
-  if (!e.kaufpreis) { fehler("Bitte mindestens den Kaufpreis eintragen."); $("e-kaufpreis").focus(); return; }
-  if (!e.wohnflaeche_m2 && !/grundst/i.test(e.objektart || "")) { fehler("Bitte die Wohnfläche eintragen (bei Grundstücken: Objektart „Grundstück“ wählen)."); $("e-wohnflaeche_m2").focus(); return; }
-  if (/grundst/i.test(e.objektart || "") && !e.grundstueck_m2) { fehler("Bitte die Grundstücksgröße eintragen."); return; }
+  if (!e.kaufpreis) { eckdatenOeffnen("Bitte mindestens den Kaufpreis eintragen."); $("e-kaufpreis").focus(); return; }
+  if (!e.wohnflaeche_m2 && !/grundst/i.test(e.objektart || "")) { eckdatenOeffnen("Bitte die Wohnfläche eintragen (bei Grundstücken: Objektart „Grundstück“ wählen)."); $("e-wohnflaeche_m2").focus(); return; }
+  if (/grundst/i.test(e.objektart || "") && !e.grundstueck_m2) { eckdatenOeffnen("Bitte die Grundstücksgröße eintragen."); return; }
   const { daten, finanz, bericht } = auswerten(e, annahmenLesen());
   aktuell = {
     id: String(Date.now()),
@@ -274,12 +310,13 @@ function zeigeStrategien() {
     d.className = "strategie " + (rang[s.eignung] !== undefined ? s.eignung : "");
     const zahl = s.cashflow_monat != null ? `Cashflow ${eur(s.cashflow_monat)}/Monat` : s.gewinn != null ? `Gewinn ${eur(s.gewinn)}` : "";
     const symbol = { gut: "✅", bedingt: "⚠️", nein: "❌" }[s.eignung] || "•";
-    d.innerHTML = `<b></b><div class="zahl"></div><div class="hinweis"></div><div style="margin-top:6px;font-size:.88rem"></div>`;
+    d.innerHTML = `<b></b><div class="zahl"></div><div class="hinweis"></div><details><summary>Warum?</summary><div style="margin-top:6px;font-size:.88rem"></div></details>`;
     d.children[0].textContent = `${symbol} ${s.buchstabe ? s.buchstabe + " · " : ""}${s.name ?? ""}`;
     d.children[1].textContent = zahl;
     d.children[1].className = "zahl " + ((s.cashflow_monat ?? s.gewinn ?? 0) < 0 ? "neg" : "pos");
     d.children[2].textContent = s.max_kaufpreis ? `lohnt sich bis ca. ${eur(s.max_kaufpreis)} Kaufpreis${s.max_kaufpreis_vorsichtig ? ` (vorsichtig: ${eur(s.max_kaufpreis_vorsichtig)})` : ""}` : "";
-    d.children[3].textContent = s.begruendung ?? "";
+    d.querySelector("details div").textContent = s.begruendung ?? "";
+    if (!s.begruendung) d.querySelector("details").remove();
     (mehr && s.eignung === "nein" ? mehr : box).appendChild(d);
   }
   if (mehr) box.appendChild(mehr);
@@ -441,9 +478,17 @@ function zeigeMakler() {
   $("makler-text").value = m.email;
   maklerKurz = m.kurz;
   $("makler-mail").href = maklerMailLink();
+  const an = aktuell.eingabe?.anbieter;
+  const lohntNicht = aktuell.daten?.stufe === "nein" || (!aktuell.daten?.stufe && aktuell.daten?.ampel === "rot");
+  $("objekt-anfrage").textContent = imArchiv(objektArchivId())?.ordner === "angefragt" ? "✓ Angefragt – nochmal senden" : lohntNicht ? "Trotzdem anfragen" : an?.email ? `Anfrage an ${an.name || "den Anbieter"} senden` : "Anfrage an den Anbieter senden";
+  $("objekt-anfrage").className = lohntNicht ? "zweit haupt" : "haupt";
   $("makler-fehlt").textContent = m.fehlt.length ? `Noch fehlt im Absender: ${m.fehlt.join(" und ")} – unter „Konto“ eintragen.` : "";
 }
 for (const id of ["makler-betreff", "makler-text"]) $(id).addEventListener("input", () => { $("makler-mail").href = maklerMailLink(); });
+$("objekt-anfrage").onclick = () => {
+  if (!aktuell) return;
+  anfrageSenden({ titel: aktuell.titel, ort: aktuell.daten?.ort, objektart: aktuell.daten?.objektart, kategorie: aktuell.daten?.objektart, anbieter: aktuell.eingabe?.anbieter, url: aktuell.link }, speicher.modus === "gemeinsam" ? objektEintrag() : null);
+};
 $("makler-mail").addEventListener("click", () => { if (aktuell && speicher.modus === "gemeinsam") archivieren(objektEintrag(), "angefragt"); });
 $("makler-kurz").addEventListener("click", () => { if (aktuell && speicher.modus === "gemeinsam") archivieren(objektEintrag(), "angefragt"); });
 async function kopiere(text, knopf, label) {
@@ -469,7 +514,8 @@ $("bearbeiten").onclick = () => {
   formularLeeren();
   formularFuellen({ ...aktuell.eingabe, link: aktuell.link });
   location.hash = "#neu";
-  hinweis("Eingaben übernommen – ändern und neu auswerten.");
+  eckdatenOeffnen();
+  hinweis("Eingaben übernommen – ändern und „Mit diesen Daten rechnen“ tippen.");
 };
 
 // ---------- Gemeinsame Objektliste ----------
@@ -672,7 +718,9 @@ async function ladeFunde() {
     const d = await extras.funde();
     funde = d.funde || [];
     const st = d.status;
-    $("funde-status").textContent = st ? `Letzte Suche ${new Date(st.zeit).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}: ${st.neu} neu, ${st.geprueft ?? 0} durchgerechnet, ${st.gut} Top${st.fehler?.length ? ` · Probleme: ${st.fehler.join("; ")}` : ""}` : "Der Scout hat noch nicht gesucht. Er läuft alle 15 Minuten zwischen 6 und 22 Uhr.";
+    const zeit = st && new Date(st.zeit);
+    const heute = zeit && zeit.toDateString() === new Date().toDateString();
+    $("funde-status").textContent = st ? `Zuletzt gesucht ${heute ? "heute" : zeit.toLocaleDateString("de-DE")} ${zeit.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · ${st.neu} neu · ${st.gut} Top${st.fehler?.length ? ` · ⚠️ ${st.fehler.length} Suche(n) gestört` : ""}` : "Der Scout hat noch nicht gesucht. Er läuft alle 15 Minuten zwischen 6 und 22 Uhr.";
     zeigeFunde();
     zeigeFundeZahl();
   } catch (e) { $("funde-status").textContent = e.message; }
@@ -763,8 +811,7 @@ function fundKarte(f) {
     formularLeeren();
     $("text").value = `${f.url}\n\n${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}\n${f.beschreibung || ""}`;
     location.hash = "#neu";
-    await auslesen();
-    if (formularLesen().kaufpreis) await starteAnalyse();
+    await analysieren();
   };
   if (f.gut || f.verhandeln) {
     const angefragt = imArchiv(f.id)?.ordner === "angefragt";

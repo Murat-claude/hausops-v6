@@ -1,14 +1,31 @@
 {
-  "name": "Immo-Analyse KI",
+  "name": "Immo-Analyse Hamm",
   "short_name": "Immo-Analyse",
-  "description": "KI-Immobilienanalyse aus Inserat-Link, Exposé oder Anzeigentext",
+  "description": "Immobilien prüfen: Link einfügen, sofort Urteil, Verhandlungsziel und Anfrage",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#1f2a24",
-  "theme_color": "#1f2a24",
+  "background_color": "#f3f5f4",
+  "theme_color": "#ffffff",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
-  ]
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "share_target": {
+    "action": "./",
+    "method": "GET",
+    "params": {
+      "title": "titel",
+      "text": "text",
+      "url": "url"
+    }
+  }
 }
