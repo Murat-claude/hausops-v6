@@ -224,6 +224,136 @@
       font-weight: 600; box-shadow: 0 6px 24px rgba(0,0,0,.18); cursor: pointer; }
     .toast.fehler { background: var(--kritisch); color: #fff; }
     .toast.info { background: var(--akzent); color: var(--flaeche); }
+
+    /* ===== Design 2026: ruhig, hell, klare Hierarchie =====
+       Grundlage: Design-Kritik (Skill design-critique). Ein Akzent (Grundbuch-Grün), Ampelfarben nur für Bewertungen,
+       Zahlen in derselben Schrift mit Tabellenziffern statt Schreibmaschine, weiche Schatten statt Rahmen, 44-px-Tippflächen. */
+    :root {
+      --papier: #f3f5f4; --flaeche: #ffffff; --tinte: #14201c; --leise: #5a6863; --linie: #e3e8e6;
+      --akzent: #17694f; --akzent-weich: #e6f2ed; --kopf: #ffffff; --kopf-text: #14201c;
+      --f-zahl: "Source Sans 3", -apple-system, "Segoe UI", Roboto, sans-serif;
+      --r: 16px; --schatten: 0 1px 2px rgba(16, 32, 26, .05), 0 4px 16px rgba(16, 32, 26, .06);
+    }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --kopf: #121a17; --kopf-text: #e4ebe8; --flaeche: #18211d; --linie: #26322d; --schatten: 0 1px 2px rgba(0,0,0,.4); } }
+    :root[data-theme="dark"] { --kopf: #121a17; --kopf-text: #e4ebe8; --flaeche: #18211d; --linie: #26322d; --schatten: 0 1px 2px rgba(0,0,0,.4); }
+    .zahl, .kpi b, td, .fund-preis b { font-family: var(--f-text); font-variant-numeric: tabular-nums; }
+
+    /* Kopf hell mit Unschärfe, Statuspunkt statt Pille */
+    .kopf { background: color-mix(in srgb, var(--kopf) 88%, transparent); backdrop-filter: saturate(1.4) blur(14px); -webkit-backdrop-filter: saturate(1.4) blur(14px); border-bottom: 1px solid var(--linie); }
+    body::before { background: var(--kopf); }
+    .marke::before { content: ""; width: 26px; height: 26px; border-radius: 8px; align-self: center; background: linear-gradient(135deg, #1f8a66, #0f4a39); box-shadow: inset 0 -6px 0 rgba(255,255,255,.12); }
+    .kopf .status { border: 0; background: var(--akzent-weich); color: var(--akzent); font-weight: 600; }
+    .tabs a { color: var(--leise); opacity: 1; }
+    .tabs a[aria-current="page"] { color: var(--akzent); background: var(--akzent-weich); }
+    @media (max-width: 760px) {
+      .kopf .tabs { background: color-mix(in srgb, var(--flaeche) 92%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-top: 1px solid var(--linie); }
+      .tabs a { font-size: .72rem; font-weight: 600; padding: 6px 14px; border-radius: 14px; min-width: 64px; }
+      .tabs svg { width: 22px; height: 22px; }
+    }
+
+    /* Karten, Abstände, Schrift */
+    main { padding-top: 16px; }
+    .ansicht { gap: 14px; }
+    .karte { border: 0; box-shadow: var(--schatten); border-radius: var(--r); padding: 18px 16px; }
+    h2 { font-size: 1.32rem; letter-spacing: -.01em; }
+    .eyebrow { letter-spacing: .06em; font-size: .7rem; }
+    input, textarea, select { border-radius: 12px; min-height: 44px; }
+    button, .knopf { border-radius: 12px; min-height: 44px; padding: 10px 16px; transition: transform .08s, filter .15s; }
+    button:active, .knopf:active { transform: scale(.98); }
+    button.leise { min-height: 40px; }
+    button.icon { width: 44px; min-width: 44px; padding: 0; justify-content: center; font-size: 1.15rem; }
+    .stern { color: var(--messing); }
+
+    /* Filter als eine Zeile wischbarer Chips mit Zahlen */
+    .filter { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -16px; padding: 2px 16px 4px; gap: 8px; }
+    .filter::-webkit-scrollbar { display: none; }
+    .filter button { flex: none; min-height: 38px; border-radius: 999px; padding: 6px 14px; background: var(--papier); color: var(--tinte); font-size: .9rem; }
+    .filter button[aria-pressed="true"] { background: var(--tinte); color: var(--flaeche); }
+    .filter button .n { margin-left: 6px; font-weight: 700; opacity: .6; font-size: .8rem; }
+    .filter button .n:empty { display: none; }
+    #funde-art { flex: none; width: auto; min-height: 38px; border-radius: 999px; padding: 6px 12px; background: var(--papier); border: 0; font-size: .9rem; }
+    #funde-status { margin: 4px 0 10px; }
+
+    /* Fund-Karte */
+    #funde { gap: 12px; margin-top: 12px; }
+    .fund { background: var(--flaeche); border: 1px solid var(--linie); border-radius: 16px; padding: 14px; display: grid; gap: 8px; position: relative; overflow: hidden; }
+    .fund::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--linie); }
+    .fund.top::before { background: var(--gut); } .fund.verhandeln::before, .fund.pruefen::before { background: var(--warn); }
+    .fund.top { border-color: color-mix(in srgb, var(--gut) 35%, var(--linie)); }
+    .fund-kopf { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--leise); min-width: 0; }
+    .fund-ort { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fund-zeit { margin-left: auto; white-space: nowrap; }
+    .badge { display: inline-flex; align-items: center; font-size: .72rem; font-weight: 700; border-radius: 999px; padding: 3px 9px; background: var(--papier); color: var(--leise); white-space: nowrap; }
+    .badge.top, .badge.gruen { background: color-mix(in srgb, var(--gut) 15%, var(--flaeche)); color: var(--gut); }
+    .badge.verhandeln, .badge.pruefen, .badge.gelb { background: color-mix(in srgb, var(--warn) 18%, var(--flaeche)); color: color-mix(in srgb, var(--warn) 75%, var(--tinte)); }
+    .badge.nein, .badge.rot { background: color-mix(in srgb, var(--kritisch) 13%, var(--flaeche)); color: var(--kritisch); }
+    .fund-titel { font-weight: 700; font-size: 1.02rem; line-height: 1.3; color: var(--tinte); text-decoration: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .fund-preis { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .fund-preis b { font-size: 1.35rem; font-weight: 700; letter-spacing: -.01em; }
+    .fund-preis span { font-size: .85rem; color: var(--leise); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { font-size: .8rem; font-weight: 600; border-radius: 999px; padding: 4px 10px; background: var(--papier); color: var(--tinte); font-variant-numeric: tabular-nums; }
+    .chip.pos { background: color-mix(in srgb, var(--gut) 13%, var(--flaeche)); color: var(--gut); }
+    .chip.neg { background: color-mix(in srgb, var(--kritisch) 11%, var(--flaeche)); color: var(--kritisch); }
+    .fund-urteil { margin: 0; font-size: .9rem; font-weight: 600; }
+    .fund-mehr summary { cursor: pointer; font-size: .85rem; color: var(--akzent); font-weight: 600; list-style: none; }
+    .fund-mehr summary::-webkit-details-marker { display: none; }
+    .fund-mehr summary::after { content: " ▾"; }
+    .fund-mehr[open] summary::after { content: " ▴"; }
+    .fund-mehr p { margin: 6px 0 0; }
+    .verh-leiste { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+    .verh-leiste div { background: var(--papier); border-radius: 10px; padding: 8px; display: grid; }
+    .verh-leiste span { font-size: .72rem; color: var(--leise); }
+    .verh-leiste b { font-size: .95rem; font-variant-numeric: tabular-nums; }
+    .verh-leiste div:last-child b { color: var(--messing); }
+    .fund-aktionen { display: flex; gap: 8px; align-items: center; margin-top: 2px; }
+    .fund-aktionen .haupt { flex: 1; justify-content: center; }
+    .fund-aktionen button:not(.haupt):not(.icon) { flex: none; }
+
+    /* Objekt: Urteil als farbiges Feld, vier Hauptzahlen */
+    .hero { border-radius: 14px; padding: 14px; background: var(--papier); display: grid; gap: 6px; }
+    .hero.gruen { background: color-mix(in srgb, var(--gut) 10%, var(--flaeche)); }
+    .hero.gelb { background: color-mix(in srgb, var(--warn) 12%, var(--flaeche)); }
+    .hero.rot { background: color-mix(in srgb, var(--kritisch) 9%, var(--flaeche)); }
+    .hero-kopf { display: flex; align-items: center; justify-content: space-between; }
+    .score { font-weight: 700; font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+    .score small { font-size: .75rem; color: var(--leise); font-weight: 600; }
+    .hero h2 { font-size: 1.35rem; }
+    .urteil { margin: 2px 0 0; font-size: 1.05rem; font-weight: 700; line-height: 1.35; }
+    .hero p.hinweis { margin: 0; }
+    .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+    @media (min-width: 640px) { .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+    .kpi { border: 0; background: var(--papier); border-radius: 12px; padding: 12px; display: grid; gap: 2px; align-content: start; }
+    .kpi b { font-size: 1.2rem; font-weight: 700; letter-spacing: -.01em; }
+    .kpi span { font-size: .76rem; line-height: 1.35; }
+    .mehr-kpis { margin-top: 8px; }
+    .mehr-kpis summary { cursor: pointer; color: var(--akzent); font-weight: 600; font-size: .9rem; padding: 6px 0; }
+    .claude-box { border-radius: 14px; }
+    .strategie { border: 0; background: var(--papier); border-radius: 14px; }
+
+    /* Listen und Archiv im selben Stil */
+    .zeile { border-bottom-color: var(--linie); }
+    .ordner { border: 0; background: var(--papier); border-radius: 14px; }
+    .ordner > .liste { background: transparent; }
+    .senkungen-box { border: 0; background: color-mix(in srgb, var(--gut) 9%, var(--flaeche)); border-radius: 14px; padding: 10px 14px; }
+
+    /* Unschärfe würde auf dem Handy die feste Tab-Leiste an den Kopf binden – dort deshalb ohne */
+    @media (max-width: 760px) { .kopf { backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--kopf); } }
+    .kpi b span { font-size: inherit; color: inherit; }
+    .kpi b span.neg { color: var(--kritisch); } .kpi b span.pos { color: var(--gut); }
+    #funde, .liste { grid-template-columns: minmax(0, 1fr); }
+    .fund { min-width: 0; }
+    .fund-aktionen button { white-space: nowrap; min-width: 0; }
+    .fund-aktionen .haupt { overflow: hidden; text-overflow: ellipsis; }
+    /* Zwei Reihen: Hauptaktion über die volle Breite, darunter Analysieren, Merken, Weglegen */
+    .fund-aktionen { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+    .fund-aktionen .haupt:has(+ button:not(.icon)) { grid-column: 1 / -1; }
+    .fund-aktionen button:not(.icon) { justify-content: center; }
+    .fund-aktionen button:not(.haupt):not(.icon) { padding-inline: 14px; }
+
+    /* Hinweise unten über der Tab-Leiste statt über dem Inhalt */
+    .toast { top: auto; bottom: calc(var(--tabhoehe) + env(safe-area-inset-bottom, 0px) + 14px); border-radius: 14px; }
+    @media (min-width: 761px) { .toast { bottom: 24px; } }
     @media print {
       body { background: #fff; color: #000; } body::before, .kopf, .kein-druck { display: none !important; }
       .karte { border: 0; padding: 0; } td input { border: 0; background: none; }
@@ -479,7 +609,7 @@
       <div class="karte">
         <h2>Absender für Makleranfragen</h2>
         <p class="hinweis">Wird automatisch in jede Anfrage eingesetzt – gilt für euch beide und wird auf dem Server gespeichert.</p>
-        <div class="raster3">
+        <div class="raster2">
           <div><label for="abs-name">Name</label><input id="abs-name" autocomplete="name" /></div>
           <div><label for="abs-telefon">Telefon</label><input id="abs-telefon" type="tel" autocomplete="tel" /></div>
           <div><label for="abs-email">E-Mail</label><input id="abs-email" type="email" autocomplete="email" /></div>

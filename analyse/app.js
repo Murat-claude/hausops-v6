@@ -369,27 +369,34 @@ function zeigeUeberblick(r) {
   const markt = d.markt_kaufpreis_m2;
   const marktText = markt?.min && markt?.max ? `${eur(markt.min)} – ${eur(markt.max)}` : "–";
   const esc = (s) => DOMPurify.sanitize(String(s ?? ""), { ALLOWED_TAGS: [] });
+  const sc = d.schnell || {};
+  const kpi = (wert, text, cls = "") => `<div class="kpi ${cls}"><b>${wert}</b><span>${text}</span></div>`;
+  const stufeText = { top: "Top-Objekt", verhandeln: "Mit Verhandlung", pruefen: "Erst prüfen", nein: "Lohnt sich nicht" }[d.stufe] || { gruen: "Interessant", gelb: "Prüfenswert", rot: "Lohnt sich nicht" }[d.ampel] || "Bewertung";
   $("ueberblick").innerHTML = `
-    <div class="objektkopf">
-      <div class="ampel" style="background:${farbe}" title="Bewertung 0–100">${d.score ?? "?"}</div>
-      <div style="min-width:0">
-        <span class="eyebrow">${esc([d.objektart, d.ort, d.baujahr && "Bj. " + d.baujahr].filter(Boolean).join(" · "))}</span>
-        <h2>${esc(aktuell.titel)}</h2>
-        ${d.urteil || d.empfehlung ? `<div class="empfehlung">${esc(d.urteil || d.empfehlung)}</div>` : ""}
-        <div class="hinweis">${aktuell.autor ? "Analysiert von " + esc(aktuell.autor) + " · " : ""}${aktuell.datum ? new Date(aktuell.datum).toLocaleDateString("de-DE") : ""}${aktuell.link ? ` · <a href="${esc(aktuell.link)}" target="_blank" rel="noopener">Zum Inserat</a>` : ""}</div>
-      </div>
+    <div class="hero ${esc(d.ampel || "")}">
+      <div class="hero-kopf"><span class="badge ${esc(d.stufe || d.ampel || "")}">${esc(stufeText)}</span><span class="score" title="Bewertung 0–100">${d.score ?? "?"}<small>/100</small></span></div>
+      <span class="eyebrow">${esc([d.objektart, d.ort, d.baujahr && "Bj. " + d.baujahr].filter(Boolean).join(" · "))}</span>
+      <h2>${esc(aktuell.titel)}</h2>
+      ${d.urteil || d.empfehlung ? `<p class="urteil">${esc(d.urteil || d.empfehlung)}</p>` : ""}
+      ${d.nein_wenn ? `<p class="hinweis">Die Antwort wäre NEIN, wenn ${esc(d.nein_wenn)}.</p>` : ""}
+      <div class="hinweis">${aktuell.autor ? "Analysiert von " + esc(aktuell.autor) + " · " : ""}${aktuell.datum ? new Date(aktuell.datum).toLocaleDateString("de-DE") : ""}${aktuell.link ? ` · <a href="${esc(aktuell.link)}" target="_blank" rel="noopener">Zum Inserat</a>` : ""}</div>
     </div>
     ${d.warnungen?.length ? `<div class="warnbox"><b>Bitte zuerst prüfen – die Daten wirken nicht plausibel:</b><ul>${d.warnungen.map((w) => `<li>${esc(w)}</li>`).join("")}</ul><span class="hinweis">Mit „Eingaben ändern“ korrigieren und neu auswerten.</span></div>` : ""}
-    ${r ? `<div class="kpis">
-      <div class="kpi messing"><b>${eur(d.verhandlung?.ziel ?? d.verhandlungsziel)}</b><span>${d.verhandlung ? `Verhandlungsziel (Einstieg ${eur(d.verhandlung.einstieg)}, Schmerzgrenze ${eur(d.verhandlung.schmerzgrenze)})` : "Verhandlungsziel"}</span></div>
-      <div class="kpi"><b class="${d.schnell?.preis_ok === false ? "neg" : ""}">${eur(r.preisM2)}</b><span>Preis/m² ${d.schnell?.vergleich_m2 ? `(Ø ${esc(d.schnell.vergleich_ort)} ${eur(d.schnell.vergleich_m2)})` : `(Markt ${marktText})`}</span></div>
-      <div class="kpi"><b>${pct(r.bruttorendite)}</b><span>Bruttorendite (realistisch)</span></div>
-      <div class="kpi"><b>${dez(r.faktor)}</b><span>Kaufpreisfaktor</span></div>
-      <div class="kpi"><b class="${r.cashflowMonat < 0 ? "neg" : "pos"}">${eur(r.cashflowMonat)}</b><span>Cashflow/Monat (realistisch)</span></div>
-      <div class="kpi"><b>${eur(r.ekFuerCashflow0)}</b><span>Eigenkapital für Cashflow 0</span></div>
-      ${d.schnell?.cashflow_stress != null ? `<div class="kpi"><b class="${d.schnell.cashflow_stress < 0 ? "neg" : "pos"}">${eur(d.schnell.cashflow_stress)}</b><span>Cashflow bei Zins +1 % (Stresstest)</span></div>` : ""}
-      <div class="kpi"><b class="${r.maxKpCf0 >= num(d.kaufpreis) ? "pos" : "neg"}">${eur(r.maxKpCf0)}</b><span>Max. Kaufpreis für Cashflow ≥ 0 (bei ${eur(r.eigenkapital)} EK)</span></div>
-    </div>` : `<p class="hinweis">Für den Rechner fehlten strukturierte Zahlen – siehe Bericht.</p>`}`;
+    ${r ? `<div class="kpis haupt-kpis">
+      ${kpi(eur(d.verhandlung?.ziel ?? d.verhandlungsziel), d.verhandlung ? `Verhandlungsziel · Einstieg ${eur(d.verhandlung.einstieg)} · max. ${eur(d.verhandlung.schmerzgrenze)}` : "Verhandlungsziel", "messing")}
+      ${kpi(`<span class="${r.cashflowMonat < 0 ? "neg" : "pos"}">${eur(r.cashflowMonat)}</span>`, "Cashflow im Monat (realistisch)")}
+      ${sc.wert ? kpi(eur(sc.wert.wert), `${esc(sc.wert.methode)} · Angebot ${sc.wert.abweichung >= 0 ? sc.wert.abweichung + " % darüber" : -sc.wert.abweichung + " % darunter"}`) : kpi(eur(r.preisM2), "Preis pro m²")}
+      ${kpi(dez(r.faktor), "Kaufpreisfaktor")}
+    </div>
+    <details class="mehr-kpis"><summary>Weitere Kennzahlen</summary><div class="kpis">
+      ${kpi(`<span class="${d.schnell?.preis_ok === false ? "neg" : ""}">${eur(r.preisM2)}</span>`, `Preis/m² ${sc.vergleich_m2 ? `(Ø ${esc(sc.vergleich_ort || "")} ${eur(sc.vergleich_m2)})` : `(Markt ${marktText})`}`)}
+      ${kpi(pct(r.bruttorendite), "Bruttorendite")}
+      ${sc.cashflow_stress != null ? kpi(`<span class="${sc.cashflow_stress < 0 ? "neg" : "pos"}">${eur(sc.cashflow_stress)}</span>`, "Cashflow bei Zins +1 %") : ""}
+      ${sc.dscr ? kpi(dez(sc.dscr, 2), "Kapitaldienstdeckung (Bank ≥ 1,2)") : ""}
+      ${sc.break_even_leerstand != null ? kpi(sc.break_even_leerstand + " %", "Leerstand verkraftbar") : ""}
+      ${kpi(eur(r.ekFuerCashflow0), "Eigenkapital für Cashflow 0")}
+      ${kpi(`<span class="${r.maxKpCf0 >= num(d.kaufpreis) ? "pos" : "neg"}">${eur(r.maxKpCf0)}</span>`, `Max. Kaufpreis für Cashflow ≥ 0 (bei ${eur(r.eigenkapital)} EK)`)}
+    </div></details>` : `<p class="hinweis">Für den Rechner fehlten strukturierte Zahlen – siehe Bericht.</p>`}`;
 }
 
 // ---------- Makleranfrage ----------
@@ -695,6 +702,10 @@ function zeigeFunde() {
   const art = $("funde-art").value;
   const passt = (f) => fundeFilter === "alle" || (fundeFilter === "gut" ? f.gut : fundeFilter === "verhandeln" ? f.verhandeln : f.bewertung);
   let liste = funde.filter((f) => passt(f) && (!art || f.kategorie === art) && !istWeggelegt(f.id));
+  // Zahlen in den Filter-Knöpfen
+  const sicht = funde.filter((f) => (!art || f.kategorie === art) && !istWeggelegt(f.id));
+  const zahlen = { gut: sicht.filter((f) => f.gut).length, verhandeln: sicht.filter((f) => f.verhandeln).length, geprueft: sicht.filter((f) => f.bewertung).length, alle: sicht.length };
+  document.querySelectorAll("#funde-filter [data-filter]").forEach((b) => { const n = b.querySelector(".n") || b.appendChild(el("span", "n")); n.textContent = zahlen[b.dataset.filter] ?? ""; });
   zeigeSenkungen();
   // Kein Top-Objekt? Dann gleich die Objekte zeigen, die sich mit Verhandlung rechnen – statt einer leeren Seite
   let ersatz = "";
@@ -708,66 +719,69 @@ function zeigeFunde() {
   }[fundeFilter] || "Keine Funde mit diesem Filter.";
   if (!liste.length) { box.innerHTML = `<p class="hinweis">${leer}</p>`; return; }
   box.innerHTML = ersatz;
-  for (const f of liste.slice(0, 120)) {
-    const z = document.createElement("div");
-    z.className = "zeile";
-    z.innerHTML = `<span class="streifen"></span><div style="min-width:0"><a class="titel" target="_blank" rel="noopener"></a><div class="meta"></div></div><div class="rechts"></div>`;
-    const amp = f.bewertung?.ampel;
-    z.firstChild.classList.add(amp === "gruen" || (!amp && f.gut) ? "gruen" : amp === "gelb" ? "gelb" : amp === "rot" ? "rot" : "x");
-    const t = z.querySelector(".titel");
-    t.textContent = f.titel || "(ohne Titel)";
-    t.href = f.url;
-    if (f.gut || f.verhandeln) { const g = document.createElement("span"); g.className = "marke-gut"; g.textContent = f.gut ? "Top" : f.bewertung?.stufe === "pruefen" ? "erst prüfen" : "verhandeln"; t.after(g); }
-    const fak = f.faktor_inserat ?? f.faktor;
-    z.querySelector(".meta").innerHTML = "";
-    z.querySelector(".meta").append(
-      `${f.kategorie} · ${f.km ?? "?"} km ${f.ort} · `,
-      Object.assign(document.createElement("span"), { className: "zahl", textContent: `${f.preis_text}${f.preis_m2 ? ` · ${f.preis_m2.toLocaleString("de-DE")} €/m²` : ""}${fak ? ` · F ${String(fak).replace(".", ",")}` : ""}` }),
-      ` · ${f.eingestellt}`,
-    );
-    if (f.bewertung) {
-      const bw = f.bewertung;
-      const zeile = document.createElement("div");
-      zeile.className = "meta bewertung";
-      zeile.textContent = "Geprüft: " + [
-        bw.cashflow_monat != null ? `Cashflow ${bw.cashflow_monat >= 0 ? "+" : ""}${bw.cashflow_monat.toLocaleString("de-DE")} €/Monat` : null,
-        bw.faktor ? `Faktor ${String(bw.faktor).replace(".", ",")}` : null,
-        bw.beste?.max_kaufpreis ? `${bw.beste.name} lohnt bis ${bw.beste.max_kaufpreis.toLocaleString("de-DE")} €` : null,
-        bw.ist_miete ? "(Ist-Miete)" : "(Marktmiete geschätzt)",
-      ].filter(Boolean).join(" · ") + (bw.warnungen?.length ? " · ⚠️ Daten prüfen" : "");
-      z.querySelector(".meta").after(zeile);
-      // Urteil und Verhandlungsrahmen direkt in der Liste – ohne erst zu öffnen
-      const urteil = document.createElement("div");
-      urteil.className = "meta";
-      urteil.textContent = [bw.empfehlung, bw.verhandlung ? `Verhandeln: Einstieg ${bw.verhandlung.einstieg.toLocaleString("de-DE")} € · Ziel ${bw.verhandlung.ziel.toLocaleString("de-DE")} € · Schmerzgrenze ${bw.verhandlung.schmerzgrenze.toLocaleString("de-DE")} €` : null, bw.nein_wenn ? `Nein, wenn ${bw.nein_wenn}` : null].filter(Boolean).join(" — ");
-      if (urteil.textContent) zeile.after(urteil);
+  for (const f of liste.slice(0, 120)) box.appendChild(fundKarte(f));
+}
+
+// Eine Fund-Karte: Status, Preis groß, drei Kennzahlen als Chips, Urteil in einer Zeile, Details aufklappbar, klare Aktionen
+const tsd = (v) => Math.round(v).toLocaleString("de-DE");
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function fundKarte(f) {
+  const bw = f.bewertung;
+  const stufe = f.gut ? "top" : f.verhandeln ? (bw?.stufe === "pruefen" ? "pruefen" : "verhandeln") : bw ? "geprueft" : "neu";
+  const k = el("article", "fund " + stufe);
+  const kopf = el("div", "fund-kopf");
+  const badgeText = { top: "Top", verhandeln: "Mit Verhandlung", pruefen: "Erst prüfen", geprueft: bw?.warnungen?.length ? "Daten prüfen" : "Geprüft", neu: "Neu" }[stufe];
+  kopf.append(el("span", "badge " + stufe, badgeText), el("span", "fund-ort", `${f.km ?? "?"} km · ${String(f.ort || "").replace(/^\d{5}\s*/, "")}`), el("span", "fund-zeit", f.eingestellt || ""));
+  const titel = el("a", "fund-titel", f.titel || "(ohne Titel)");
+  titel.href = f.url; titel.target = "_blank"; titel.rel = "noopener";
+  const preis = el("div", "fund-preis");
+  preis.append(el("b", null, f.preis ? tsd(f.preis) + " €" : f.preis_text), el("span", null, [f.preis_m2 ? tsd(f.preis_m2) + " €/m²" : null, f.groesse_text, f.kategorie].filter(Boolean).join(" · ")));
+  k.append(kopf, titel, preis);
+  const chips = el("div", "chips");
+  const fak = bw?.faktor ?? f.faktor_inserat ?? f.faktor;
+  if (bw?.cashflow_monat != null) chips.append(el("span", "chip " + (bw.cashflow_monat >= 0 ? "pos" : "neg"), `Cashflow ${bw.cashflow_monat >= 0 ? "+" : ""}${tsd(bw.cashflow_monat)} €/M.`));
+  if (fak) chips.append(el("span", "chip", `Faktor ${String(fak).replace(".", ",")}`));
+  if (bw?.beste?.max_kaufpreis) chips.append(el("span", "chip " + (bw.beste.max_kaufpreis >= (f.preis || 0) ? "pos" : ""), `lohnt bis ${tsd(bw.beste.max_kaufpreis)} €`));
+  if (chips.children.length) k.append(chips);
+  if (bw?.empfehlung) k.append(el("p", "fund-urteil", bw.empfehlung));
+  if (bw && (bw.verhandlung || bw.nein_wenn || bw.beste)) {
+    const mehr = el("details", "fund-mehr");
+    mehr.append(el("summary", null, "Verhandlung & Details"));
+    if (bw.verhandlung) {
+      const v = el("div", "verh-leiste");
+      for (const [n, w] of [["Einstieg", bw.verhandlung.einstieg], ["Ziel", bw.verhandlung.ziel], ["Schmerzgrenze", bw.verhandlung.schmerzgrenze]]) { const d = el("div"); d.append(el("span", null, n), el("b", null, tsd(w) + " €")); v.append(d); }
+      mehr.append(v);
     }
-    const analysieren = document.createElement("button");
-    analysieren.textContent = "Analysieren";
-    analysieren.className = f.gut || f.verhandeln ? "zweit" : "";
-    analysieren.onclick = async () => {
-      formularLeeren();
-      $("text").value = `${f.url}\n\n${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}\n${f.beschreibung || ""}`;
-      location.hash = "#neu";
-      await auslesen();
-      if (formularLesen().kaufpreis) await starteAnalyse();
-    };
-    // Ein Klick: Anfrage an den Anbieter (nur bei Objekten, die sich nach Durchrechnung lohnen)
-    const knoepfe = [sternKnopf(fundEintrag(f))];
-    if (f.gut || f.verhandeln) {
-      const anfrage = document.createElement("button");
-      anfrage.textContent = imArchiv(f.id)?.ordner === "angefragt" ? "✓ Angefragt" : "Anfrage senden";
-      anfrage.title = f.bewertung?.anbieter?.email ? `E-Mail an ${f.bewertung.anbieter.name || f.bewertung.anbieter.email}` : "Text kopieren und Anzeige öffnen";
-      anfrage.onclick = () => anfrageSenden({ ...f, objektart: f.bewertung?.objektart, anbieter: f.bewertung?.anbieter }, fundEintrag(f));
-      knoepfe.push(anfrage);
-    }
-    const weg = document.createElement("button");
-    weg.className = "leise"; weg.textContent = "Weglegen"; weg.title = "Ins Archiv „Weggelegt“ – Preissenkungen werden trotzdem gemeldet";
-    weg.onclick = () => archivieren(fundEintrag(f), "weggelegt", "Weggelegt. Sinkt der Preis deutlich, meldet sich die App.");
-    knoepfe.push(analysieren, weg);
-    z.querySelector(".rechts").append(...knoepfe);
-    box.appendChild(z);
+    if (bw.nein_wenn) mehr.append(el("p", "hinweis", "Die Antwort wäre NEIN, wenn " + bw.nein_wenn + "."));
+    mehr.append(el("p", "hinweis", `${bw.beste?.name ? "Bester Weg: " + bw.beste.name + " · " : ""}${bw.ist_miete ? "mit Ist-Miete aus der Anzeige" : "Miete geschätzt (Marktmiete)"}${bw.warnungen?.length ? " · ⚠️ " + bw.warnungen[0] : ""}`));
+    k.append(mehr);
   }
+  // Aktionen: Hauptaktion groß, Merken und Weglegen als Symbol-Knöpfe
+  const akt = el("div", "fund-aktionen");
+  const analysieren = el("button", f.gut || f.verhandeln ? "zweit" : "", "Analysieren");
+  analysieren.onclick = async () => {
+    formularLeeren();
+    $("text").value = `${f.url}\n\n${f.titel}\n${f.preis_text} · ${f.groesse_text} · ${f.ort}\n${f.beschreibung || ""}`;
+    location.hash = "#neu";
+    await auslesen();
+    if (formularLesen().kaufpreis) await starteAnalyse();
+  };
+  if (f.gut || f.verhandeln) {
+    const angefragt = imArchiv(f.id)?.ordner === "angefragt";
+    const anfrage = el("button", "haupt", angefragt ? "✓ Angefragt" : "Anfrage senden");
+    anfrage.title = bw?.anbieter?.email ? `E-Mail an ${bw.anbieter.name || bw.anbieter.email}` : "Text kopieren und Anzeige öffnen";
+    anfrage.onclick = () => anfrageSenden({ ...f, objektart: bw?.objektart, anbieter: bw?.anbieter }, fundEintrag(f));
+    akt.append(anfrage);
+  } else analysieren.classList.add("haupt");
+  akt.append(analysieren);
+  const stern = sternKnopf(fundEintrag(f));
+  stern.classList.add("icon");
+  const weg = el("button", "icon leise", "✕");
+  weg.title = "Weglegen – Preissenkungen werden trotzdem gemeldet"; weg.setAttribute("aria-label", "Weglegen");
+  weg.onclick = () => archivieren(fundEintrag(f), "weggelegt", "Weggelegt. Sinkt der Preis deutlich, meldet sich die App.");
+  akt.append(stern, weg);
+  k.append(akt);
+  return k;
 }
 document.querySelectorAll("#funde-filter [data-filter]").forEach((b) => {
   b.onclick = () => {
