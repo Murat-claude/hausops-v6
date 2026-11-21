@@ -748,11 +748,16 @@ function zeigeFundeZahl() {
 function zeigeFunde() {
   const box = $("funde");
   const art = $("funde-art").value;
-  const passt = (f) => fundeFilter === "alle" || (fundeFilter === "gut" ? f.gut : fundeFilter === "verhandeln" ? f.verhandeln : f.bewertung);
+  const passt = (f) => fundeFilter === "alle" || (fundeFilter === "gut" ? f.gut : fundeFilter === "verhandeln" ? f.verhandeln : fundeFilter === "ferien" ? f.rubrik === "ferien" : f.bewertung);
   let liste = funde.filter((f) => passt(f) && (!art || f.kategorie === art) && !istWeggelegt(f.id));
   // Zahlen in den Filter-Knöpfen
   const sicht = funde.filter((f) => (!art || f.kategorie === art) && !istWeggelegt(f.id));
-  const zahlen = { gut: sicht.filter((f) => f.gut).length, verhandeln: sicht.filter((f) => f.verhandeln).length, geprueft: sicht.filter((f) => f.bewertung).length, alle: sicht.length };
+  const zahlen = { gut: sicht.filter((f) => f.gut).length, verhandeln: sicht.filter((f) => f.verhandeln).length, ferien: sicht.filter((f) => f.rubrik === "ferien").length, geprueft: sicht.filter((f) => f.bewertung).length, alle: sicht.length };
+  // Rubrik Winterberg: die besten zuerst (Top, Verhandlung, dann durchgerechnete nach Cashflow)
+  if (fundeFilter === "ferien") {
+    const rang = (f) => (f.gut ? 0 : f.verhandeln ? 1 : f.bewertung ? 2 : 3);
+    liste.sort((a, b) => rang(a) - rang(b) || (b.bewertung?.cashflow_monat ?? -9e9) - (a.bewertung?.cashflow_monat ?? -9e9));
+  }
   document.querySelectorAll("#funde-filter [data-filter]").forEach((b) => { const n = b.querySelector(".n") || b.appendChild(el("span", "n")); n.textContent = zahlen[b.dataset.filter] ?? ""; });
   zeigeSenkungen();
   // Kein Top-Objekt? Dann gleich die Objekte zeigen, die sich mit Verhandlung rechnen – statt einer leeren Seite
@@ -764,6 +769,7 @@ function zeigeFunde() {
   const leer = {
     gut: "Gerade kein Top-Fund. Top heißt: trägt sich zum Angebotspreis – auch im vorsichtigen Fall, mit 10.000 € Eigenkapital und vollständigen Daten. Unter „Mit Verhandlung“ stehen Objekte, die sich mit bis zu 15 % Nachlass rechnen.",
     verhandeln: "Gerade kein Fund, der sich mit bis zu 15 % Nachlass rechnet.",
+    ferien: "Noch keine Ferienimmobilien. Der Scout sucht stündlich im Umkreis von 20 km um Winterberg: Wohnungen, Häuser, Pensionen und Grundstücke.",
   }[fundeFilter] || "Keine Funde mit diesem Filter.";
   if (!liste.length) { box.innerHTML = `<p class="hinweis">${leer}</p>`; return; }
   box.innerHTML = ersatz;

@@ -1,8 +1,8 @@
 // Unser Suchprofil (festgelegt im Frage-Antwort-Gespräch am 21.11.2026).
 // Scout, Bewertung und die Anfrage an Claude richten sich danach.
 export const SUCHPROFIL = {
-  strategien: ["Halten & vermieten", "Aufteilung in Eigentumswohnungen", "Fix & Flip", "Umbau Gewerbe → Wohnen", "Ferien-/Monteurwohnung", "Grundstück bebauen"],
-  region: { mitte: "Hamm", km: 50, text: "50 km um Hamm inkl. Dortmund, Bochum, Hagen, Münster, Kreise Unna, Soest, Warendorf" },
+  strategien: ["Ferienvermietung (Winterberg)", "Halten & vermieten", "Aufteilung in Eigentumswohnungen", "Fix & Flip", "Umbau Gewerbe → Wohnen", "Ferien-/Monteurwohnung", "Grundstück bebauen"],
+  region: { mitte: "Hamm", km: 50, text: "50 km um Hamm inkl. Dortmund, Bochum, Hagen, Münster, Kreise Unna, Soest, Warendorf – plus Rubrik Winterberg & Ferien (20 km um Winterberg)" },
   budget: { min: 30000, max: 1500000 },
   objektarten: ["Mehrfamilienhaus", "Wohn- und Geschäftshaus", "Zwei-/Dreifamilienhaus", "Eigentumswohnung", "Einfamilienhaus", "Gewerbe/Büro zum Umbau", "Grundstück"],
   zustand: "alles, wenn der Preis passt (Sanierung wird eingerechnet)",

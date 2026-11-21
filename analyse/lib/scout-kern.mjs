@@ -2,7 +2,8 @@
 import { SUCHPROFIL, PROFIL_AUSSCHLUSS } from "./suchprofil.js";
 export const UA = "immo-scout/1.0 (private Objektsuche, wenige Abrufe)";
 const ORT = "hamm", ORT_ID = "l2018r50"; // Hamm, Umkreis 50 km laut Suchprofil (bis Dortmund, Bochum, Hagen, Münster)
-const WEIT = "l2018r50"; // Hamm, Umkreis 50 km (bis Dortmund, Bochum, Münster, Sauerland)
+const WEIT = "l2018r50";
+const WINTERBERG = "l1014r20"; // Winterberg, Umkreis 20 km // Hamm, Umkreis 50 km (bis Dortmund, Bochum, Münster, Sauerland)
 // [Kategorie, Pfad, Optionen] – "stuendlich": nur einmal pro Stunde abfragen (schont Kleinanzeigen)
 export const SUCHEN = [
   ["Mehrfamilienhaus", `s-haus-kaufen/${ORT}/sortierung:neuste/c208${ORT_ID}+haus_kaufen.haustyp_s:mehrfamilienhaus`],
@@ -16,9 +17,15 @@ export const SUCHEN = [
   ["Büro zum Umbau", `s-gewerbeimmobilien/kaufen/${ORT}/sortierung:neuste/c277${WEIT}+gewerbeimmobilien.art_s:kaufen+gewerbeimmobilien.objektart_s:bueros_praxen`, { maxKm: 52, minFlaeche: 250, preisProM2: true, stuendlich: true }],
   ["Hotel/Pension", `s-gewerbeimmobilien/kaufen/${ORT}/sortierung:neuste/c277${WEIT}+gewerbeimmobilien.art_s:kaufen+gewerbeimmobilien.objektart_s:gastronomie_hotels`, { maxKm: 52, minFlaeche: 200, preisProM2: true, stuendlich: true }],
   ["Wohn- und Geschäftshaus", `s-haus-kaufen/${ORT}/sortierung:neuste/wohn-und-geschaeftshaus/k0c208${WEIT}`, { maxKm: 52, stuendlich: true }],
-  ["Ferienwohnung", `s-eigentumswohnung/${ORT}/sortierung:neuste/ferienwohnung/k0c196${WEIT}`, { maxKm: 60, stuendlich: true }],
-  ["Ferienhaus", `s-haus-kaufen/${ORT}/sortierung:neuste/ferienhaus/k0c208${WEIT}`, { maxKm: 60, stuendlich: true }],
+  ["Ferienwohnung", `s-eigentumswohnung/${ORT}/sortierung:neuste/ferienwohnung/k0c196${WEIT}`, { maxKm: 60, stuendlich: true, rubrik: "ferien" }],
+  ["Ferienhaus", `s-haus-kaufen/${ORT}/sortierung:neuste/ferienhaus/k0c208${WEIT}`, { maxKm: 60, stuendlich: true, rubrik: "ferien" }],
+  // Rubrik Winterberg / Ferienimmobilien: alles im Umkreis von 20 km um Winterberg (Medebach, Hallenberg, Willingen, Olsberg)
+  ["Winterberg: Wohnung", `s-eigentumswohnung/winterberg/sortierung:neuste/c196${WINTERBERG}`, { maxKm: 22, stuendlich: true, rubrik: "ferien" }],
+  ["Winterberg: Haus", `s-haus-kaufen/winterberg/sortierung:neuste/c208${WINTERBERG}`, { maxKm: 22, stuendlich: true, rubrik: "ferien" }],
+  ["Winterberg: Pension/Hotel", `s-gewerbeimmobilien/kaufen/winterberg/sortierung:neuste/c277${WINTERBERG}+gewerbeimmobilien.art_s:kaufen+gewerbeimmobilien.objektart_s:gastronomie_hotels`, { maxKm: 22, stuendlich: true, rubrik: "ferien", preisProM2: true }],
+  ["Winterberg: Grundstück", `s-grundstuecke-garten/winterberg/sortierung:neuste/c207${WINTERBERG}`, { maxKm: 22, stuendlich: true, rubrik: "ferien" }],
 ];
+export const FERIEN_KATEGORIEN = SUCHEN.filter(([, , o = {}]) => o.rubrik === "ferien").map(([k]) => k);
 export const UMBAU_KATEGORIEN = ["Büro zum Umbau", "Hotel/Pension"];
 const MIETE = 7.5; // €/m² Schätzung für den Schnell-Faktor
 const AUSSCHLUSS_GEWERBE = ["zur übernahme", "übernahme", "ablöse", "abloese", "pacht", "inventar", "franchise", "laufender betrieb", "nachfolger gesucht"];
@@ -91,6 +98,14 @@ export function bewerte(o, opts = {}) {
   if (/vermietet|mieteinnahm|rendite|kapitalanlage|wohneinheiten|mehrfamilien/.test(t)) punkte += 1;
   if (/sanier|renovier|handwerker|modernisierungsbed/.test(t)) punkte += 1;
   if (o.kategorie === "Grundstück" && /baugenehmigung|genehmigt|§\s*34|bebauungsplan/.test(t)) punkte += 2;
+  // Ferienimmobilien: Hinweise auf Ferienvermietung, Lage, Ausstattung
+  if (opts.rubrik === "ferien") {
+    o.rubrik = "ferien";
+    if (/ferienwohnung|ferienhaus|feriendomizil|ferienvermietung|ferienappartement|apartment|vermietet als|buchungen|belegung/.test(t)) punkte += 2;
+    if (/skigebiet|ski|lift|piste|loipe|bikepark|kahler asten|willingen|sauna|kamin|whirlpool|balkon|aussicht|panorama/.test(t)) punkte += 1;
+    if (/möbliert|moebliert|eingerichtet|ausgestattet/.test(t)) punkte += 1;
+    if (/genehmigt|sondergebiet|ferienpark|ferienhausgebiet/.test(t)) punkte += 1;
+  }
   // Umbau-Objekte: günstiger Preis je m² und Leerstand sind die Hinweise
   if (UMBAU_KATEGORIEN.includes(o.kategorie)) {
     if (o.preis_m2 && o.preis_m2 <= 900) punkte += 2; else if (o.preis_m2 && o.preis_m2 <= 1300) punkte += 1;

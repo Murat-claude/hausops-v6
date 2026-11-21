@@ -4,6 +4,7 @@ import { rechneSzenario, maxKaufpreisCashflowNull, maxKaufpreisDscr, num } from 
 import { umbauStrategien, umbauRisiken, UMBAU_ANNAHMEN } from "./umbau.js";
 import { marktFuer, MARKT_QUELLE } from "./markt.js";
 import { wertermittlung } from "./ertragswert.js";
+import { ferienStrategie, istFerienregion, FERIEN_ANNAHMEN } from "./ferien.js";
 import { SUCHPROFIL, PROFIL_AUSSCHLUSS } from "./suchprofil.js";
 
 export const STANDARD_ANNAHMEN = {
@@ -22,6 +23,7 @@ export const STANDARD_ANNAHMEN = {
   makler: 3.57,           // falls in der Anzeige nichts steht
   monteur_preis: 13,      // € pro Bett und Nacht
   ...UMBAU_ANNAHMEN,      // Umbau Büro/Hotel → Wohnen (siehe lib/umbau.js)
+  ...FERIEN_ANNAHMEN,     // Ferienvermietung Winterberg/Sauerland (siehe lib/ferien.js)
 };
 
 const r5 = (v) => Math.round(v / 5000) * 5000;
@@ -302,7 +304,13 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     strategien.push({ buchstabe: "D", name: "Grundstück / Bebauung", eignung, gewinn, max_kaufpreis: maxKp, begruendung: text, zusatz: !istGrundstueck });
   }
 
-  if (fl && kp && !istGrundstueck && !istGewerbe) {
+  // Ferienregion (Winterberg und Umgebung): echte Ferienrechnung statt Monteurzimmer-Schätzung
+  const ferienLage = istFerienregion(e);
+  if (ferienLage && fl && kp && !istGrundstueck) {
+    const fs = ferienStrategie({ ...e, einheiten: num(e.einheiten) || (einheitenGeschaetzt ? einheiten : 0) }, a, nkProzent, san.wert, annahmenListe);
+    if (fs) strategien.push(fs);
+  }
+  if (fl && kp && !istGrundstueck && !istGewerbe && !ferienLage) {
     const betten = Math.max(2, Math.round((num(e.zimmer) || fl / 25) * 1.3));
     const brutto = betten * num(a.monteur_preis) * 365 * 0.6;
     const netto = brutto * 0.6;
@@ -395,7 +403,7 @@ export function auswerten(eingabe, annahmenTeil = {}) {
     wert: wert ? { methode: wert.methode, wert: wert.wert, text: wert.text, quelle: wert.quelle, abweichung: Math.round((kp / wert.wert - 1) * 100) } : null,
     gutachter_kauf: wert?.g?.kauf || null,
   };
-  if (ortsWerte.length) annahmenListe.push(`Marktwerte ${markt.name}: ${ortsWerte.join(", ")} (${MARKT_QUELLE})`);
+  if (ortsWerte.length) annahmenListe.push(`Marktwerte ${markt.name}: ${ortsWerte.join(", ")} (${markt.quelle})`);
 
   const daten = {
     urteil, stufe, datenluecken, verhandlung, schnell, markt_ort: markt?.name || null,
@@ -415,6 +423,8 @@ export function auswerten(eingabe, annahmenTeil = {}) {
 
 function risiken(e, d) {
   const r = [];
+  const fe = d.strategien.find((s) => s.ferien);
+  if (fe?.risiko) r.push(fe.risiko);
   if (/gewerbe|büro|buero|hotel|pension|praxis|boarding/i.test(e.objektart || "") && !/wohn- und geschäft/i.test(e.objektart || "")) r.push(...umbauRisiken(e));
   const m = e.merkmale || {};
   if (e.sanierungsjahr >= 2000) r.push(`Komplett saniert ${e.sanierungsjahr}: Umfang der Sanierung (Dach, Leitungen, Elektrik, Heizung, Dämmung) und Rechnungen vorlegen lassen.`);

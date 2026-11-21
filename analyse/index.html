@@ -412,6 +412,7 @@
         <div class="filter kein-druck" id="funde-filter">
           <button class="zweit" data-filter="gut" aria-pressed="true">Top</button>
           <button class="zweit" data-filter="verhandeln" aria-pressed="false">Mit Verhandlung</button>
+          <button class="zweit" data-filter="ferien" aria-pressed="false">🏔️ Winterberg &amp; Ferien</button>
           <button class="zweit" data-filter="geprueft" aria-pressed="false">Durchgerechnet</button>
           <button class="zweit" data-filter="alle" aria-pressed="false">Alle neuen</button>
           <select id="funde-art" aria-label="Objektart">
@@ -492,6 +493,17 @@
             <div><label for="a-etw_neu_m2">Verkauf nach Umbau (€/m²)</label><input id="a-etw_neu_m2" type="number" step="50" /></div>
             <div><label for="a-apartment_preis">Service-Apartment (€/Nacht)</label><input id="a-apartment_preis" type="number" /></div>
             <div><label for="a-apartment_auslastung">Auslastung (%)</label><input id="a-apartment_auslastung" type="number" /></div>
+          </div>
+          <p class="hinweis"><strong>Ferienvermietung Winterberg/Sauerland</strong> (Sauerland 2025: 41 % Bettenauslastung, Ø 3,1 Nächte)</p>
+          <div class="raster3">
+            <div><label for="a-fewo_auslastung">Auslastung (%)</label><input id="a-fewo_auslastung" type="number" /></div>
+            <div><label for="a-fewo_betreuung">Betreuung vor Ort (% Umsatz)</label><input id="a-fewo_betreuung" type="number" /></div>
+            <div><label for="a-fewo_plattform">Plattform (% Umsatz)</label><input id="a-fewo_plattform" type="number" /></div>
+            <div><label for="a-fewo_adr_klein">€/Nacht bis 45 m²</label><input id="a-fewo_adr_klein" type="number" /></div>
+            <div><label for="a-fewo_adr_mittel">€/Nacht 45–75 m²</label><input id="a-fewo_adr_mittel" type="number" /></div>
+            <div><label for="a-fewo_adr_gross">€/Nacht 75–110 m²</label><input id="a-fewo_adr_gross" type="number" /></div>
+            <div><label for="a-fewo_adr_haus">€/Nacht Ferienhaus</label><input id="a-fewo_adr_haus" type="number" /></div>
+            <div><label for="a-fewo_moebel_m2">Einrichtung (€/m²)</label><input id="a-fewo_moebel_m2" type="number" /></div>
           </div>
           <p class="hinweis">Gilt für dieses Gerät. Miete, Wohnungspreise und Bauland werden automatisch für den Ort der Anzeige eingesetzt (Hamm, Dortmund, Bochum, Hagen, Münster, Lünen, Kamen, Lippstadt, Soest, Kreise Unna und Soest), solange hier der Standardwert steht. Ein eigener Wert hat Vorrang. <button class="leise" id="annahmen-zurueck" type="button">Standardwerte</button></p>
         </details>

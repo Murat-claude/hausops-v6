@@ -1,7 +1,7 @@
 // Immo-Scout alle 15 Minuten (ca. 6–22 Uhr): sucht neue Anzeigen um Hamm (30 km),
 // rechnet die vielversprechendsten sofort durch und meldet nur echte Kandidaten per Push.
 import { getStore } from "@netlify/blobs";
-import { SUCHEN, UA, parseListe, bewerte, istNeu, UMBAU_KATEGORIEN } from "../../lib/scout-kern.mjs";
+import { SUCHEN, UA, parseListe, bewerte, istNeu, UMBAU_KATEGORIEN, FERIEN_KATEGORIEN } from "../../lib/scout-kern.mjs";
 import { leseKleinanzeigenHtml } from "../../lib/inserat-parse.js";
 import { auswerten } from "../../lib/auswertung.js";
 import { sendePush } from "../../lib/push.mjs";
@@ -22,6 +22,10 @@ const eur = (v) => Math.round(v).toLocaleString("de-DE") + " €";
 // Volle Regel-Bewertung aus der Detailseite
 export function bewerteDetail(fund, html) {
   const e = leseKleinanzeigenHtml(html);
+  if (fund.rubrik) e.rubrik = fund.rubrik;
+  if (fund.kategorie === "Winterberg: Wohnung" || fund.kategorie === "Ferienwohnung") e.objektart ||= "Eigentumswohnung";
+  if (fund.kategorie === "Winterberg: Pension/Hotel" && (!e.objektart || /einfamilien/i.test(e.objektart))) e.objektart = "Hotel/Pension";
+  if (fund.kategorie === "Winterberg: Grundstück") { e.objektart = "Grundstück"; delete e.wohnflaeche_m2; e.grundstueck_m2 ||= fund.flaeche; }
   e.titel ||= fund.titel;
   e.kaufpreis ||= fund.preis;
   if (fund.kategorie !== "Grundstück") e.wohnflaeche_m2 ||= fund.flaeche;
@@ -86,8 +90,10 @@ export async function lauf(store, holen = holenStandard, jetzt = new Date()) {
   // Die vielversprechendsten sofort durchrechnen
   // Umbau-Objekte bekommen einen eigenen Platz, damit sie nicht hinter Wohnobjekten zurückfallen
   const umbau = neu.filter((o) => UMBAU_KATEGORIEN.includes(o.kategorie) && o.punkte >= 1).slice(0, 2);
-  const wohnen = neu.filter((o) => o.punkte >= 1 && !["Garage", "Gewerbe", ...UMBAU_KATEGORIEN].includes(o.kategorie)).slice(0, MAX_DETAILS - umbau.length);
-  const kandidaten = [...umbau, ...wohnen];
+  // Ferienimmobilien (Winterberg) bekommen eigene Plätze, damit die Rubrik immer durchgerechnete Objekte hat
+  const ferien = neu.filter((o) => FERIEN_KATEGORIEN.includes(o.kategorie) && o.kategorie !== "Winterberg: Grundstück").slice(0, 3);
+  const wohnen = neu.filter((o) => o.punkte >= 1 && !["Garage", "Gewerbe", ...UMBAU_KATEGORIEN, ...FERIEN_KATEGORIEN].includes(o.kategorie)).slice(0, Math.max(2, MAX_DETAILS - umbau.length - ferien.length));
+  const kandidaten = [...umbau, ...ferien, ...wohnen];
   await Promise.allSettled(kandidaten.map(async (o) => {
     try {
       const html = await holen(o.url.replace("https://www.kleinanzeigen.de/", ""));

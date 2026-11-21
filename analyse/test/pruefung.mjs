@@ -113,5 +113,15 @@ const spOk = sp({ titel: "MFH", preis_text: "1.800.000 €", km: 10 }).ausschlus
   && sp({ titel: "MFH", preis_text: "300.000 €", km: 60 }).ausschluss && !sp({ titel: "MFH Dortmund", preis_text: "500.000 €", km: 40 }).ausschluss;
 console.log(spOk ? "ok    " : "FEHLER", "Suchprofil: Budget, Wohnrecht, Umkreis 50 km");
 fehler += spOk ? 0 : 1;
+// Ferienvermietung Winterberg: Genehmigungslage nach Ort, Strategie wird gerechnet
+const fe = await import("../lib/ferien.js");
+const lageOk = fe.genehmigungsLage({ ort: "59955 Winterberg", beschreibung: "Schöne Wohnung" }).stufe === "genehmigung"
+  && fe.genehmigungsLage({ ort: "59955 Winterberg", beschreibung: "Wohnung in Langewiese" }).stufe === "frei"
+  && fe.genehmigungsLage({ ort: "34508 Willingen", beschreibung: "Nähe Winterberg" }).stufe === "pruefen"
+  && fe.genehmigungsLage({ ort: "59955 Winterberg", beschreibung: "Ferienwohnung ist baurechtlich genehmigt" }).stufe === "genehmigt";
+const fw = auswerten({ objektart: "Eigentumswohnung", ort: "59955 Winterberg", kaufpreis: 110000, wohnflaeche_m2: 53, hausgeld_monat: 250, rubrik: "ferien", merkmale: {} }).daten.strategien.find((s) => s.ferien);
+const feOk = lageOk && fw && fw.eignung !== "gut" && fw.max_kaufpreis > 0;
+console.log(feOk ? "ok    " : "FEHLER", "Ferienvermietung Winterberg: Satzung nach Ort, vorsichtige Rechnung", feOk ? "" : JSON.stringify(fw));
+fehler += feOk ? 0 : 1;
 console.log(fehler ? `\n${fehler} Fehler` : "\nAlle Prüfungen bestanden");
 process.exit(fehler ? 1 : 0);

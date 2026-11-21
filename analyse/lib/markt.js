@@ -17,6 +17,8 @@ const ORTE = [
   ["Kamen", [[59174, 59174]], 7.95, 2320, 225],
   ["Lippstadt", [[59555, 59558]], 8.1, 2410, 162],
   ["Soest", [[59494, 59494]], 7.95, 2590, 180],
+  // Ferienregion: Werte als Annahme aus aktuellen Inseraten (Wohnungen ca. 1.900–2.450 €/m²) bzw. Hochsauerlandkreis
+  ["Winterberg", [[59955, 59955]], 6.5, 2200, null, "Annahme aus aktuellen Kleinanzeigen-Inseraten (Nov. 2026), Miete Hochsauerlandkreis – mit Gutachterausschuss HSK prüfen"],
 ];
 // Kreise als Rückfall, wenn die Stadt selbst nicht in der Liste ist
 const KREISE = [
@@ -38,6 +40,6 @@ export function marktFuer(ort) {
     || ORTE.find(([name]) => new RegExp(`\\b${name}\\b`, "i").test(text))
     || KREISE.find(passt);
   if (!treffer) return null;
-  const [name, , miete, kauf, boden] = treffer;
-  return { name, miete, kauf, boden, quelle: MARKT_QUELLE };
+  const [name, , miete, kauf, boden, quelle] = treffer;
+  return { name, miete, kauf, boden, quelle: quelle || MARKT_QUELLE };
 }
