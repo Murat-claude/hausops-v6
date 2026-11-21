@@ -46,9 +46,9 @@ console.log(teuerOk ? "ok    " : "FEHLER", "Teures Büro (3.000 €/m²) lohnt k
 fehler += teuerOk ? 0 : 1;
 // Scout: Gewerbe mit Preis je m² und Mindestfläche
 const { bewerte } = await import("../lib/scout-kern.mjs");
-const g = bewerte({ kategorie: "Büro zum Umbau", titel: "Bürogebäude leerstehend", beschreibung: "", preis_text: "", groesse_text: "5.466 m² · 824 €/m²", km: 48 }, { maxKm: 52, minFlaeche: 250, preisProM2: true });
+const g = bewerte({ kategorie: "Büro zum Umbau", titel: "Bürogebäude leerstehend", beschreibung: "", preis_text: "", groesse_text: "1.200 m² · 824 €/m²", km: 48 }, { maxKm: 52, minFlaeche: 250, preisProM2: true });
 const klein = bewerte({ kategorie: "Büro zum Umbau", titel: "Praxis", beschreibung: "", preis_text: "120.000 €", groesse_text: "90 m²", km: 10 }, { maxKm: 52, minFlaeche: 250, preisProM2: true });
-const scoutOk = g.preis === 4503984 && !g.ausschluss && g.punkte >= 3 && klein.ausschluss;
+const scoutOk = g.preis === 988800 && !g.ausschluss && g.punkte >= 3 && klein.ausschluss;
 console.log(scoutOk ? "ok    " : "FEHLER", "Scout: Preis je m² und Mindestfläche bei Büros", scoutOk ? "" : JSON.stringify([g.preis, g.ausschluss, g.punkte, klein.ausschluss]));
 fehler += scoutOk ? 0 : 1;
 // Ortsdaten: richtige Stadt per PLZ, Kreis als Rückfall, unbekannt = null
@@ -107,5 +107,11 @@ const k = kontaktAusText("Ihr Ansprechpartner: Herr Thomas Becker, Becker Immobi
 const kOk = k?.email === "t.becker@becker-immo.de" && k.name === "Thomas Becker" && k.telefon.startsWith("02381");
 console.log(kOk ? "ok    " : "FEHLER", "Kontakt aus Exposé-Text erkannt", kOk ? "" : JSON.stringify(k));
 fehler += kOk ? 0 : 1;
+// Suchprofil: über 1,5 Mio. €, Wohnrecht und mehr als 52 km fliegen raus; Dortmund in 40 km bleibt
+const sp = (o) => bewerte({ kategorie: "Mehrfamilienhaus", beschreibung: "", groesse_text: "400 m²", ...o }, {});
+const spOk = sp({ titel: "MFH", preis_text: "1.800.000 €", km: 10 }).ausschluss && sp({ titel: "MFH mit lebenslangem Wohnrecht", preis_text: "300.000 €", km: 10 }).ausschluss
+  && sp({ titel: "MFH", preis_text: "300.000 €", km: 60 }).ausschluss && !sp({ titel: "MFH Dortmund", preis_text: "500.000 €", km: 40 }).ausschluss;
+console.log(spOk ? "ok    " : "FEHLER", "Suchprofil: Budget, Wohnrecht, Umkreis 50 km");
+fehler += spOk ? 0 : 1;
 console.log(fehler ? `\n${fehler} Fehler` : "\nAlle Prüfungen bestanden");
 process.exit(fehler ? 1 : 0);

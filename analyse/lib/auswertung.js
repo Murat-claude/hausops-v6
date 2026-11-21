@@ -4,6 +4,7 @@ import { rechneSzenario, maxKaufpreisCashflowNull, maxKaufpreisDscr, num } from 
 import { umbauStrategien, umbauRisiken, UMBAU_ANNAHMEN } from "./umbau.js";
 import { marktFuer, MARKT_QUELLE } from "./markt.js";
 import { wertermittlung } from "./ertragswert.js";
+import { SUCHPROFIL, PROFIL_AUSSCHLUSS } from "./suchprofil.js";
 
 export const STANDARD_ANNAHMEN = {
   // Miete, Wohnungspreise und Bauland werden automatisch aus den Ortsdaten (lib/markt.js) genommen,
@@ -115,6 +116,9 @@ export function auswerten(eingabe, annahmenTeil = {}) {
   if (/einfamilien|doppelhaus|reihenhaus/i.test(e.objektart || "") && fl > 350) warnungen.push(`${Math.round(fl)} m² Wohnfläche sind für ein ${e.objektart} ungewöhnlich – vermutlich die Grundstücksfläche. Bitte prüfen.`);
   const ortKauf = marktFuer(e.ort)?.kauf;
   if (ortKauf && kp && fl && !istGrundstueck && !istGewerbe && kp / fl < ortKauf * (/mehrfamilien|wohn- und geschäft/i.test(e.objektart || "") ? 0.25 : 0.35)) warnungen.push(`Preis pro m² (${eur(kp / fl)}) liegt bei nur ${Math.round(kp / fl / ortKauf * 100)} % des Ortsschnitts – Fläche, Zustand oder Haken (Erbpacht, Wohnrecht, Abriss) prüfen.`);
+  // Suchprofil: Wohnrecht/Nießbrauch/Verrentung wollen wir nicht
+  if (PROFIL_AUSSCHLUSS.test(`${e.titel || ""} ${e.beschreibung || ""}`)) warnungen.push("Wohnrecht, Nießbrauch oder Verrentung erwähnt – passt nicht in euer Suchprofil.");
+  if (kp > SUCHPROFIL.budget.max) warnungen.push(`Kaufpreis über eurem Rahmen von ${eur(SUCHPROFIL.budget.max)}.`);
   // Fehlende Kernangaben: ohne sie gibt es kein "Top", sondern "erst prüfen"
   const datenluecken = [];
   if (!e.baujahr && !istGrundstueck) datenluecken.push("Baujahr");

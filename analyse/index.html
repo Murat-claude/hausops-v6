@@ -248,7 +248,7 @@
 <body>
   <header class="kopf">
     <div class="kopf-innen">
-      <div class="marke">Immo-Analyse <small>Hamm · 30 km</small></div>
+      <div class="marke">Immo-Analyse <small>Hamm · 50 km</small></div>
       <nav class="tabs" aria-label="Bereiche">
         <a href="#funde" data-tab="funde"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Funde <span class="punkt" id="funde-zahl" hidden></span></a>
         <a href="#neu" data-tab="neu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 19h16M7 15l3-3 3 3 5-6"/></svg>Analyse</a>
@@ -264,7 +264,7 @@
     <!-- Funde (Startseite) -->
     <section class="ansicht" data-ansicht="funde">
       <div class="karte">
-        <span class="eyebrow">Immo-Scout · alle 15 Minuten, 6–22 Uhr · 30 km um Hamm, Umbau &amp; Ferien bis 50 km</span>
+        <span class="eyebrow">Immo-Scout · alle 15 Minuten, 6–22 Uhr · 50 km um Hamm · bis 1,5 Mio. €</span>
         <h2>Neue Funde</h2>
         <div id="funde-senkungen"></div>
         <p class="hinweis" id="funde-status">Wird geladen …</p>
@@ -471,6 +471,11 @@
         <div class="reihe"><button id="anmelden">Anmelden</button><button class="zweit versteckt" id="abmelden">Abmelden</button><span id="login-fehler" class="hinweis" style="color:var(--kritisch)"></span></div>
 
       </div>
+      <details class="karte klapp">
+        <summary><h2>Unser Suchprofil</h2></summary>
+        <p class="hinweis">Danach sucht der Scout und danach bewertet die App. Änderungen einfach Claude sagen.</p>
+        <ul id="suchprofil"></ul>
+      </details>
       <div class="karte">
         <h2>Absender für Makleranfragen</h2>
         <p class="hinweis">Wird automatisch in jede Anfrage eingesetzt – gilt für euch beide und wird auf dem Server gespeichert.</p>

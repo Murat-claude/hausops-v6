@@ -5,6 +5,7 @@ import { leseInserat } from "./lib/inserat-parse.js";
 import { auswerten, STANDARD_ANNAHMEN } from "./lib/auswertung.js";
 import { makleranfrage, ABSENDER_STANDARD } from "./lib/makler.js";
 import { ORDNER, idAusUrl, restTage } from "./lib/archiv.mjs";
+import { profilText } from "./lib/suchprofil.js";
 
 const SZENARIEN = [["vorsichtig", "Vorsichtig"], ["realistisch", "Realistisch"], ["gut", "Gut"]];
 const $ = (id) => document.getElementById(id);
@@ -608,6 +609,7 @@ function claudeAnfrage(o) {
   const zeile = (k, v) => (v == null || v === "" ? null : `- ${k}: ${v}`);
   const teile = [
     "Bitte prüfe dieses Immobilienangebot für uns (Murat & Yasemin, Investoren aus Hamm) vollständig mit dem Skill immobilien-analyse, falls vorhanden.",
+    "Unser Suchprofil: " + profilText().join(" · "),
     o.link ? `Anzeige: ${o.link}` : null,
     "",
     "Eckdaten (aus der Anzeige bzw. von uns ergänzt):",
@@ -1020,6 +1022,9 @@ $("objekt-todo").onclick = () => {
   setTimeout(() => $("todo-text").focus(), 50);
 };
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && speicher.modus === "gemeinsam") ladeMerkliste(); });
+
+// Suchprofil im Konto anzeigen
+for (const z of profilText()) { const li = document.createElement("li"); li.textContent = z; $("suchprofil")?.appendChild(li); }
 
 annahmenZeigen();
 verbinden();

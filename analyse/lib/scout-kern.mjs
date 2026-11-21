@@ -1,6 +1,7 @@
 // Kern des Immo-Scouts (Suche, Auslesen, Bewertung) – ohne Netlify-Abhängigkeiten, damit testbar.
+import { SUCHPROFIL, PROFIL_AUSSCHLUSS } from "./suchprofil.js";
 export const UA = "immo-scout/1.0 (private Objektsuche, wenige Abrufe)";
-const ORT = "hamm", ORT_ID = "l2018r30"; // Hamm, Umkreis 30 km
+const ORT = "hamm", ORT_ID = "l2018r50"; // Hamm, Umkreis 50 km laut Suchprofil (bis Dortmund, Bochum, Hagen, Münster)
 const WEIT = "l2018r50"; // Hamm, Umkreis 50 km (bis Dortmund, Bochum, Münster, Sauerland)
 // [Kategorie, Pfad, Optionen] – "stuendlich": nur einmal pro Stunde abfragen (schont Kleinanzeigen)
 export const SUCHEN = [
@@ -100,7 +101,10 @@ export function bewerte(o, opts = {}) {
   const miete = (!opts.preisProM2 && (o.preis_text + o.groesse_text).includes("€/m²")) || /miete|zu vermieten/.test((o.preis_text + o.titel).toLowerCase());
   const zuKlein = opts.minFlaeche && a && a < opts.minFlaeche;
   const gewerbeAus = UMBAU_KATEGORIEN.includes(o.kategorie) && AUSSCHLUSS_GEWERBE.some((w) => t.includes(w));
-  o.ausschluss = AUSSCHLUSS.some((w) => t.includes(w)) || gewerbeAus || zuKlein || (o.km != null && o.km > (opts.maxKm || 32)) || !p || (kauf && (p < 30000 || miete));
+  // Suchprofil: Budget, Umkreis, kein Wohnrecht/Nießbrauch
+  const ausserBudget = kauf && p && (p < SUCHPROFIL.budget.min || p > SUCHPROFIL.budget.max);
+  const wohnrecht = !SUCHPROFIL.sonderfaelle.wohnrecht && PROFIL_AUSSCHLUSS.test(t);
+  o.ausschluss = AUSSCHLUSS.some((w) => t.includes(w)) || gewerbeAus || zuKlein || wohnrecht || ausserBudget || (o.km != null && o.km > (opts.maxKm || SUCHPROFIL.region.km + 2)) || !p || (kauf && miete);
   return o;
 }
 
